@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
+  BrainOutputStore,
   GatewayProvider,
   LlmCallManager,
   MockProvider,
@@ -172,6 +176,58 @@ describe("llm-integration foundation", () => {
 
     expect(validation.status).toBe("invalid");
     expect(createRuleBasedReply({ runId: "run-001", status: "failed", evidencePath: "/tmp/run-001" }).key_evidence).toEqual([]);
+  });
+
+  it("writes brain call audit records with run-relative refs", async () => {
+    const runDir = await mkdtemp(join(tmpdir(), "artifact-agent-brain-"));
+    const store = new BrainOutputStore({ runDir });
+
+    const result = await store.writeCall({
+      callId: "observer-001",
+      role: "observer",
+      promptId: "observer.v1",
+      startedAt: "2026-04-28T00:00:00.000Z",
+      endedAt: "2026-04-28T00:00:01.000Z",
+      status: "validated",
+      providerId: "mock",
+      model: "mock-model",
+      input: { run_id: "run-001" },
+      rawOutput: "{\"intent\":\"continue\"}",
+      parsedOutput: { intent: "continue" },
+      validation: { status: "valid" }
+    });
+
+    expect(result.record).toMatchObject({
+      call_id: "observer-001",
+      input_ref: "brain/observer-001.input.json",
+      raw_output_ref: "brain/observer-001.raw.txt",
+      parsed_output_ref: "brain/observer-001.parsed.json",
+      validation_ref: "brain/observer-001.validation.json"
+    });
+    expect(JSON.parse(await readFile(join(runDir, result.record.input_ref), "utf8"))).toEqual({ run_id: "run-001" });
+    expect(await readFile(join(runDir, result.record.raw_output_ref!), "utf8")).toBe("{\"intent\":\"continue\"}");
+    expect(JSON.parse(await readFile(join(runDir, "brain/calls.jsonl"), "utf8"))).toMatchObject({ call_id: "observer-001" });
+    expect(await store.readCallRecords()).toHaveLength(1);
+  });
+
+  it("rejects unsafe brain call ids before writing files", async () => {
+    const runDir = await mkdtemp(join(tmpdir(), "artifact-agent-brain-"));
+    const store = new BrainOutputStore({ runDir });
+
+    await expect(
+      store.writeCall({
+        callId: "../escape",
+        role: "reply_generator",
+        promptId: "reply_generator.v1",
+        startedAt: "2026-04-28T00:00:00.000Z",
+        endedAt: "2026-04-28T00:00:01.000Z",
+        status: "validation_failed",
+        model: "mock-model",
+        input: {},
+        validation: { status: "invalid" }
+      })
+    ).rejects.toThrow("call_id contains unsupported characters");
+    await expect(stat(join(runDir, "brain"))).rejects.toThrow();
   });
 });
 
