@@ -908,6 +908,82 @@ describe("runtime-server HTTP API", () => {
     expect(status.statusCode).toBe(404);
   });
 
+  it("locks a target while a run is non-terminal and releases it at terminal state", async () => {
+    const runIds = ["run-lock-001", "run-lock-002"];
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry(),
+      targetProfiles: [targetProfile()],
+      idFactory: () => runIds.shift() ?? "run-extra",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    const first = await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+    expect(first.json()).toMatchObject({
+      status: "accepted",
+      run_id: "run-lock-001",
+      state: "planning"
+    });
+
+    const busyCapabilities = await server.app.inject({ method: "GET", url: "/api/targets/board-01/capabilities" });
+    expect(busyCapabilities.json().runtime_state).toMatchObject({
+      target_id: "board-01",
+      state: "busy",
+      current_run_id: "run-lock-001"
+    });
+
+    const status = await server.app.inject({ method: "GET", url: "/api/runs/run-lock-001/status" });
+    expect(status.json().target).toMatchObject({
+      target_id: "board-01",
+      state: "busy",
+      current_run_id: "run-lock-001"
+    });
+
+    const second = await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+    expect(second.json()).toEqual({
+      status: "busy",
+      target: "board-01",
+      reasons: ["target board-01 is busy with run run-lock-001"],
+      missing_info: [],
+      suggested_next: "Wait for the current run to finish or cancel it before starting another validation."
+    });
+    const notCreated = await server.app.inject({ method: "GET", url: "/api/runs/run-lock-002/status" });
+    expect(notCreated.statusCode).toBe(404);
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/runs/run-lock-001/cancel",
+      payload: {
+        reason: "release target"
+      }
+    });
+
+    const idleCapabilities = await server.app.inject({ method: "GET", url: "/api/targets/board-01/capabilities" });
+    expect(idleCapabilities.json().runtime_state).toMatchObject({
+      target_id: "board-01",
+      state: "idle",
+      current_run_id: null
+    });
+
+    const afterRelease = await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+    expect(afterRelease.json()).toMatchObject({
+      status: "accepted",
+      run_id: "run-lock-002"
+    });
+  });
+
   it("infers target capabilities from profile connections and safety flags", async () => {
     server = buildRuntimeServer({
       rootDir,

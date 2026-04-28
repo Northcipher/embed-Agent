@@ -22,6 +22,7 @@ import {
   type TargetProfile,
   type ValidateArtifactAcceptedResponse,
   type ValidateArtifactInput,
+  ValidateArtifactInputSchema,
   type ValidateArtifactRejectedResponse
 } from "@artifact-validation/contracts";
 import { FileStore, type StoredRun } from "@artifact-validation/file-store";
@@ -143,6 +144,8 @@ export class RuntimeService {
 
   private readonly targetProfiles: Map<string, TargetProfile> | undefined;
 
+  private readonly targetLocks = new Map<string, string>();
+
   private readonly executePlansInline: boolean;
 
   private readonly idFactory: () => string;
@@ -174,6 +177,10 @@ export class RuntimeService {
     if (this.targetProfiles !== undefined && targetProfile === undefined) {
       return targetNotFound(input.target);
     }
+    const lockedRunId = await this.lockedRunIdForTarget(input.target);
+    if (lockedRunId !== undefined) {
+      return targetBusy(input.target, lockedRunId);
+    }
 
     const artifactValidation = await this.validateArtifactFile(input, targetProfile);
     if (artifactValidation !== undefined) {
@@ -192,6 +199,7 @@ export class RuntimeService {
     if (!created.accepted) {
       throw new RuntimeHttpError(400, created.error_code, created.message);
     }
+    this.targetLocks.set(input.target, runId);
 
     const plannerResult = await this.createPlanForRun(runId, created.run.evidence_path, input, targetCapabilities);
     if (plannerResult.status !== "planned" && plannerResult.status !== "no_plan") {
@@ -297,12 +305,15 @@ export class RuntimeService {
 
   async getRunStatus(runId: string): Promise<RunStatusResponse> {
     const run = await this.readRunOrThrow(runId);
+    const targetId = await this.targetIdForRun(runId);
+    const terminal = isTerminalRunState(run.status);
     return {
       run_id: run.run_id,
       status: run.status,
       target: {
-        state: run.status === "completed" || run.status === "failed" || run.status === "cancelled" ? "idle" : "busy",
-        current_run_id: run.status === "completed" || run.status === "failed" || run.status === "cancelled" ? null : run.run_id,
+        ...(targetId === undefined ? {} : { target_id: targetId }),
+        state: terminal ? "idle" : "busy",
+        current_run_id: terminal ? null : run.run_id,
         updated_at: run.updated_at
       },
       elapsed_sec: elapsedSec(run.created_at, this.now()),
@@ -420,16 +431,18 @@ export class RuntimeService {
     };
   }
 
-  getTargetCapabilities(target: string): GetTargetCapabilitiesResponse {
+  async getTargetCapabilities(target: string): Promise<GetTargetCapabilitiesResponse> {
     const targetProfile = this.resolveTargetProfile(target);
     if (this.targetProfiles !== undefined && targetProfile === undefined) {
       throw new RuntimeHttpError(404, "target_not_found", `target ${target} was not found`);
     }
+    const lockedRunId = await this.lockedRunIdForTarget(target);
     return {
       target,
       runtime_state: {
         target_id: target,
-        state: "unknown"
+        state: lockedRunId === undefined ? "idle" : "busy",
+        current_run_id: lockedRunId ?? null
       },
       capabilities: this.capabilityStatuses(undefined, targetProfile)
     };
@@ -514,6 +527,40 @@ export class RuntimeService {
 
   private async tryReadAgentReply(runId: string): Promise<AgentReply | undefined> {
     return this.store.readAgentReply(runId);
+  }
+
+  private async targetIdForRun(runId: string): Promise<string | undefined> {
+    const request = await this.store.readRunRequest(runId);
+    const parsed = ValidateArtifactInputSchema.safeParse(request);
+    return parsed.success ? parsed.data.target : undefined;
+  }
+
+  private async lockedRunIdForTarget(target: string): Promise<string | undefined> {
+    const runId = this.targetLocks.get(target);
+    if (runId === undefined) {
+      return undefined;
+    }
+    try {
+      const run = await this.store.readRun(runId);
+      if (isTerminalRunState(run.status)) {
+        this.targetLocks.delete(target);
+        return undefined;
+      }
+      return runId;
+    } catch {
+      this.targetLocks.delete(target);
+      return undefined;
+    }
+  }
+
+  private async releaseTargetLockForRun(run: StoredRun): Promise<void> {
+    if (!isTerminalRunState(run.status)) {
+      return;
+    }
+    const target = await this.targetIdForRun(run.run_id);
+    if (target !== undefined && this.targetLocks.get(target) === run.run_id) {
+      this.targetLocks.delete(target);
+    }
   }
 
   private startBackgroundPlan(runId: string, plan: Plan, targetCapabilities: CapabilityStatus[]): void {
@@ -659,6 +706,7 @@ export class RuntimeService {
     if (finalStatus === undefined) {
       return;
     }
+    await this.releaseTargetLockForRun(run);
     if ((await this.store.readAgentReply(run.run_id)) !== undefined) {
       return;
     }
@@ -751,6 +799,16 @@ function targetNotFound(target: string): ValidateArtifactRejectedResponse {
     reasons: [`target ${target} was not found`],
     missing_info: ["target profile"],
     suggested_next: "Configure a target profile before validating artifacts for this target."
+  };
+}
+
+function targetBusy(target: string, runId: string): ValidateArtifactRejectedResponse {
+  return {
+    status: "busy",
+    target,
+    reasons: [`target ${target} is busy with run ${runId}`],
+    missing_info: [],
+    suggested_next: "Wait for the current run to finish or cancel it before starting another validation."
   };
 }
 
