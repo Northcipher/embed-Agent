@@ -26,7 +26,8 @@ export const EventTypeSchema = z.enum([
   "evidence_collected",
   "intervention_requested",
   "run_completed",
-  "run_failed"
+  "run_failed",
+  "run_cancelled"
 ]);
 
 export const RunEventSchema = z

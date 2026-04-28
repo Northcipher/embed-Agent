@@ -7,6 +7,7 @@ import {
   ObserverIntentSchema,
   PlanSchema,
   PublicErrorResponseSchema,
+  RunStatusResponseSchema,
   RunStateSchema,
   ValidateArtifactInputSchema,
   ValidateArtifactRejectedResponseSchema,
@@ -128,6 +129,7 @@ describe("P0 contract schemas", () => {
 
   it("rejects unregistered event types such as intent_failed", () => {
     expect(EventTypeSchema.safeParse("observer_intent").success).toBe(true);
+    expect(EventTypeSchema.safeParse("run_cancelled").success).toBe(true);
     expect(EventTypeSchema.safeParse("intent_failed").success).toBe(false);
   });
 
@@ -187,6 +189,44 @@ describe("P0 contract schemas", () => {
     });
 
     expect(response.events[0]?.evidence_refs).toContain("serial:last-200-lines");
+  });
+
+  it("accepts run_cancelled events in watch_run responses", () => {
+    const valid = WatchRunResponseSchema.parse({
+      run_id: "run-001",
+      status: "cancelled",
+      events: [
+        {
+          seq: 43,
+          run_id: "run-001",
+          time: "2026-04-28T10:01:43+08:00",
+          elapsed_sec: 43,
+          type: "run_cancelled",
+          severity: "warning",
+          source: "orchestrator",
+          summary: "run cancelled by caller"
+        }
+      ],
+      next_after_seq: 43
+    });
+
+    expect(valid.events[0]?.type).toBe("run_cancelled");
+  });
+
+  it("rejects target runtime states outside the P0 enum", () => {
+    expect(() =>
+      RunStatusResponseSchema.parse({
+        run_id: "run-001",
+        status: "running",
+        target: {
+          target_id: "board-01",
+          state: "warming_up"
+        },
+        elapsed_sec: 1,
+        last_event_seq: 1,
+        evidence_path: "/var/artifact-validation/runs/run-001"
+      })
+    ).toThrow();
   });
 
   it("accepts evidence index and final agent reply shapes", () => {

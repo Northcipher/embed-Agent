@@ -117,13 +117,17 @@ export const CurrentStepStatusSchema = z
   })
   .strict();
 
+export const TargetStateSchema = z.enum(["idle", "busy", "flashing", "booting", "adb_ready", "offline", "unknown"]);
+
 export const TargetRuntimeStateSchema = z
   .object({
     target_id: z.string().min(1).optional(),
-    state: z.string().min(1),
+    state: TargetStateSchema,
     serial: z.string().min(1).optional(),
     adb: z.string().min(1).optional(),
-    current_run_id: z.string().min(1).nullable().optional()
+    current_run_id: z.string().min(1).nullable().optional(),
+    last_heartbeat_at: z.string().min(1).optional(),
+    updated_at: z.string().min(1).optional()
   })
   .strict();
 
@@ -287,6 +291,7 @@ export type ValidateArtifactRejectedResponse = z.infer<typeof ValidateArtifactRe
 export type ValidateArtifactResponse = z.infer<typeof ValidateArtifactResponseSchema>;
 export type RunStatusInput = z.infer<typeof RunStatusInputSchema>;
 export type CurrentStepStatus = z.infer<typeof CurrentStepStatusSchema>;
+export type TargetState = z.infer<typeof TargetStateSchema>;
 export type TargetRuntimeState = z.infer<typeof TargetRuntimeStateSchema>;
 export type RunStatusResponse = z.infer<typeof RunStatusResponseSchema>;
 export type WatchRunInput = z.infer<typeof WatchRunInputSchema>;
