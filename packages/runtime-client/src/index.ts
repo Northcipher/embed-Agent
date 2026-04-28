@@ -8,6 +8,7 @@ import {
   PublicErrorResponseSchema,
   RunStatusResponseSchema,
   ValidateArtifactResponseSchema,
+  WatchRunInputSchema,
   WatchRunResponseSchema,
   type CancelRunInput,
   type CancelRunResponse,
@@ -42,6 +43,8 @@ export type RuntimeClientResult<T> =
     };
 
 export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
+const MAX_WATCH_WAIT_SEC = 300;
 
 export type RuntimeHttpClientOptions = {
   baseUrl?: string;
@@ -100,30 +103,48 @@ export class RuntimeHttpClient {
   }
 
   async watchRun(input: WatchRunInput): Promise<RuntimeClientResult<WatchRunResponse>> {
-    const deadline = this.nowFn() + input.wait_sec * 1000;
+    const parsed = WatchRunInputSchema.safeParse(input);
+    if (!parsed.success) {
+      return invalidClientRequest(`watch_run input is invalid: ${formatZodIssues(parsed.error)}`);
+    }
+    if (parsed.data.wait_sec > MAX_WATCH_WAIT_SEC) {
+      return invalidClientRequest(`watch_run wait_sec must be <= ${MAX_WATCH_WAIT_SEC}`);
+    }
+
+    const request = parsed.data;
+    const deadline = this.nowFn() + request.wait_sec * 1000;
+    let lastResponse: WatchRunResponse | undefined;
 
     for (;;) {
+      if (lastResponse !== undefined && this.nowFn() >= deadline) {
+        return {
+          ok: true,
+          data: lastResponse
+        };
+      }
+
       const events = await this.getRunEvents({
-        run_id: input.run_id,
-        after_seq: input.after_seq,
-        limit: input.limit,
-        ...(input.types === undefined ? {} : { types: input.types })
+        run_id: request.run_id,
+        after_seq: request.after_seq,
+        limit: request.limit,
+        ...(request.types === undefined ? {} : { types: request.types })
       });
       if (!events.ok) {
         return events;
       }
-      const status = await this.getRunStatus({ run_id: input.run_id });
+      const status = await this.getRunStatus({ run_id: request.run_id });
       if (!status.ok) {
         return status;
       }
 
       const response = WatchRunResponseSchema.parse({
-        run_id: input.run_id,
+        run_id: request.run_id,
         status: status.data.status,
         events: events.data.events,
         next_after_seq: events.data.next_after_seq
       });
-      if (response.events.length > 0 || input.wait_sec === 0 || isTerminalRunStatus(response.status) || this.nowFn() >= deadline) {
+      lastResponse = response;
+      if (response.events.length > 0 || request.wait_sec === 0 || isTerminalRunStatus(response.status) || this.nowFn() >= deadline) {
         return {
           ok: true,
           data: response
@@ -258,6 +279,17 @@ async function sleep(milliseconds: number): Promise<void> {
 
 function isTerminalRunStatus(status: WatchRunResponse["status"]): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function invalidClientRequest<T>(message: string): RuntimeClientResult<T> {
+  return {
+    ok: false,
+    error: {
+      status: "error",
+      error_code: "invalid_request",
+      message
+    }
+  };
 }
 
 async function readJson(response: Response): Promise<unknown> {

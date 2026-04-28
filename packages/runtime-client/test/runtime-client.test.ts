@@ -322,9 +322,36 @@ describe("RuntimeHttpClient", () => {
       expect(result.data.events).toEqual([]);
       expect(result.data.next_after_seq).toBe(7);
     }
-    expect(calls.filter(call => call.includes("/events"))).toHaveLength(2);
-    expect(calls.filter(call => call.includes("/status"))).toHaveLength(2);
+    expect(calls.filter(call => call.includes("/events"))).toHaveLength(1);
+    expect(calls.filter(call => call.includes("/status"))).toHaveLength(1);
     expect(sleeps).toEqual([1000]);
+  });
+
+  it("rejects excessive watch_run wait windows without calling Runtime", async () => {
+    const calls: string[] = [];
+    const client = new RuntimeHttpClient({
+      fetchFn: async url => {
+        calls.push(url.toString());
+        return new Response(JSON.stringify({}), { status: 500 });
+      }
+    });
+
+    const result = await client.watchRun({
+      run_id: "run-001",
+      after_seq: 7,
+      limit: 50,
+      wait_sec: 301
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        status: "error",
+        error_code: "invalid_request",
+        message: "watch_run wait_sec must be <= 300"
+      }
+    });
+    expect(calls).toEqual([]);
   });
 });
 
