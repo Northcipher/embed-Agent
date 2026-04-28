@@ -3,6 +3,7 @@
   "references": [
     { "path": "./apps/cli" },
     { "path": "./apps/mcp-server" },
+    { "path": "./apps/tui" },
     { "path": "./apps/runtime-server" },
     { "path": "./packages/contracts" },
     { "path": "./packages/runtime-client" },
