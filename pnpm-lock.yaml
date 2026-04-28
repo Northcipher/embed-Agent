@@ -21,6 +21,22 @@ importers:
         specifier: ^4.0.15
         version: 4.1.5(@types/node@25.6.0)(vite@8.0.10(@types/node@25.6.0)(esbuild@0.27.7)(tsx@4.21.0))
 
+  apps/cli:
+    dependencies:
+      '@artifact-validation/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@artifact-validation/runtime-client':
+        specifier: workspace:*
+        version: link:../../packages/runtime-client
+      commander:
+        specifier: ^14.0.3
+        version: 14.0.3
+    devDependencies:
+      vitest:
+        specifier: ^4.0.15
+        version: 4.1.5(@types/node@25.6.0)(vite@8.0.10(@types/node@25.6.0)(esbuild@0.27.7)(tsx@4.21.0))
+
   apps/mcp-server:
     dependencies:
       '@artifact-validation/contracts':
@@ -535,6 +551,10 @@ packages:
   chai@6.2.2:
     resolution: {integrity: sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg==}
     engines: {node: '>=18'}
+
+  commander@14.0.3:
+    resolution: {integrity: sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw==}
+    engines: {node: '>=20'}
 
   content-disposition@1.1.0:
     resolution: {integrity: sha512-5jRCH9Z/+DRP7rkvY83B+yGIGX96OYdJmzngqnw2SBSxqCFPd0w2km3s5iawpGX8krnwSGmF0FW5Nhr0Hfai3g==}
@@ -1567,6 +1587,8 @@ snapshots:
       get-intrinsic: 1.3.0
 
   chai@6.2.2: {}
+
+  commander@14.0.3: {}
 
   content-disposition@1.1.0: {}
 

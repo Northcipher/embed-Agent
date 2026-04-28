@@ -1,6 +1,7 @@
 {
   "files": [],
   "references": [
+    { "path": "./apps/cli" },
     { "path": "./apps/mcp-server" },
     { "path": "./apps/runtime-server" },
     { "path": "./packages/contracts" },
