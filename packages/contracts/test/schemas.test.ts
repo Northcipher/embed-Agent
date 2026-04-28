@@ -9,6 +9,7 @@ import {
   PublicErrorResponseSchema,
   RunStatusResponseSchema,
   RunStateSchema,
+  TaskPlannerOutputSchema,
   ValidateArtifactInputSchema,
   ValidateArtifactRejectedResponseSchema,
   WatchRunResponseSchema
@@ -125,6 +126,61 @@ describe("P0 contract schemas", () => {
     });
 
     expect(plan.steps[0]?.capability).toBe("watch_serial");
+  });
+
+  it("accepts task planner output with validation intent and plan", () => {
+    const output = TaskPlannerOutputSchema.parse({
+      status: "planned",
+      validation_intent: {
+        intent_id: "intent-001",
+        feature_area: "boot",
+        summary: "verify boot fix",
+        confidence: 0.82,
+        confidence_reason: "request mentions boot crash and adb offline",
+        matched_scenarios: [{ name: "boot", reason: "boot issue" }],
+        expected_behavior: ["boot completed", "adb online"],
+        risk_focus: ["kernel panic"],
+        suggested_actions: ["watch serial"],
+        observe: ["boot markers"],
+        evidence_need: ["serial log"],
+        pass_fail: ["no kernel panic"],
+        assumptions: ["serial is available"],
+        missing_info: [],
+        inferred_values: {
+          wait_adb_timeout_sec: {
+            value: 180,
+            source: "default",
+            recommend_confirm: true
+          }
+        }
+      },
+      plan: {
+        plan_id: "plan-001",
+        intent_ref: "intent-001",
+        estimated_duration_sec: 180,
+        steps: [
+          {
+            id: "step-serial",
+            capability: "watch_serial",
+            condition: "always",
+            input: {
+              duration_sec: 180,
+              patterns: ["kernel panic"]
+            },
+            timeout_sec: 180
+          }
+        ],
+        success_criteria: ["no kernel panic"],
+        failure_signals: ["kernel panic"],
+        evidence_policy: {
+          always: ["serial:full"]
+        }
+      },
+      missing_info: [],
+      assumptions: ["serial is available"]
+    });
+
+    expect(output.status).toBe("planned");
   });
 
   it("rejects unregistered event types such as intent_failed", () => {

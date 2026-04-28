@@ -1,0 +1,26 @@
+{
+  "name": "@artifact-validation/llm-integration",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --config ../../vitest.config.ts --dir . test/*.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.1",
+    "@artifact-validation/contracts": "workspace:*",
+    "openai": "^6.34.0",
+    "zod": "^4.2.1"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.15"
+  }
+}
