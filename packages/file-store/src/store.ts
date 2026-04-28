@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, rename, stat, writeFile, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import {
   AgentReplySchema,
@@ -139,24 +139,27 @@ export class FileStore {
     const afterSeq = options.afterSeq ?? 0;
     const limit = options.limit ?? 100;
     const types = new Set(options.types ?? []);
-    const content = await readFile(path.join(this.runDir(runId), "events.jsonl"), "utf8");
     const events: RunEvent[] = [];
 
-    for (const line of content.split("\n")) {
-      if (line.trim().length === 0) {
-        continue;
+    const filePath = path.join(this.runDir(runId), "events.jsonl");
+    const file = await open(filePath, "r");
+    try {
+      const endsWithNewline = await fileEndsWithNewline(file);
+      let pendingLine: string | undefined;
+      for await (const line of file.readLines({ encoding: "utf8" })) {
+        if (pendingLine !== undefined) {
+          appendParsedEvent(events, pendingLine, afterSeq, limit, types, "complete");
+          if (events.length >= limit) {
+            break;
+          }
+        }
+        pendingLine = line;
       }
-      const event = RunEventSchema.parse(JSON.parse(line));
-      if (event.seq <= afterSeq) {
-        continue;
+      if (pendingLine !== undefined && events.length < limit) {
+        appendParsedEvent(events, pendingLine, afterSeq, limit, types, endsWithNewline ? "complete" : "maybe-incomplete");
       }
-      if (types.size > 0 && !types.has(event.type)) {
-        continue;
-      }
-      events.push(event);
-      if (events.length >= limit) {
-        break;
-      }
+    } finally {
+      await file.close();
     }
 
     return events;
@@ -274,6 +277,55 @@ async function assertFileExists(filePath: string): Promise<void> {
   if (!fileStat.isFile()) {
     throw new Error(`Evidence path is not a file: ${filePath}`);
   }
+}
+
+async function fileEndsWithNewline(file: FileHandle): Promise<boolean> {
+  const stats = await file.stat();
+  if (stats.size === 0) {
+    return true;
+  }
+  const buffer = Buffer.alloc(1);
+  await file.read({ buffer, position: stats.size - 1, length: 1 });
+  return buffer[0] === 10;
+}
+
+function appendParsedEvent(
+  events: RunEvent[],
+  line: string,
+  afterSeq: number,
+  limit: number,
+  types: Set<EventType>,
+  lineState: "complete" | "maybe-incomplete"
+): void {
+  if (line.trim().length === 0) {
+    return;
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(line);
+  } catch {
+    if (lineState === "maybe-incomplete") {
+      return;
+    }
+    throw new Error(`Invalid events.jsonl line: ${truncateForError(line)}`);
+  }
+  const event = RunEventSchema.parse(decoded);
+  if (event.seq <= afterSeq) {
+    return;
+  }
+  if (types.size > 0 && !types.has(event.type)) {
+    return;
+  }
+  if (events.length < limit) {
+    events.push(event);
+  }
+}
+
+function truncateForError(text: string, maxLength = 160): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength)}...`;
 }
 
 function isMissingFileError(error: unknown): boolean {

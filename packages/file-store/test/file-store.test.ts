@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -113,6 +113,66 @@ describe("FileStore", () => {
     const events = await store.readEvents("run-001", { types: ["rule_matched"], limit: 1 });
     expect(events).toHaveLength(1);
     expect(events[0]?.type).toBe("rule_matched");
+  });
+
+  it("tolerates an incomplete trailing JSONL line while reading events", async () => {
+    await store.createRun({ run_id: "run-001" });
+
+    const first = await store.appendEvent("run-001", {
+      time: "2026-04-28T10:00:01+08:00",
+      elapsed_sec: 1,
+      type: "run_created",
+      severity: "info",
+      source: "run_manager",
+      summary: "run created"
+    });
+
+    const eventsPath = path.join(rootDir, "runs", "run-001", "events.jsonl");
+    await writeFile(eventsPath, `${JSON.stringify(first)}\n{\"incomplete\":`, "utf8");
+
+    await expect(store.readEvents("run-001")).resolves.toEqual([first]);
+  });
+
+  it("throws when events.jsonl contains invalid JSON and ends with newline", async () => {
+    await store.createRun({ run_id: "run-001" });
+
+    const first = await store.appendEvent("run-001", {
+      time: "2026-04-28T10:00:01+08:00",
+      elapsed_sec: 1,
+      type: "run_created",
+      severity: "info",
+      source: "run_manager",
+      summary: "run created"
+    });
+
+    const eventsPath = path.join(rootDir, "runs", "run-001", "events.jsonl");
+    await writeFile(eventsPath, `${JSON.stringify(first)}\n{bad}\n`, "utf8");
+
+    await expect(store.readEvents("run-001")).rejects.toThrow("Invalid events.jsonl line");
+  });
+
+  it("throws on a non-final invalid JSONL line even when the file lacks trailing newline", async () => {
+    await store.createRun({ run_id: "run-001" });
+
+    const first = await store.appendEvent("run-001", {
+      time: "2026-04-28T10:00:01+08:00",
+      elapsed_sec: 1,
+      type: "run_created",
+      severity: "info",
+      source: "run_manager",
+      summary: "run created"
+    });
+    const second = {
+      ...first,
+      seq: 2,
+      type: "state_changed",
+      summary: "state changed"
+    };
+
+    const eventsPath = path.join(rootDir, "runs", "run-001", "events.jsonl");
+    await writeFile(eventsPath, `${JSON.stringify(first)}\n{bad}\n${JSON.stringify(second)}`, "utf8");
+
+    await expect(store.readEvents("run-001")).rejects.toThrow("Invalid events.jsonl line");
   });
 
   it("writes evidence content before adding the index ref", async () => {
