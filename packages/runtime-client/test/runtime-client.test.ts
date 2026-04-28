@@ -122,11 +122,11 @@ describe("RuntimeHttpClient", () => {
       }
     });
 
-    await client.getRunEvents({ run_id: "run/001", after_seq: 40, limit: 2 });
+    await client.getRunEvents({ run_id: "run/001", after_seq: 40, limit: 2, types: ["rule_matched", "observer_intent"] });
     await client.getEvidence({ run_id: "run/001", ref: "serial:full" });
 
     expect(calls[0]).toMatchObject({
-      url: "http://runtime.local/api/runs/run%2F001/events?after_seq=40&limit=2",
+      url: "http://runtime.local/api/runs/run%2F001/events?after_seq=40&limit=2&types=rule_matched%2Cobserver_intent",
       init: {
         method: "GET"
       }

@@ -78,7 +78,8 @@ export class RuntimeHttpClient {
       path: `/api/runs/${encodeURIComponent(input.run_id)}/events`,
       query: {
         after_seq: input.after_seq,
-        limit: input.limit
+        limit: input.limit,
+        types: input.types?.join(",")
       }
     });
   }

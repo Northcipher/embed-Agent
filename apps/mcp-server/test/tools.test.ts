@@ -86,7 +86,7 @@ describe("MCP tool handlers", () => {
     const handlers = createToolHandlers(
       fakeRuntimeClient({
         getRunEvents: async input => {
-          calls.push(`events:${input.after_seq}:${input.limit}`);
+          calls.push(`events:${input.after_seq}:${input.limit}:${input.types?.join(",") ?? ""}`);
           return ok<GetRunEventsResponse>({
             run_id: input.run_id,
             events: [],
@@ -111,9 +111,9 @@ describe("MCP tool handlers", () => {
       })
     );
 
-    const result = await handlers.watch_run({ run_id: "run-001", after_seq: 5, limit: 2 });
+    const result = await handlers.watch_run({ run_id: "run-001", after_seq: 5, limit: 2, types: ["rule_matched"] });
 
-    expect(calls).toEqual(["events:5:2", "status:run-001"]);
+    expect(calls).toEqual(["events:5:2:rule_matched", "status:run-001"]);
     expect(result.structuredContent).toEqual({
       run_id: "run-001",
       status: "running",

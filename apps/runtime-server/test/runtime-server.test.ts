@@ -124,6 +124,51 @@ describe("runtime-server HTTP API", () => {
     });
   });
 
+  it("filters run events by event types from HTTP query", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "init started", "boot completed"],
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 0,
+            stdout: "pass\n",
+            stderr: ""
+          }
+        }
+      }),
+      planFactory: () => demoPlan(),
+      executePlansInline: true,
+      idFactory: () => "run-event-filter",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+
+    const events = await server.app.inject({
+      method: "GET",
+      url: "/api/runs/run-event-filter/events?after_seq=0&limit=100&types=step_started,evidence_collected"
+    });
+    expect(events.statusCode).toBe(200);
+    expect(new Set(events.json().events.map((event: { type: string }) => event.type))).toEqual(
+      new Set(["step_started", "evidence_collected"])
+    );
+
+    const invalid = await server.app.inject({
+      method: "GET",
+      url: "/api/runs/run-event-filter/events?types=not_an_event"
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json()).toMatchObject({
+      status: "error",
+      error_code: "invalid_request"
+    });
+  });
+
   it("uses Task Planner output when no hand-written plan is supplied", async () => {
     server = buildRuntimeServer({
       rootDir,

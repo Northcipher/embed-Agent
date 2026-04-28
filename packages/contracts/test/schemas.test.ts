@@ -13,6 +13,7 @@ import {
   TargetProfileSchema,
   ValidateArtifactInputSchema,
   ValidateArtifactRejectedResponseSchema,
+  WatchRunInputSchema,
   WatchRunResponseSchema
 } from "../src/index.js";
 
@@ -289,6 +290,18 @@ describe("P0 contract schemas", () => {
     });
 
     expect(response.events[0]?.evidence_refs).toContain("serial:last-200-lines");
+  });
+
+  it("accepts watch_run input with event type filters", () => {
+    const input = WatchRunInputSchema.parse({
+      run_id: "run-001",
+      after_seq: 0,
+      limit: 10,
+      types: ["rule_matched", "observer_intent"],
+      wait_sec: 0
+    });
+
+    expect(input.types).toEqual(["rule_matched", "observer_intent"]);
   });
 
   it("accepts run_cancelled events in watch_run responses", () => {

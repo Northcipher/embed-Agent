@@ -60,13 +60,15 @@ export function buildRuntimeServer(options: RuntimeServerOptions): RuntimeServer
       {
         run_id: runId,
         after_seq: numberQuery(query.after_seq, 0),
-        limit: numberQuery(query.limit, 100)
+        limit: numberQuery(query.limit, 100),
+        types: stringListQuery(query.types)
       },
       "get_run_events query"
     );
     return service.getRunEvents(runId, {
       afterSeq: input.after_seq,
-      limit: input.limit
+      limit: input.limit,
+      ...(input.types === undefined ? {} : { types: input.types })
     });
   });
 
@@ -181,6 +183,22 @@ function numberQuery(value: unknown, defaultValue: number): number {
 
 function optionalStringQuery(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function stringListQuery(value: unknown): string[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map(item => item.trim())
+      .filter(Boolean);
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(item => (typeof item === "string" ? item.split(",").map(part => part.trim()).filter(Boolean) : []));
+  }
+  return [];
 }
 
 function objectBody(value: unknown): Record<string, unknown> {

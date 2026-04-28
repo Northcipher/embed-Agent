@@ -67,7 +67,8 @@ export function createToolHandlers(client: RuntimeClientPort): ToolHandlers {
       const events = await client.getRunEvents({
         run_id: parsed.run_id,
         after_seq: parsed.after_seq,
-        limit: parsed.limit
+        limit: parsed.limit,
+        ...(parsed.types === undefined ? {} : { types: parsed.types })
       });
       if (!events.ok) {
         return toMcpResult(events);

@@ -7,6 +7,7 @@ import {
   type CapabilityName,
   type CapabilityStatus,
   type CancelRunResponse,
+  type EventType,
   type GetEvidenceResponse,
   type GetRunEventsResponse,
   type GetRunResultResponse,
@@ -310,11 +311,12 @@ export class RuntimeService {
     };
   }
 
-  async getRunEvents(runId: string, options: { afterSeq: number; limit: number }): Promise<GetRunEventsResponse> {
+  async getRunEvents(runId: string, options: { afterSeq: number; limit: number; types?: EventType[] }): Promise<GetRunEventsResponse> {
     await this.readRunOrThrow(runId);
     const events = await this.store.readEvents(runId, {
       afterSeq: options.afterSeq,
-      limit: options.limit + 1
+      limit: options.limit + 1,
+      ...(options.types === undefined ? {} : { types: options.types })
     });
     const visibleEvents = events.slice(0, options.limit);
     return {

@@ -149,6 +149,7 @@ export const WatchRunInputSchema = z
     run_id: z.string().min(1),
     after_seq: z.number().int().nonnegative().default(0),
     limit: z.number().int().positive().max(500).default(50),
+    types: z.array(EventTypeSchema).optional(),
     wait_sec: z.number().int().nonnegative().default(0)
   })
   .strict();

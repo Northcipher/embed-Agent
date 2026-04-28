@@ -2,10 +2,12 @@
 import { readFile } from "node:fs/promises";
 import { Command, InvalidArgumentError } from "commander";
 import {
+  EventTypeSchema,
   InterveneRunInputSchema,
   ValidateArtifactInputSchema,
   WatchRunInputSchema,
   type CancelRunInput,
+  type EventType,
   type GetEvidenceInput,
   type GetRunEventsInput,
   type GetRunResultInput,
@@ -87,13 +89,15 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
     .argument("<run_id>", "Run id")
     .option("--after-seq <seq>", "Return events after this sequence", parseNonNegativeInteger, 0)
     .option("--limit <count>", "Maximum events to return", parsePositiveInteger, 50)
-    .action(async (runId: string, commandOptions: { afterSeq: number; limit: number }) => {
+    .option("--types <types>", "Comma-separated event types to include", parseEventTypes)
+    .action(async (runId: string, commandOptions: { afterSeq: number; limit: number; types?: EventType[] }) => {
       await writeClientResult(
         io,
         await watchRun(clientForCommand(), {
           run_id: runId,
           after_seq: commandOptions.afterSeq,
           limit: commandOptions.limit,
+          ...(commandOptions.types === undefined ? {} : { types: commandOptions.types }),
           wait_sec: 0
         })
       );
@@ -105,13 +109,15 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
     .argument("<run_id>", "Run id")
     .option("--after-seq <seq>", "Return events after this sequence", parseNonNegativeInteger, 0)
     .option("--limit <count>", "Maximum events to return", parsePositiveInteger, 100)
-    .action(async (runId: string, commandOptions: { afterSeq: number; limit: number }) => {
+    .option("--types <types>", "Comma-separated event types to include", parseEventTypes)
+    .action(async (runId: string, commandOptions: { afterSeq: number; limit: number; types?: EventType[] }) => {
       await writeClientResult(
         io,
         await clientForCommand().getRunEvents({
           run_id: runId,
           after_seq: commandOptions.afterSeq,
-          limit: commandOptions.limit
+          limit: commandOptions.limit,
+          ...(commandOptions.types === undefined ? {} : { types: commandOptions.types })
         } satisfies GetRunEventsInput)
       );
     });
@@ -232,7 +238,8 @@ async function watchRun(client: CliRuntimeClient, input: WatchRunInput): Promise
   const events = await client.getRunEvents({
     run_id: parsed.data.run_id,
     after_seq: parsed.data.after_seq,
-    limit: parsed.data.limit
+    limit: parsed.data.limit,
+    ...(parsed.data.types === undefined ? {} : { types: parsed.data.types })
   });
   if (!events.ok) {
     return events;
@@ -336,6 +343,23 @@ function parsePositiveInteger(value: string): number {
     throw new InvalidArgumentError("must be a positive integer");
   }
   return Number(value);
+}
+
+function parseEventTypes(value: string): EventType[] {
+  const items = value
+    .split(",")
+    .map(item => item.trim())
+    .filter(Boolean);
+  if (items.length === 0) {
+    throw new InvalidArgumentError("expected at least one event type");
+  }
+  return items.map(item => {
+    const parsed = EventTypeSchema.safeParse(item);
+    if (!parsed.success) {
+      throw new InvalidArgumentError("expected comma-separated known event types");
+    }
+    return parsed.data;
+  });
 }
 
 function formatIssues(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {

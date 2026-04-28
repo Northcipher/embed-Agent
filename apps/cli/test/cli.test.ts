@@ -88,7 +88,7 @@ describe("CLI thin adapter", () => {
     const cli = createHarness({
       client: fakeClient({
         getRunEvents: async input => {
-          calls.push(`events:${input.after_seq}:${input.limit}`);
+          calls.push(`events:${input.after_seq}:${input.limit}:${input.types?.join(",") ?? ""}`);
           return ok<GetRunEventsResponse>({
             run_id: input.run_id,
             events: [],
@@ -113,15 +113,36 @@ describe("CLI thin adapter", () => {
       })
     });
 
-    await cli.parse(["watch", "run-001", "--after-seq", "7", "--limit", "2"]);
+    await cli.parse(["watch", "run-001", "--after-seq", "7", "--limit", "2", "--types", "rule_matched,observer_intent"]);
 
-    expect(calls).toEqual(["events:7:2", "status:run-001"]);
+    expect(calls).toEqual(["events:7:2:rule_matched,observer_intent", "status:run-001"]);
     expect(JSON.parse(cli.stdout.join(""))).toEqual({
       run_id: "run-001",
       status: "running",
       events: [],
       next_after_seq: 9
     });
+  });
+
+  it("passes event type filters through the events command", async () => {
+    let capturedTypes: string[] | undefined;
+    const cli = createHarness({
+      client: fakeClient({
+        getRunEvents: async input => {
+          capturedTypes = input.types;
+          return ok<GetRunEventsResponse>({
+            run_id: input.run_id,
+            events: [],
+            next_after_seq: 0,
+            has_more: false
+          });
+        }
+      })
+    });
+
+    await cli.parse(["events", "run-001", "--types", "step_failed,step_timeout"]);
+
+    expect(capturedTypes).toEqual(["step_failed", "step_timeout"]);
   });
 
   it("validates add_instruction intervention input before forwarding", async () => {
