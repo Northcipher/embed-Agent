@@ -5,7 +5,6 @@ import {
   EventTypeSchema,
   InterveneRunInputSchema,
   ValidateArtifactInputSchema,
-  WatchRunInputSchema,
   type CancelRunInput,
   type EventType,
   type GetEvidenceInput,
@@ -15,8 +14,7 @@ import {
   type InterveneRunInput,
   type PublicErrorResponse,
   type RunStatusInput,
-  type WatchRunInput,
-  type WatchRunResponse
+  type WatchRunInput
 } from "@artifact-validation/contracts";
 import { RuntimeHttpClient, type RuntimeClientResult } from "@artifact-validation/runtime-client";
 
@@ -24,6 +22,7 @@ export type CliRuntimeClient = Pick<
   RuntimeHttpClient,
   | "validateArtifact"
   | "getRunStatus"
+  | "watchRun"
   | "getRunEvents"
   | "getEvidence"
   | "getRunResult"
@@ -93,13 +92,13 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
     .action(async (runId: string, commandOptions: { afterSeq: number; limit: number; types?: EventType[] }) => {
       await writeClientResult(
         io,
-        await watchRun(clientForCommand(), {
+        await clientForCommand().watchRun({
           run_id: runId,
           after_seq: commandOptions.afterSeq,
           limit: commandOptions.limit,
           ...(commandOptions.types === undefined ? {} : { types: commandOptions.types }),
           wait_sec: 0
-        })
+        } satisfies WatchRunInput)
       );
     });
 
@@ -225,38 +224,6 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
   });
 
   return program;
-}
-
-async function watchRun(client: CliRuntimeClient, input: WatchRunInput): Promise<RuntimeClientResult<WatchRunResponse>> {
-  const parsed = WatchRunInputSchema.safeParse(input);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      error: invalidRequest(`watch_run input is invalid: ${formatIssues(parsed.error)}`)
-    };
-  }
-  const events = await client.getRunEvents({
-    run_id: parsed.data.run_id,
-    after_seq: parsed.data.after_seq,
-    limit: parsed.data.limit,
-    ...(parsed.data.types === undefined ? {} : { types: parsed.data.types })
-  });
-  if (!events.ok) {
-    return events;
-  }
-  const status = await client.getRunStatus({ run_id: parsed.data.run_id });
-  if (!status.ok) {
-    return status;
-  }
-  return {
-    ok: true,
-    data: {
-      run_id: parsed.data.run_id,
-      status: status.data.status,
-      events: events.data.events,
-      next_after_seq: events.data.next_after_seq
-    }
-  };
 }
 
 function intervention(

@@ -8,6 +8,7 @@ import {
   PublicErrorResponseSchema,
   RunStatusResponseSchema,
   ValidateArtifactResponseSchema,
+  WatchRunResponseSchema,
   type CancelRunInput,
   type CancelRunResponse,
   type GetEvidenceInput,
@@ -24,7 +25,9 @@ import {
   type RunStatusInput,
   type RunStatusResponse,
   type ValidateArtifactInput,
-  type ValidateArtifactResponse
+  type ValidateArtifactResponse,
+  type WatchRunInput,
+  type WatchRunResponse
 } from "@artifact-validation/contracts";
 import type { ZodError, ZodType } from "zod";
 
@@ -43,6 +46,9 @@ export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Res
 export type RuntimeHttpClientOptions = {
   baseUrl?: string;
   fetchFn?: FetchLike;
+  sleepFn?: (milliseconds: number) => Promise<void>;
+  nowFn?: () => number;
+  watchPollIntervalMs?: number;
 };
 
 export class RuntimeHttpClient {
@@ -50,11 +56,20 @@ export class RuntimeHttpClient {
 
   private readonly fetchFn: FetchLike;
 
+  private readonly sleepFn: (milliseconds: number) => Promise<void>;
+
+  private readonly nowFn: () => number;
+
+  private readonly watchPollIntervalMs: number;
+
   constructor(options: RuntimeHttpClientOptions = {}) {
     this.baseUrl = normalizeBaseUrl(
       options.baseUrl ?? process.env.ARTIFACT_VALIDATION_RUNTIME_URL ?? "http://127.0.0.1:3456"
     );
     this.fetchFn = options.fetchFn ?? globalThis.fetch;
+    this.sleepFn = options.sleepFn ?? sleep;
+    this.nowFn = options.nowFn ?? Date.now;
+    this.watchPollIntervalMs = options.watchPollIntervalMs ?? 250;
   }
 
   validateArtifact(input: ValidateArtifactInput): Promise<RuntimeClientResult<ValidateArtifactResponse>> {
@@ -82,6 +97,41 @@ export class RuntimeHttpClient {
         types: input.types?.join(",")
       }
     });
+  }
+
+  async watchRun(input: WatchRunInput): Promise<RuntimeClientResult<WatchRunResponse>> {
+    const deadline = this.nowFn() + input.wait_sec * 1000;
+
+    for (;;) {
+      const events = await this.getRunEvents({
+        run_id: input.run_id,
+        after_seq: input.after_seq,
+        limit: input.limit,
+        ...(input.types === undefined ? {} : { types: input.types })
+      });
+      if (!events.ok) {
+        return events;
+      }
+      const status = await this.getRunStatus({ run_id: input.run_id });
+      if (!status.ok) {
+        return status;
+      }
+
+      const response = WatchRunResponseSchema.parse({
+        run_id: input.run_id,
+        status: status.data.status,
+        events: events.data.events,
+        next_after_seq: events.data.next_after_seq
+      });
+      if (response.events.length > 0 || input.wait_sec === 0 || isTerminalRunStatus(response.status) || this.nowFn() >= deadline) {
+        return {
+          ok: true,
+          data: response
+        };
+      }
+
+      await this.sleepFn(Math.min(this.watchPollIntervalMs, Math.max(0, deadline - this.nowFn())));
+    }
   }
 
   getEvidence(input: GetEvidenceInput): Promise<RuntimeClientResult<GetEvidenceResponse>> {
@@ -200,6 +250,14 @@ export class RuntimeHttpClient {
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
+}
+
+async function sleep(milliseconds: number): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+function isTerminalRunStatus(status: WatchRunResponse["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }
 
 async function readJson(response: Response): Promise<unknown> {

@@ -138,6 +138,194 @@ describe("RuntimeHttpClient", () => {
       }
     });
   });
+
+  it("polls watch_run until new events arrive when wait_sec is positive", async () => {
+    const calls: string[] = [];
+    const sleeps: number[] = [];
+    let eventCallCount = 0;
+    const client = new RuntimeHttpClient({
+      baseUrl: "http://runtime.local/",
+      watchPollIntervalMs: 5,
+      sleepFn: async milliseconds => {
+        sleeps.push(milliseconds);
+      },
+      fetchFn: async url => {
+        const urlText = url.toString();
+        calls.push(urlText);
+        if (urlText.includes("/events")) {
+          eventCallCount += 1;
+          return new Response(
+            JSON.stringify({
+              run_id: "run-001",
+              events:
+                eventCallCount === 1
+                  ? []
+                  : [
+                      {
+                        seq: 8,
+                        run_id: "run-001",
+                        time: "2026-04-28T02:00:08.000Z",
+                        elapsed_sec: 8,
+                        type: "rule_matched",
+                        severity: "warning",
+                        source: "rule_engine",
+                        summary: "panic signature matched"
+                      }
+                    ],
+              next_after_seq: eventCallCount === 1 ? 7 : 8,
+              has_more: false
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            run_id: "run-001",
+            status: "running",
+            target: {
+              state: "busy",
+              current_run_id: "run-001"
+            },
+            elapsed_sec: 9,
+            last_event_seq: eventCallCount === 1 ? 7 : 8,
+            evidence_path: "/tmp/runs/run-001"
+          }),
+          { status: 200 }
+        );
+      }
+    });
+
+    const result = await client.watchRun({
+      run_id: "run-001",
+      after_seq: 7,
+      limit: 50,
+      wait_sec: 1,
+      types: ["rule_matched"]
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toMatchObject({
+        run_id: "run-001",
+        status: "running",
+        next_after_seq: 8
+      });
+      expect(result.data.events).toHaveLength(1);
+    }
+    expect(calls.filter(call => call.includes("/events"))).toHaveLength(2);
+    expect(calls.filter(call => call.includes("/status"))).toHaveLength(2);
+    expect(sleeps).toEqual([5]);
+  });
+
+  it("performs a single watch_run poll when wait_sec is zero", async () => {
+    const calls: string[] = [];
+    const client = new RuntimeHttpClient({
+      baseUrl: "http://runtime.local/",
+      sleepFn: async () => {
+        throw new Error("watchRun should not sleep when wait_sec is zero");
+      },
+      fetchFn: async url => {
+        const urlText = url.toString();
+        calls.push(urlText);
+        if (urlText.includes("/events")) {
+          return new Response(
+            JSON.stringify({
+              run_id: "run-001",
+              events: [],
+              next_after_seq: 7,
+              has_more: false
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            run_id: "run-001",
+            status: "running",
+            target: {
+              state: "busy",
+              current_run_id: "run-001"
+            },
+            elapsed_sec: 9,
+            last_event_seq: 7,
+            evidence_path: "/tmp/runs/run-001"
+          }),
+          { status: 200 }
+        );
+      }
+    });
+
+    const result = await client.watchRun({
+      run_id: "run-001",
+      after_seq: 7,
+      limit: 50,
+      wait_sec: 0
+    });
+
+    expect(result.ok).toBe(true);
+    expect(calls.filter(call => call.includes("/events"))).toHaveLength(1);
+    expect(calls.filter(call => call.includes("/status"))).toHaveLength(1);
+  });
+
+  it("stops watch_run polling when the wait deadline expires without new events", async () => {
+    const calls: string[] = [];
+    const sleeps: number[] = [];
+    let now = 0;
+    const client = new RuntimeHttpClient({
+      baseUrl: "http://runtime.local/",
+      watchPollIntervalMs: 1000,
+      nowFn: () => now,
+      sleepFn: async milliseconds => {
+        sleeps.push(milliseconds);
+        now += milliseconds;
+      },
+      fetchFn: async url => {
+        const urlText = url.toString();
+        calls.push(urlText);
+        if (urlText.includes("/events")) {
+          return new Response(
+            JSON.stringify({
+              run_id: "run-001",
+              events: [],
+              next_after_seq: 7,
+              has_more: false
+            }),
+            { status: 200 }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            run_id: "run-001",
+            status: "running",
+            target: {
+              state: "busy",
+              current_run_id: "run-001"
+            },
+            elapsed_sec: 9,
+            last_event_seq: 7,
+            evidence_path: "/tmp/runs/run-001"
+          }),
+          { status: 200 }
+        );
+      }
+    });
+
+    const result = await client.watchRun({
+      run_id: "run-001",
+      after_seq: 7,
+      limit: 50,
+      wait_sec: 1
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.events).toEqual([]);
+      expect(result.data.next_after_seq).toBe(7);
+    }
+    expect(calls.filter(call => call.includes("/events"))).toHaveLength(2);
+    expect(calls.filter(call => call.includes("/status"))).toHaveLength(2);
+    expect(sleeps).toEqual([1000]);
+  });
 });
 
 function recordFetch(calls: Array<{ url: string; init: RequestInit | undefined }>, body: unknown): FetchLike {

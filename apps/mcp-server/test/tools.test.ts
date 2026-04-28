@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
-  GetRunEventsResponse,
-  RunStatusResponse,
-  ValidateArtifactResponse
+  ValidateArtifactResponse,
+  WatchRunResponse
 } from "@artifact-validation/contracts";
 import { createToolHandlers, MCP_TOOL_NAMES, type RuntimeClientPort } from "../src/tools.js";
 import type { RuntimeClientResult } from "../src/runtime-client.js";
@@ -81,39 +80,25 @@ describe("MCP tool handlers", () => {
     });
   });
 
-  it("implements watch_run by combining Runtime status and event stream reads", async () => {
+  it("delegates watch_run to the shared Runtime client watch method", async () => {
     const calls: string[] = [];
     const handlers = createToolHandlers(
       fakeRuntimeClient({
-        getRunEvents: async input => {
-          calls.push(`events:${input.after_seq}:${input.limit}:${input.types?.join(",") ?? ""}`);
-          return ok<GetRunEventsResponse>({
-            run_id: input.run_id,
-            events: [],
-            next_after_seq: 7,
-            has_more: false
-          });
-        },
-        getRunStatus: async input => {
-          calls.push(`status:${input.run_id}`);
-          return ok<RunStatusResponse>({
+        watchRun: async input => {
+          calls.push(`watch:${input.after_seq}:${input.limit}:${input.wait_sec}:${input.types?.join(",") ?? ""}`);
+          return ok<WatchRunResponse>({
             run_id: input.run_id,
             status: "running",
-            target: {
-              state: "busy",
-              current_run_id: input.run_id
-            },
-            elapsed_sec: 12,
-            last_event_seq: 7,
-            evidence_path: "/tmp/runs/run-001"
+            events: [],
+            next_after_seq: 7
           });
         }
       })
     );
 
-    const result = await handlers.watch_run({ run_id: "run-001", after_seq: 5, limit: 2, types: ["rule_matched"] });
+    const result = await handlers.watch_run({ run_id: "run-001", after_seq: 5, limit: 2, wait_sec: 3, types: ["rule_matched"] });
 
-    expect(calls).toEqual(["events:5:2:rule_matched", "status:run-001"]);
+    expect(calls).toEqual(["watch:5:2:3:rule_matched"]);
     expect(result.structuredContent).toEqual({
       run_id: "run-001",
       status: "running",
@@ -135,6 +120,7 @@ function fakeRuntimeClient(overrides: Partial<RuntimeClientPort>): RuntimeClient
   return {
     validateArtifact: overrides.validateArtifact ?? notImplemented,
     getRunStatus: overrides.getRunStatus ?? notImplemented,
+    watchRun: overrides.watchRun ?? notImplemented,
     getRunEvents: overrides.getRunEvents ?? notImplemented,
     getEvidence: overrides.getEvidence ?? notImplemented,
     getRunResult: overrides.getRunResult ?? notImplemented,

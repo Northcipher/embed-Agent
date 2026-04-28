@@ -16,12 +16,11 @@ import {
   ValidateArtifactInputSchema,
   ValidateArtifactResponseSchema,
   WatchRunInputSchema,
-  WatchRunResponseSchema,
-  type WatchRunResponse
+  WatchRunResponseSchema
 } from "@artifact-validation/contracts";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { jsonToolResult, toMcpResult } from "./mcp-result.js";
+import { toMcpResult } from "./mcp-result.js";
 import { RuntimeHttpClient } from "./runtime-client.js";
 
 export const MCP_TOOL_NAMES = [
@@ -42,6 +41,7 @@ export type RuntimeClientPort = Pick<
   RuntimeHttpClient,
   | "validateArtifact"
   | "getRunStatus"
+  | "watchRun"
   | "getRunEvents"
   | "getEvidence"
   | "getRunResult"
@@ -64,25 +64,7 @@ export function createToolHandlers(client: RuntimeClientPort): ToolHandlers {
     },
     watch_run: async input => {
       const parsed = WatchRunInputSchema.parse(input);
-      const events = await client.getRunEvents({
-        run_id: parsed.run_id,
-        after_seq: parsed.after_seq,
-        limit: parsed.limit,
-        ...(parsed.types === undefined ? {} : { types: parsed.types })
-      });
-      if (!events.ok) {
-        return toMcpResult(events);
-      }
-      const status = await client.getRunStatus({ run_id: parsed.run_id });
-      if (!status.ok) {
-        return toMcpResult(status);
-      }
-      return jsonToolResult({
-        run_id: parsed.run_id,
-        status: status.data.status,
-        events: events.data.events,
-        next_after_seq: events.data.next_after_seq
-      } satisfies WatchRunResponse);
+      return toMcpResult(await client.watchRun(parsed));
     },
     get_run_events: async input => {
       const parsed = GetRunEventsInputSchema.parse(input);

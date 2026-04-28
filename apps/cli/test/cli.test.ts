@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import type {
   GetRunEventsResponse,
   InterveneRunResponse,
-  RunStatusResponse,
-  ValidateArtifactResponse
+  ValidateArtifactResponse,
+  WatchRunResponse
 } from "@artifact-validation/contracts";
 import { createCliProgram, type CliRuntimeClient } from "../src/index.js";
 import type { RuntimeClientResult } from "@artifact-validation/runtime-client";
@@ -83,31 +83,17 @@ describe("CLI thin adapter", () => {
     });
   });
 
-  it("implements watch by combining Runtime event and status reads", async () => {
+  it("implements watch through the shared Runtime client watch method", async () => {
     const calls: string[] = [];
     const cli = createHarness({
       client: fakeClient({
-        getRunEvents: async input => {
-          calls.push(`events:${input.after_seq}:${input.limit}:${input.types?.join(",") ?? ""}`);
-          return ok<GetRunEventsResponse>({
-            run_id: input.run_id,
-            events: [],
-            next_after_seq: 9,
-            has_more: false
-          });
-        },
-        getRunStatus: async input => {
-          calls.push(`status:${input.run_id}`);
-          return ok<RunStatusResponse>({
+        watchRun: async input => {
+          calls.push(`watch:${input.after_seq}:${input.limit}:${input.wait_sec}:${input.types?.join(",") ?? ""}`);
+          return ok<WatchRunResponse>({
             run_id: input.run_id,
             status: "running",
-            target: {
-              state: "busy",
-              current_run_id: input.run_id
-            },
-            elapsed_sec: 5,
-            last_event_seq: 9,
-            evidence_path: "/tmp/runs/run-001"
+            events: [],
+            next_after_seq: 9
           });
         }
       })
@@ -115,7 +101,7 @@ describe("CLI thin adapter", () => {
 
     await cli.parse(["watch", "run-001", "--after-seq", "7", "--limit", "2", "--types", "rule_matched,observer_intent"]);
 
-    expect(calls).toEqual(["events:7:2:rule_matched,observer_intent", "status:run-001"]);
+    expect(calls).toEqual(["watch:7:2:0:rule_matched,observer_intent"]);
     expect(JSON.parse(cli.stdout.join(""))).toEqual({
       run_id: "run-001",
       status: "running",
@@ -272,6 +258,7 @@ function fakeClient(overrides: Partial<CliRuntimeClient>): CliRuntimeClient {
   return {
     validateArtifact: overrides.validateArtifact ?? notImplemented,
     getRunStatus: overrides.getRunStatus ?? notImplemented,
+    watchRun: overrides.watchRun ?? notImplemented,
     getRunEvents: overrides.getRunEvents ?? notImplemented,
     getEvidence: overrides.getEvidence ?? notImplemented,
     getRunResult: overrides.getRunResult ?? notImplemented,
