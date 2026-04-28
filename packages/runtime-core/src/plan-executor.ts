@@ -361,6 +361,7 @@ export function validatePlanForExecution(
     if (allowedCapabilitySet !== undefined && !allowedCapabilitySet.has(step.capability)) {
       issues.push(`capability ${step.capability} is not available for this target/request`);
     }
+    issues.push(...validateCapabilityStep(step));
   }
 
   for (const capability of missingCapabilities) {
@@ -371,6 +372,115 @@ export function validatePlanForExecution(
     return { accepted: false, issues };
   }
   return { accepted: true, plan: parsed.data };
+}
+
+function validateCapabilityStep(step: PlanStep): string[] {
+  const issues: string[] = [];
+  const label = `step ${step.id} ${step.capability}`;
+  const timeoutLimit = P0_CAPABILITY_TIMEOUT_LIMIT_SEC[step.capability];
+
+  if (step.timeout_sec > timeoutLimit) {
+    issues.push(`${label} timeout_sec must be <= ${timeoutLimit}`);
+  }
+
+  switch (step.capability) {
+    case "flash":
+      requireNonEmptyString(step, "artifact_ref", issues);
+      requireNonEmptyString(step, "artifact_type", issues);
+      break;
+    case "push":
+      requireNonEmptyString(step, "src_ref", issues);
+      if (!isNonEmptyString(step.input.dst_path) || !step.input.dst_path.startsWith("/")) {
+        issues.push(`${label} input.dst_path must be an absolute path`);
+      }
+      break;
+    case "watch_serial":
+      optionalPositiveInt(step, "duration_sec", issues);
+      optionalStringArray(step, "patterns", issues);
+      optionalMax(step, "duration_sec", timeoutLimit, issues);
+      break;
+    case "wait_adb":
+      optionalPositiveInt(step, "timeout_sec", issues);
+      optionalMax(step, "timeout_sec", timeoutLimit, issues);
+      break;
+    case "shell_exec":
+      requireNonEmptyString(step, "command", issues);
+      optionalPositiveInt(step, "timeout_sec", issues);
+      optionalMax(step, "timeout_sec", timeoutLimit, issues);
+      optionalInteger(step, "expected_exit_code", issues);
+      break;
+    case "check_process":
+      requireNonEmptyString(step, "process_name", issues);
+      break;
+    case "collect_logs":
+      requireStringArray(step, "items", issues);
+      break;
+    case "save_snapshot":
+      requireNonEmptyString(step, "reason", issues);
+      optionalStringArray(step, "include", issues);
+      break;
+  }
+
+  return issues;
+}
+
+const P0_CAPABILITY_TIMEOUT_LIMIT_SEC: Record<CapabilityName, number> = {
+  flash: 300,
+  push: 60,
+  watch_serial: 600,
+  wait_adb: 180,
+  shell_exec: 60,
+  check_process: 30,
+  collect_logs: 120,
+  save_snapshot: 30
+};
+
+function requireNonEmptyString(step: PlanStep, key: string, issues: string[]): void {
+  if (!isNonEmptyString(step.input[key])) {
+    issues.push(`step ${step.id} ${step.capability} input.${key} must be a non-empty string`);
+  }
+}
+
+function requireStringArray(step: PlanStep, key: string, issues: string[]): void {
+  if (!isStringArray(step.input[key])) {
+    issues.push(`step ${step.id} ${step.capability} input.${key} must be an array of non-empty strings`);
+  }
+}
+
+function optionalStringArray(step: PlanStep, key: string, issues: string[]): void {
+  const value = step.input[key];
+  if (value !== undefined && !isStringArray(value)) {
+    issues.push(`step ${step.id} ${step.capability} input.${key} must be an array of non-empty strings`);
+  }
+}
+
+function optionalPositiveInt(step: PlanStep, key: string, issues: string[]): void {
+  const value = step.input[key];
+  if (value !== undefined && (!Number.isInteger(value) || typeof value !== "number" || value <= 0)) {
+    issues.push(`step ${step.id} ${step.capability} input.${key} must be a positive integer`);
+  }
+}
+
+function optionalInteger(step: PlanStep, key: string, issues: string[]): void {
+  const value = step.input[key];
+  if (value !== undefined && (!Number.isInteger(value) || typeof value !== "number")) {
+    issues.push(`step ${step.id} ${step.capability} input.${key} must be an integer`);
+  }
+}
+
+function optionalMax(step: PlanStep, key: string, max: number, issues: string[]): void {
+  const value = step.input[key];
+  if (typeof value === "number" && value > max) {
+    issues.push(`step ${step.id} ${step.capability} input.${key} must be <= ${max}`);
+  }
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length > 0 && value.every(isNonEmptyString);
 }
 
 function shouldExecuteStep(step: PlanStep, sawFailure: boolean, sawFatalFailure: boolean): boolean {

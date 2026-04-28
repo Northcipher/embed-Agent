@@ -1438,7 +1438,8 @@ function demoPlan(): Plan {
         capability: "flash",
         condition: "always",
         input: {
-          artifact_ref: "artifact-001"
+          artifact_ref: "artifact-001",
+          artifact_type: "firmware_img"
         },
         timeout_sec: 300
       },

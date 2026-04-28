@@ -6,7 +6,7 @@ import { FakeAdapterRegistry } from "@artifact-validation/adapters";
 import type { CapabilityAdapter, CapabilityAdapterRegistry, CapabilityExecutionContext } from "@artifact-validation/adapters";
 import type { CapabilityName, Plan } from "@artifact-validation/contracts";
 import { FileStore } from "@artifact-validation/file-store";
-import { PlanExecutor, RunManager } from "../src/index.js";
+import { PlanExecutor, RunManager, validatePlanForExecution } from "../src/index.js";
 
 describe("PlanExecutor", () => {
   let rootDir: string;
@@ -134,6 +134,95 @@ describe("PlanExecutor", () => {
         "plan plan-demo cannot execute: capability flash is not available for this target/request; capability shell_exec is not available for this target/request"
     });
     expect((await store.readRun("run-001")).status).toBe("failed");
+  });
+
+  it("rejects invalid capability input before executing adapters", async () => {
+    await runManager.createRun({ runId: "run-001", initialState: "planning" });
+    let adapterCalls = 0;
+    const shellAdapter: CapabilityAdapter = {
+      capability: "shell_exec",
+      async execute(_context: CapabilityExecutionContext) {
+        adapterCalls += 1;
+        return {
+          capability: "shell_exec",
+          success: true,
+          status: "completed",
+          output: {},
+          evidence_refs: [],
+          summary: "should not execute"
+        };
+      }
+    };
+    const executor = new PlanExecutor({
+      store,
+      runManager,
+      adapters: {
+        get(capability) {
+          return capability === "shell_exec" ? shellAdapter : undefined;
+        }
+      }
+    });
+
+    const result = await executor.executePlan({
+      runId: "run-001",
+      plan: oneStepPlan({
+        id: "step-invalid-shell",
+        capability: "shell_exec",
+        condition: "always",
+        input: {
+          expected_exit_code: 0
+        },
+        timeout_sec: 60
+      })
+    });
+
+    expect(result).toEqual({
+      accepted: false,
+      error_code: "plan_rejected",
+      message: "plan plan-one-step cannot execute: step step-invalid-shell shell_exec input.command must be a non-empty string"
+    });
+    expect(adapterCalls).toBe(0);
+    expect((await store.readRun("run-001")).status).toBe("failed");
+  });
+
+  it("reports invalid capability input and timeout limit issues during plan validation", () => {
+    const validation = validatePlanForExecution(
+      {
+        ...demoPlan(),
+        steps: [
+          {
+            id: "step-push",
+            capability: "push",
+            condition: "always",
+            input: {
+              src_ref: "artifact-001",
+              dst_path: "relative/path"
+            },
+            timeout_sec: 60
+          },
+          {
+            id: "step-serial",
+            capability: "watch_serial",
+            condition: "always",
+            input: {
+              duration_sec: 601,
+              patterns: ["panic"]
+            },
+            timeout_sec: 601
+          }
+        ]
+      },
+      new FakeAdapterRegistry()
+    );
+
+    expect(validation).toEqual({
+      accepted: false,
+      issues: [
+        "step step-push push input.dst_path must be an absolute path",
+        "step step-serial watch_serial timeout_sec must be <= 600",
+        "step step-serial watch_serial input.duration_sec must be <= 600"
+      ]
+    });
   });
 
   it("runs on_failure collection steps and fails the run after a fatal step failure", async () => {
@@ -503,7 +592,8 @@ function demoPlan(): Plan {
         capability: "flash",
         condition: "always",
         input: {
-          artifact_ref: "artifact-001"
+          artifact_ref: "artifact-001",
+          artifact_type: "firmware_img"
         },
         timeout_sec: 300
       },
