@@ -3,10 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeAdapterRegistry } from "@artifact-validation/adapters";
-import type { Plan, ValidateArtifactInput } from "@artifact-validation/contracts";
+import type { EventSeverity, EventSource, EventType, Plan, RunEvent, ValidateArtifactInput } from "@artifact-validation/contracts";
 import {
   buildRuntimeServer,
   buildRuntimeServerWithLlmConfig,
+  shouldTriggerObserver,
   type RuntimeObserverInput,
   type RuntimeReplyGeneratorInput,
   type RuntimeServer
@@ -634,6 +635,59 @@ describe("runtime-server HTTP API", () => {
     expect(new Set(triggerSeqs).size).toBe(2);
   });
 
+  it("only treats rule_matched warning and error events as Observer triggers", () => {
+    expect(shouldTriggerObserver(runEvent("rule_matched", "error"))).toBe(true);
+    expect(shouldTriggerObserver(runEvent("rule_matched", "warning"))).toBe(true);
+    expect(shouldTriggerObserver(runEvent("rule_matched", "info"))).toBe(false);
+    expect(shouldTriggerObserver(runEvent("rule_matched", "debug"))).toBe(false);
+  });
+
+  it("records Observer exceptions as rejected observer_intent events", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "boot completed"],
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 1,
+            stdout: "fail\n",
+            stderr: "smoke failed\n"
+          }
+        }
+      }),
+      planFactory: () => demoPlan(),
+      observer: {
+        observe: async () => {
+          throw new Error("observer exploded");
+        }
+      },
+      executePlansInline: true,
+      idFactory: () => "run-observer-throws",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+
+    const events = await server.app.inject({ method: "GET", url: "/api/runs/run-observer-throws/events?after_seq=0&limit=100" });
+    const observerEvent = events.json().events.find((event: { type: string }) => event.type === "observer_intent");
+    expect(observerEvent).toMatchObject({
+      type: "observer_intent",
+      severity: "warning",
+      payload: {
+        accepted: false,
+        brain_call: "observer-unavailable",
+        reasons: ["observer exploded"],
+        intent: {
+          intent: "continue"
+        }
+      }
+    });
+  });
+
   it("records rejected Observer output as observer_intent event", async () => {
     server = buildRuntimeServer({
       rootDir,
@@ -1080,6 +1134,19 @@ function twoFailurePlan(): Plan {
       on_success: [],
       on_failure: ["adb:step-nonfatal", "adb:step-fatal"]
     }
+  };
+}
+
+function runEvent(type: EventType, severity: EventSeverity): RunEvent {
+  return {
+    seq: 1,
+    run_id: "run-001",
+    time: "2026-04-28T00:00:00.000Z",
+    elapsed_sec: 1,
+    type,
+    severity,
+    source: "rule_engine" satisfies EventSource,
+    summary: `${type} ${severity}`
   };
 }
 

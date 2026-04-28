@@ -550,7 +550,7 @@ export class RuntimeService {
     if (this.observer === undefined) {
       return;
     }
-    const triggerEvents = events.filter(isObserverTriggerEvent).slice(0, MAX_OBSERVER_TRIGGERS_PER_EXECUTION);
+    const triggerEvents = events.filter(shouldTriggerObserver).slice(0, MAX_OBSERVER_TRIGGERS_PER_EXECUTION);
     if (triggerEvents.length === 0) {
       return;
     }
@@ -760,8 +760,11 @@ function lastSeq(events: RunEvent[], fallback: number): number {
   return events.length === 0 ? fallback : events[events.length - 1]!.seq;
 }
 
-function isObserverTriggerEvent(event: RunEvent): boolean {
-  return event.type === "rule_matched" || event.type === "step_failed" || event.type === "step_timeout";
+export function shouldTriggerObserver(event: RunEvent): boolean {
+  if (event.type === "rule_matched") {
+    return event.severity === "error" || event.severity === "warning";
+  }
+  return event.type === "step_failed" || event.type === "step_timeout";
 }
 
 const MAX_OBSERVER_TRIGGERS_PER_EXECUTION = 3;
