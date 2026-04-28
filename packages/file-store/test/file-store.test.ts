@@ -137,6 +137,28 @@ describe("FileStore", () => {
     ]);
   });
 
+  it("writes and reads validated agent replies", async () => {
+    await store.createRun({ run_id: "run-001" });
+
+    expect(await store.readAgentReply("run-001")).toBeUndefined();
+    const reply = await store.writeAgentReply("run-001", {
+      run_id: "run-001",
+      status: "completed",
+      summary: "run completed; review evidence refs",
+      confidence: 0.5,
+      key_evidence: [],
+      suggested_next: "review evidence refs if more detail is needed",
+      evidence_path: path.join(rootDir, "runs", "run-001")
+    });
+
+    expect(reply.status).toBe("completed");
+    await expect(readFile(path.join(rootDir, "runs", "run-001", "reply.json"), "utf8")).resolves.toContain("run completed");
+    await expect(store.readAgentReply("run-001")).resolves.toMatchObject({
+      run_id: "run-001",
+      status: "completed"
+    });
+  });
+
   it("rejects evidence paths outside the run directory", async () => {
     await store.createRun({ run_id: "run-001" });
 

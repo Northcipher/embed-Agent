@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
 import type { CapabilityAdapterRegistry } from "@artifact-validation/adapters";
 import {
+  AgentReplySchema,
   type AgentReply,
   type CapabilityName,
   type CapabilityStatus,
@@ -145,6 +147,7 @@ export class RuntimeService {
             suggested_next: "Fix the hand-written plan or planner output and retry."
           };
         }
+        await this.writeRuleBasedReply(execution.run);
       } else {
         this.startBackgroundPlan(runId, plan);
       }
@@ -410,14 +413,26 @@ export class RuntimeService {
     }
   }
 
-  private async tryReadAgentReply(_runId: string): Promise<AgentReply | undefined> {
-    return undefined;
+  private async tryReadAgentReply(runId: string): Promise<AgentReply | undefined> {
+    const run = await this.readRunOrThrow(runId);
+    try {
+      const raw = JSON.parse(await readFile(path.join(run.evidence_path, "reply.json"), "utf8"));
+      return AgentReplySchema.parse(raw);
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   private startBackgroundPlan(runId: string, plan: Plan): void {
     void (async () => {
       try {
-        await this.executor.executePlan({ runId, plan });
+        const execution = await this.executor.executePlan({ runId, plan });
+        if (execution.accepted) {
+          await this.writeRuleBasedReply(execution.run);
+        }
       } catch (error) {
         await this.failRunAfterBackgroundError(runId, error);
       }
@@ -464,6 +479,33 @@ export class RuntimeService {
       source: "orchestrator"
     });
   }
+
+  private async writeRuleBasedReply(run: Awaited<ReturnType<FileStore["readRun"]>>): Promise<void> {
+    if (run.status !== "completed" && run.status !== "failed" && run.status !== "cancelled") {
+      return;
+    }
+    const index = await this.store.readEvidenceIndex(run.run_id);
+    const reply = AgentReplySchema.parse({
+      run_id: run.run_id,
+      status: run.status,
+      summary: `run ${run.status}; review event stream and evidence refs for details`,
+      confidence: 0.5,
+      key_evidence: index.key_events.map(event => ({
+        summary: event.summary,
+        evidence_refs: event.evidence_refs
+      })),
+      suggested_next: "Review the referenced evidence and rerun validation with more context if needed.",
+      evidence_path: run.evidence_path
+    });
+    await writeJsonAtomic(path.join(run.evidence_path, "reply.json"), reply);
+  }
+}
+
+async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`);
+  await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`);
+  await rename(tempPath, filePath);
 }
 
 const P0_CAPABILITIES: CapabilityName[] = [
@@ -527,4 +569,8 @@ function elapsedSec(createdAt: string, now: Date): number {
 
 function lastSeq(events: RunEvent[], fallback: number): number {
   return events.length === 0 ? fallback : events[events.length - 1]!.seq;
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "ENOENT";
 }

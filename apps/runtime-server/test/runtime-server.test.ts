@@ -109,10 +109,11 @@ describe("runtime-server HTTP API", () => {
 
     const result = await server.app.inject({ method: "GET", url: "/api/runs/run-001/result" });
     expect(result.statusCode).toBe(200);
-    expect(result.json()).toEqual({
+    expect(result.json()).toMatchObject({
       run_id: "run-001",
       status: "completed",
-      result_available: false
+      summary: "run completed; review event stream and evidence refs for details",
+      key_evidence: []
     });
   });
 
@@ -149,6 +150,46 @@ describe("runtime-server HTTP API", () => {
       status: "accepted",
       run_id: "run-planner-001",
       state: "completed"
+    });
+  });
+
+  it("writes Agent Reply after background plan execution finishes", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "boot completed"],
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 0,
+            stdout: "pass\n",
+            stderr: ""
+          }
+        },
+        logs: {
+          dmesg: "clean dmesg\n"
+        }
+      }),
+      planFactory: () => demoPlan(),
+      executePlansInline: false,
+      idFactory: () => "run-background",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    const created = await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+    expect(created.json()).toMatchObject({
+      status: "accepted",
+      run_id: "run-background"
+    });
+
+    const result = await waitForResult(server, "run-background");
+    expect(result).toMatchObject({
+      run_id: "run-background",
+      status: "completed",
+      summary: "run completed; review event stream and evidence refs for details"
     });
   });
 
@@ -261,6 +302,13 @@ describe("runtime-server HTTP API", () => {
     expect(created.json()).toMatchObject({
       status: "accepted",
       state: "planning"
+    });
+
+    const pendingResult = await server.app.inject({ method: "GET", url: "/api/runs/run-001/result" });
+    expect(pendingResult.json()).toEqual({
+      run_id: "run-001",
+      status: "planning",
+      result_available: false
     });
 
     const intervention = await server.app.inject({
@@ -451,4 +499,18 @@ function plannerThatReturns(result: Awaited<ReturnType<NonNullable<Parameters<ty
   return {
     plan: async () => result
   };
+}
+
+async function waitForResult(runtimeServer: RuntimeServer, runId: string): Promise<Record<string, unknown>> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (attempt > 0) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    const response = await runtimeServer.app.inject({ method: "GET", url: `/api/runs/${runId}/result` });
+    const body = response.json();
+    if (body.result_available !== false) {
+      return body;
+    }
+  }
+  throw new Error(`result for ${runId} was not available`);
 }

@@ -1,6 +1,8 @@
 import { appendFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  AgentReplySchema,
+  type AgentReply,
   EvidenceIndexSchema,
   type EvidenceIndex,
   type EvidenceRef,
@@ -190,6 +192,24 @@ export class FileStore {
     return updated;
   }
 
+  async writeAgentReply(runId: string, reply: AgentReply): Promise<AgentReply> {
+    const parsed = AgentReplySchema.parse(reply);
+    await this.writeJsonAtomic(path.join(this.runDir(runId), "reply.json"), parsed);
+    return parsed;
+  }
+
+  async readAgentReply(runId: string): Promise<AgentReply | undefined> {
+    try {
+      const raw = await this.readJson(path.join(this.runDir(runId), "reply.json"));
+      return AgentReplySchema.parse(raw);
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
   private emptyEvidenceIndex(runId: string): EvidenceIndex {
     return EvidenceIndexSchema.parse({
       run_id: runId,
@@ -243,4 +263,8 @@ async function assertFileExists(filePath: string): Promise<void> {
   if (!fileStat.isFile()) {
     throw new Error(`Evidence path is not a file: ${filePath}`);
   }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "ENOENT";
 }
