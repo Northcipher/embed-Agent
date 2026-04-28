@@ -193,6 +193,34 @@ describe("runtime-server HTTP API", () => {
     });
   });
 
+  it("writes Agent Reply after background plan execution is rejected", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry(),
+      planFactory: () => duplicateStepPlan(),
+      executePlansInline: false,
+      idFactory: () => "run-background-bad-plan",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    const created = await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+    expect(created.json()).toMatchObject({
+      status: "accepted",
+      run_id: "run-background-bad-plan"
+    });
+
+    const result = await waitForResult(server, "run-background-bad-plan");
+    expect(result).toMatchObject({
+      run_id: "run-background-bad-plan",
+      status: "failed",
+      summary: "run failed; review event stream and evidence refs for details"
+    });
+  });
+
   it("returns clarification_needed and fails the run when Task Planner needs missing input", async () => {
     server = buildRuntimeServer({
       rootDir,
@@ -338,6 +366,14 @@ describe("runtime-server HTTP API", () => {
     expect(cancel.json()).toMatchObject({
       run_id: "run-001",
       status: "cancelled"
+    });
+
+    const cancelledResult = await server.app.inject({ method: "GET", url: "/api/runs/run-001/result" });
+    expect(cancelledResult.statusCode).toBe(200);
+    expect(cancelledResult.json()).toMatchObject({
+      run_id: "run-001",
+      status: "cancelled",
+      summary: "run cancelled; review event stream and evidence refs for details"
     });
 
     const capabilities = await server.app.inject({ method: "GET", url: "/api/targets/board-01/capabilities" });

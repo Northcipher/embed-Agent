@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { stat } from "node:fs/promises";
 import type { CapabilityAdapterRegistry } from "@artifact-validation/adapters";
 import {
   AgentReplySchema,
@@ -22,8 +21,8 @@ import {
   type ValidateArtifactInput,
   type ValidateArtifactRejectedResponse
 } from "@artifact-validation/contracts";
-import { FileStore } from "@artifact-validation/file-store";
-import { PlanExecutor, RunManager } from "@artifact-validation/runtime-core";
+import { FileStore, type StoredRun } from "@artifact-validation/file-store";
+import { isTerminalRunState, PlanExecutor, RunManager } from "@artifact-validation/runtime-core";
 import { RuntimeHttpError, resourceNotFound, runNotFound, unsupportedAction } from "./errors.js";
 
 export type PlanFactory = (input: ValidateArtifactInput) => Plan | undefined | Promise<Plan | undefined>;
@@ -313,6 +312,7 @@ export class RuntimeService {
   async cancelRun(runId: string, reason?: string): Promise<CancelRunResponse> {
     const run = await this.readRunOrThrow(runId);
     if (run.status === "cancelled") {
+      await this.writeRuleBasedReply(run);
       return {
         run_id: runId,
         status: "cancelled",
@@ -329,6 +329,7 @@ export class RuntimeService {
     if (!transitioned.accepted) {
       throw unsupportedAction(transitioned.message);
     }
+    await this.writeRuleBasedReply(transitioned.run);
     return {
       run_id: runId,
       status: "cancelled",
@@ -414,16 +415,7 @@ export class RuntimeService {
   }
 
   private async tryReadAgentReply(runId: string): Promise<AgentReply | undefined> {
-    const run = await this.readRunOrThrow(runId);
-    try {
-      const raw = JSON.parse(await readFile(path.join(run.evidence_path, "reply.json"), "utf8"));
-      return AgentReplySchema.parse(raw);
-    } catch (error) {
-      if (isMissingFileError(error)) {
-        return undefined;
-      }
-      throw error;
-    }
+    return this.store.readAgentReply(runId);
   }
 
   private startBackgroundPlan(runId: string, plan: Plan): void {
@@ -432,6 +424,9 @@ export class RuntimeService {
         const execution = await this.executor.executePlan({ runId, plan });
         if (execution.accepted) {
           await this.writeRuleBasedReply(execution.run);
+        } else {
+          const run = await this.store.readRun(runId);
+          await this.writeRuleBasedReply(run);
         }
       } catch (error) {
         await this.failRunAfterBackgroundError(runId, error);
@@ -469,6 +464,10 @@ export class RuntimeService {
 
   private async transitionFailedIfAllowed(runId: string, error: unknown): Promise<void> {
     const current = await this.readRunOrThrow(runId);
+    if (isTerminalRunState(current.status)) {
+      await this.writeRuleBasedReply(current);
+      return;
+    }
     if (current.status !== "planning" && current.status !== "collecting_evidence") {
       return;
     }
@@ -478,9 +477,10 @@ export class RuntimeService {
       reason: error instanceof Error ? error.message : "background execution failed",
       source: "orchestrator"
     });
+    await this.writeRuleBasedReply(await this.store.readRun(runId));
   }
 
-  private async writeRuleBasedReply(run: Awaited<ReturnType<FileStore["readRun"]>>): Promise<void> {
+  private async writeRuleBasedReply(run: StoredRun): Promise<void> {
     if (run.status !== "completed" && run.status !== "failed" && run.status !== "cancelled") {
       return;
     }
@@ -497,15 +497,8 @@ export class RuntimeService {
       suggested_next: "Review the referenced evidence and rerun validation with more context if needed.",
       evidence_path: run.evidence_path
     });
-    await writeJsonAtomic(path.join(run.evidence_path, "reply.json"), reply);
+    await this.store.writeAgentReply(run.run_id, reply);
   }
-}
-
-async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
-  await mkdir(path.dirname(filePath), { recursive: true });
-  const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`);
-  await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`);
-  await rename(tempPath, filePath);
 }
 
 const P0_CAPABILITIES: CapabilityName[] = [
@@ -569,8 +562,4 @@ function elapsedSec(createdAt: string, now: Date): number {
 
 function lastSeq(events: RunEvent[], fallback: number): number {
   return events.length === 0 ? fallback : events[events.length - 1]!.seq;
-}
-
-function isMissingFileError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "ENOENT";
 }
