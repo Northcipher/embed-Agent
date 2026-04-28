@@ -55,6 +55,9 @@ importers:
 
   packages/runtime-core:
     dependencies:
+      '@artifact-validation/adapters':
+        specifier: workspace:*
+        version: link:../adapters
       '@artifact-validation/contracts':
         specifier: workspace:*
         version: link:../contracts

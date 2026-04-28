@@ -12,9 +12,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --config ../../vitest.config.ts --dir . test/state-machine.test.ts"
+    "test": "vitest run --config ../../vitest.config.ts --dir . test/*.test.ts"
   },
   "dependencies": {
+    "@artifact-validation/adapters": "workspace:*",
     "@artifact-validation/contracts": "workspace:*",
     "@artifact-validation/file-store": "workspace:*"
   },
