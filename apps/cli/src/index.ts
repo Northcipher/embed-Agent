@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import { Command, InvalidArgumentError } from "commander";
 import {
   InterveneRunInputSchema,
-  PublicErrorResponseSchema,
   ValidateArtifactInputSchema,
   WatchRunInputSchema,
   type CancelRunInput,
@@ -223,23 +222,29 @@ export function createCliProgram(options: CreateCliProgramOptions = {}): Command
 }
 
 async function watchRun(client: CliRuntimeClient, input: WatchRunInput): Promise<RuntimeClientResult<WatchRunResponse>> {
-  const parsed = WatchRunInputSchema.parse(input);
+  const parsed = WatchRunInputSchema.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: invalidRequest(`watch_run input is invalid: ${formatIssues(parsed.error)}`)
+    };
+  }
   const events = await client.getRunEvents({
-    run_id: parsed.run_id,
-    after_seq: parsed.after_seq,
-    limit: parsed.limit
+    run_id: parsed.data.run_id,
+    after_seq: parsed.data.after_seq,
+    limit: parsed.data.limit
   });
   if (!events.ok) {
     return events;
   }
-  const status = await client.getRunStatus({ run_id: parsed.run_id });
+  const status = await client.getRunStatus({ run_id: parsed.data.run_id });
   if (!status.ok) {
     return status;
   }
   return {
     ok: true,
     data: {
-      run_id: parsed.run_id,
+      run_id: parsed.data.run_id,
       status: status.data.status,
       events: events.data.events,
       next_after_seq: events.data.next_after_seq
@@ -298,10 +303,6 @@ async function writeClientResult<T>(io: CliIo, result: RuntimeClientResult<T>): 
     writeJson(io, result.error, true);
     return;
   }
-  if (PublicErrorResponseSchema.safeParse(result.data).success) {
-    writeJson(io, result.data as Record<string, unknown>, true);
-    return;
-  }
   writeJson(io, result.data);
 }
 
@@ -324,19 +325,17 @@ function invalidRequest(message: string): PublicErrorResponse {
 }
 
 function parseNonNegativeInteger(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed < 0) {
+  if (!/^(0|[1-9]\d*)$/.test(value)) {
     throw new InvalidArgumentError("must be a non-negative integer");
   }
-  return parsed;
+  return Number(value);
 }
 
 function parsePositiveInteger(value: string): number {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
+  if (!/^[1-9]\d*$/.test(value)) {
     throw new InvalidArgumentError("must be a positive integer");
   }
-  return parsed;
+  return Number(value);
 }
 
 function formatIssues(error: { issues: Array<{ path: PropertyKey[]; message: string }> }): string {

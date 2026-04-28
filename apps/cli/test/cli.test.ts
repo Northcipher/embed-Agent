@@ -172,6 +172,50 @@ describe("CLI thin adapter", () => {
       error_code: "invalid_request"
     });
   });
+
+  it("reports unreadable validate input files without calling Runtime", async () => {
+    const cli = createHarness({
+      readFile: async () => {
+        throw new Error("ENOENT");
+      },
+      client: fakeClient({
+        validateArtifact: async () => {
+          throw new Error("validateArtifact should not be called");
+        }
+      })
+    });
+
+    await cli.parse(["validate", "--input", "/tmp/missing.json"]);
+
+    expect(cli.stdout).toEqual([]);
+    expect(cli.exitCodes).toEqual([1]);
+    expect(JSON.parse(cli.stderr.join(""))).toMatchObject({
+      status: "error",
+      error_code: "invalid_request",
+      message: expect.stringContaining("failed to read input file")
+    });
+  });
+
+  it("reports validate input schema errors without calling Runtime", async () => {
+    const cli = createHarness({
+      readFile: async () => JSON.stringify({ context: { task: "missing required fields" } }),
+      client: fakeClient({
+        validateArtifact: async () => {
+          throw new Error("validateArtifact should not be called");
+        }
+      })
+    });
+
+    await cli.parse(["validate", "--input", "/tmp/request.json"]);
+
+    expect(cli.stdout).toEqual([]);
+    expect(cli.exitCodes).toEqual([1]);
+    expect(JSON.parse(cli.stderr.join(""))).toMatchObject({
+      status: "error",
+      error_code: "invalid_request",
+      message: expect.stringContaining("validate_artifact input is invalid")
+    });
+  });
 });
 
 function createHarness(options: { client: CliRuntimeClient; readFile?: (path: string) => Promise<string> }) {
