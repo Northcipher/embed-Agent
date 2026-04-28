@@ -124,7 +124,7 @@ export function buildRuntimeServer(options: RuntimeServerOptions): RuntimeServer
 }
 
 export async function buildRuntimeServerWithLlmConfig(options: RuntimeServerLlmConfigOptions): Promise<RuntimeServer> {
-  const { llmConfigPath, llmEnv, taskPlanner, replyGenerator, ...baseOptions } = options;
+  const { llmConfigPath, llmEnv, taskPlanner, replyGenerator, observer, ...baseOptions } = options;
   const config = await loadLlmConfig(llmConfigPath);
   const runners = createLlmRunnersFromConfig(config, {
     ...(llmEnv === undefined ? {} : { env: llmEnv }),
@@ -132,11 +132,13 @@ export async function buildRuntimeServerWithLlmConfig(options: RuntimeServerLlmC
   });
   const configuredTaskPlanner = taskPlanner ?? runners.taskPlanner;
   const configuredReplyGenerator = replyGenerator ?? runners.replyGenerator;
+  const configuredObserver = observer ?? runners.observer;
 
   return buildRuntimeServer({
     ...baseOptions,
     ...(configuredTaskPlanner === undefined ? {} : { taskPlanner: configuredTaskPlanner }),
-    ...(configuredReplyGenerator === undefined ? {} : { replyGenerator: configuredReplyGenerator })
+    ...(configuredReplyGenerator === undefined ? {} : { replyGenerator: configuredReplyGenerator }),
+    ...(configuredObserver === undefined ? {} : { observer: configuredObserver })
   });
 }
 

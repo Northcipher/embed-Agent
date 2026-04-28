@@ -13,6 +13,7 @@ import {
   type GetTargetCapabilitiesResponse,
   type InterveneRunInput,
   type InterveneRunResponse,
+  type ObserverIntent,
   type Plan,
   type RunEvent,
   type RunState,
@@ -76,12 +77,42 @@ export type RuntimeReplyGenerator = {
   generate(input: RuntimeReplyGeneratorInput): Promise<RuntimeReplyGeneratorResult>;
 };
 
+export type RuntimeObserverInput = {
+  runId: string;
+  runDir: string;
+  run: Record<string, unknown>;
+  targetState: Record<string, unknown>;
+  triggerEvent: RunEvent;
+  recentEvents: RunEvent[];
+  evidenceWindows: Array<{ ref: string; kind: string; text: string }>;
+  remainingDurationSec: number;
+  allowedFollowUpCapabilities: CapabilityName[];
+};
+
+export type RuntimeObserverResult =
+  | {
+      status: "accepted";
+      intent: ObserverIntent;
+      brain_call: string;
+    }
+  | {
+      status: "rejected";
+      reasons: string[];
+      fallback_intent: ObserverIntent;
+      brain_call: string;
+    };
+
+export type RuntimeObserver = {
+  observe(input: RuntimeObserverInput): Promise<RuntimeObserverResult>;
+};
+
 export type RuntimeServiceOptions = {
   rootDir: string;
   adapters: CapabilityAdapterRegistry;
   planFactory?: PlanFactory;
   taskPlanner?: RuntimeTaskPlanner;
   replyGenerator?: RuntimeReplyGenerator;
+  observer?: RuntimeObserver;
   executePlansInline?: boolean;
   idFactory?: () => string;
   now?: () => Date;
@@ -104,6 +135,8 @@ export class RuntimeService {
 
   private readonly replyGenerator: RuntimeReplyGenerator | undefined;
 
+  private readonly observer: RuntimeObserver | undefined;
+
   private readonly executePlansInline: boolean;
 
   private readonly idFactory: () => string;
@@ -124,6 +157,7 @@ export class RuntimeService {
     this.planFactory = options.planFactory;
     this.taskPlanner = options.taskPlanner;
     this.replyGenerator = options.replyGenerator;
+    this.observer = options.observer;
     this.executePlansInline = options.executePlansInline ?? false;
     this.idFactory = options.idFactory ?? (() => `run-${randomUUID()}`);
   }
@@ -176,6 +210,7 @@ export class RuntimeService {
             suggested_next: "Fix the hand-written plan or planner output and retry."
           };
         }
+        await this.processObserverTriggers(execution.run, execution.events);
         await this.writeFinalReply(execution.run);
       } else {
         this.startBackgroundPlan(runId, plan);
@@ -453,6 +488,7 @@ export class RuntimeService {
       try {
         const execution = await this.executor.executePlan({ runId, plan });
         if (execution.accepted) {
+          await this.processObserverTriggers(execution.run, execution.events);
           await this.writeFinalReply(execution.run);
         } else {
           const run = await this.store.readRun(runId);
@@ -508,6 +544,77 @@ export class RuntimeService {
       source: "orchestrator"
     });
     await this.writeFinalReply(await this.store.readRun(runId));
+  }
+
+  private async processObserverTriggers(run: StoredRun, events: RunEvent[]): Promise<void> {
+    if (this.observer === undefined) {
+      return;
+    }
+    const triggerEvents = events.filter(isObserverTriggerEvent).slice(0, MAX_OBSERVER_TRIGGERS_PER_EXECUTION);
+    if (triggerEvents.length === 0) {
+      return;
+    }
+
+    for (const triggerEvent of triggerEvents) {
+      const recentEvents = await this.store.readEvents(run.run_id, {
+        afterSeq: Math.max(0, triggerEvent.seq - 20),
+        limit: 20
+      });
+      try {
+        const result = await this.observer.observe({
+          runId: run.run_id,
+          runDir: run.evidence_path,
+          run: {
+            run_id: run.run_id,
+            state: run.status,
+            elapsed_sec: elapsedSec(run.created_at, this.now())
+          },
+          targetState: {
+            state: run.status === "completed" || run.status === "failed" || run.status === "cancelled" ? "idle" : "busy"
+          },
+          triggerEvent,
+          recentEvents,
+          evidenceWindows: [],
+          remainingDurationSec: 0,
+          allowedFollowUpCapabilities: ["collect_logs", "save_snapshot"]
+        });
+        await this.appendObserverEvent(run, triggerEvent, result);
+      } catch (error) {
+        await this.appendObserverEvent(run, triggerEvent, {
+          status: "rejected",
+          reasons: [error instanceof Error ? error.message : "Observer failed"],
+          fallback_intent: {
+            intent: "continue",
+            reason: "Observer failed; Runtime used default fallback.",
+            confidence: 0,
+            requested_actions: [],
+            report_to_caller: false
+          },
+          brain_call: "observer-unavailable"
+        });
+      }
+    }
+  }
+
+  private async appendObserverEvent(run: StoredRun, triggerEvent: RunEvent, result: RuntimeObserverResult): Promise<void> {
+    const accepted = result.status === "accepted";
+    const intent = accepted ? result.intent : result.fallback_intent;
+    const eventType = accepted && intent.intent === "intermediate_observation" ? "intermediate_observation" : "observer_intent";
+    await this.store.appendEvent(run.run_id, {
+      time: this.now().toISOString(),
+      elapsed_sec: elapsedSec(run.created_at, this.now()),
+      type: eventType,
+      severity: accepted && (intent.intent === "continue" || intent.intent === "intermediate_observation") ? "info" : "warning",
+      source: "observer",
+      summary: accepted ? `observer ${intent.intent}: ${intent.reason}` : `observer intent rejected: ${result.reasons.join("; ")}`,
+      payload: {
+        accepted,
+        intent,
+        brain_call: result.brain_call,
+        trigger_event_seq: triggerEvent.seq,
+        ...(result.status === "rejected" ? { reasons: result.reasons } : {})
+      }
+    });
   }
 
   private async writeFinalReply(run: StoredRun): Promise<void> {
@@ -652,6 +759,12 @@ function elapsedSec(createdAt: string, now: Date): number {
 function lastSeq(events: RunEvent[], fallback: number): number {
   return events.length === 0 ? fallback : events[events.length - 1]!.seq;
 }
+
+function isObserverTriggerEvent(event: RunEvent): boolean {
+  return event.type === "rule_matched" || event.type === "step_failed" || event.type === "step_timeout";
+}
+
+const MAX_OBSERVER_TRIGGERS_PER_EXECUTION = 3;
 
 function replyStatusFromRunState(state: RunState): AgentReply["status"] | undefined {
   if (state === "completed" || state === "failed" || state === "cancelled") {

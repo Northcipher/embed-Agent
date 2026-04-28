@@ -4,7 +4,13 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeAdapterRegistry } from "@artifact-validation/adapters";
 import type { Plan, ValidateArtifactInput } from "@artifact-validation/contracts";
-import { buildRuntimeServer, buildRuntimeServerWithLlmConfig, type RuntimeReplyGeneratorInput, type RuntimeServer } from "../src/index.js";
+import {
+  buildRuntimeServer,
+  buildRuntimeServerWithLlmConfig,
+  type RuntimeObserverInput,
+  type RuntimeReplyGeneratorInput,
+  type RuntimeServer
+} from "../src/index.js";
 
 describe("runtime-server HTTP API", () => {
   let rootDir: string;
@@ -447,6 +453,239 @@ describe("runtime-server HTTP API", () => {
     });
   });
 
+  it("writes intermediate observation events from configured Observer", async () => {
+    let capturedInput: RuntimeObserverInput | undefined;
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "boot completed"],
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 1,
+            stdout: "fail\n",
+            stderr: "smoke failed\n"
+          }
+        }
+      }),
+      planFactory: () => demoPlan(),
+      observer: {
+        observe: async input => {
+          capturedInput = input;
+          return {
+            status: "accepted",
+            intent: {
+              intent: "intermediate_observation",
+              reason: "smoke test failed after boot completed",
+              confidence: 0.7,
+              requested_actions: [],
+              report_to_caller: true
+            },
+            brain_call: "observer-001"
+          };
+        }
+      },
+      executePlansInline: true,
+      idFactory: () => "run-observer-note",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+
+    const events = await server.app.inject({ method: "GET", url: "/api/runs/run-observer-note/events?after_seq=0&limit=100" });
+    const observerEvent = events.json().events.find((event: { type: string }) => event.type === "intermediate_observation");
+    expect(observerEvent).toMatchObject({
+      type: "intermediate_observation",
+      source: "observer",
+      payload: {
+        accepted: true,
+        brain_call: "observer-001"
+      }
+    });
+    expect(capturedInput).toMatchObject({
+      runId: "run-observer-note",
+      triggerEvent: {
+        type: "step_failed"
+      },
+      allowedFollowUpCapabilities: ["collect_logs", "save_snapshot"]
+    });
+  });
+
+  it("writes observer_intent events without executing requested actions", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "boot completed"],
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 1,
+            stdout: "fail\n",
+            stderr: "smoke failed\n"
+          }
+        },
+        logs: {
+          dmesg: "would only exist if collect_logs ran\n"
+        }
+      }),
+      planFactory: () => demoPlan(),
+      observer: {
+        observe: async () => ({
+          status: "accepted",
+          intent: {
+            intent: "collect_more",
+            reason: "collect dmesg after smoke failure",
+            confidence: 0.8,
+            requested_actions: [
+              {
+                capability: "collect_logs",
+                input: {
+                  items: ["dmesg"]
+                }
+              }
+            ],
+            report_to_caller: false
+          },
+          brain_call: "observer-collect"
+        })
+      },
+      executePlansInline: true,
+      idFactory: () => "run-observer-intent",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+
+    const events = await server.app.inject({ method: "GET", url: "/api/runs/run-observer-intent/events?after_seq=0&limit=100" });
+    const observerEvent = events.json().events.find((event: { type: string }) => event.type === "observer_intent");
+    expect(observerEvent).toMatchObject({
+      type: "observer_intent",
+      source: "observer",
+      payload: {
+        accepted: true,
+        brain_call: "observer-collect",
+        intent: {
+          intent: "collect_more"
+        }
+      }
+    });
+
+    const evidence = await server.app.inject({ method: "GET", url: "/api/runs/run-observer-intent/evidence" });
+    expect(evidence.json().refs.map((ref: { ref: string }) => ref.ref)).not.toContain("log:dmesg");
+  });
+
+  it("records observer output for each bounded trigger event from one execution", async () => {
+    const triggerTypes: string[] = [];
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry({
+        commandResults: {
+          "/vendor/bin/nonfatal": {
+            exit_code: 1,
+            stdout: "",
+            stderr: "nonfatal failed\n"
+          },
+          "/vendor/bin/fatal": {
+            exit_code: 1,
+            stdout: "",
+            stderr: "fatal failed\n"
+          }
+        }
+      }),
+      planFactory: () => twoFailurePlan(),
+      observer: {
+        observe: async input => {
+          triggerTypes.push(input.triggerEvent.type);
+          return {
+            status: "accepted",
+            intent: {
+              intent: "continue",
+              reason: `handled ${input.triggerEvent.step_id}`,
+              confidence: 0.6,
+              requested_actions: [],
+              report_to_caller: false
+            },
+            brain_call: `observer-${triggerTypes.length}`
+          };
+        }
+      },
+      executePlansInline: true,
+      idFactory: () => "run-observer-multiple",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+
+    const events = await server.app.inject({ method: "GET", url: "/api/runs/run-observer-multiple/events?after_seq=0&limit=100" });
+    const observerEvents = events.json().events.filter((event: { type: string }) => event.type === "observer_intent");
+    expect(triggerTypes).toEqual(["step_failed", "step_failed"]);
+    expect(observerEvents).toHaveLength(2);
+    const triggerSeqs = observerEvents.map((event: { payload: { trigger_event_seq: number } }) => event.payload.trigger_event_seq);
+    expect(new Set(triggerSeqs).size).toBe(2);
+  });
+
+  it("records rejected Observer output as observer_intent event", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "boot completed"],
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 1,
+            stdout: "fail\n",
+            stderr: "smoke failed\n"
+          }
+        }
+      }),
+      planFactory: () => demoPlan(),
+      observer: {
+        observe: async () => ({
+          status: "rejected",
+          reasons: ["unsupported requested action"],
+          fallback_intent: {
+            intent: "continue",
+            reason: "fallback after invalid Observer output",
+            confidence: 0,
+            requested_actions: [],
+            report_to_caller: false
+          },
+          brain_call: "observer-rejected"
+        })
+      },
+      executePlansInline: true,
+      idFactory: () => "run-observer-rejected",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+
+    const events = await server.app.inject({ method: "GET", url: "/api/runs/run-observer-rejected/events?after_seq=0&limit=100" });
+    const observerEvent = events.json().events.find((event: { type: string }) => event.type === "observer_intent");
+    expect(observerEvent).toMatchObject({
+      type: "observer_intent",
+      severity: "warning",
+      payload: {
+        accepted: false,
+        brain_call: "observer-rejected",
+        reasons: ["unsupported requested action"]
+      }
+    });
+  });
+
   it("does not call configured Reply Generator again when terminal reply already exists", async () => {
     let callCount = 0;
     server = buildRuntimeServer({
@@ -804,6 +1043,43 @@ function duplicateStepPlan(): Plan {
         timeout_sec: 10
       }
     ]
+  };
+}
+
+function twoFailurePlan(): Plan {
+  return {
+    plan_id: "plan-two-failures",
+    estimated_duration_sec: 120,
+    steps: [
+      {
+        id: "step-nonfatal",
+        capability: "shell_exec",
+        condition: "always",
+        input: {
+          command: "/vendor/bin/nonfatal",
+          expected_exit_code: 0
+        },
+        timeout_sec: 30,
+        on_failure: "continue"
+      },
+      {
+        id: "step-fatal",
+        capability: "shell_exec",
+        condition: "always",
+        input: {
+          command: "/vendor/bin/fatal",
+          expected_exit_code: 0
+        },
+        timeout_sec: 30
+      }
+    ],
+    success_criteria: ["both shell commands pass"],
+    failure_signals: ["shell command failure"],
+    evidence_policy: {
+      always: [],
+      on_success: [],
+      on_failure: ["adb:step-nonfatal", "adb:step-fatal"]
+    }
   };
 }
 
