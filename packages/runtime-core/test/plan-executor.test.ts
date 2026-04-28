@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeAdapterRegistry } from "@artifact-validation/adapters";
-import type { CapabilityAdapterRegistry } from "@artifact-validation/adapters";
+import type { CapabilityAdapter, CapabilityAdapterRegistry, CapabilityExecutionContext } from "@artifact-validation/adapters";
 import type { CapabilityName, Plan } from "@artifact-validation/contracts";
 import { FileStore } from "@artifact-validation/file-store";
 import { PlanExecutor, RunManager } from "../src/index.js";
@@ -237,6 +237,161 @@ describe("PlanExecutor", () => {
     expect((await store.readEvidenceIndex("run-001")).refs.map(ref => ref.ref)).not.toContain("log:dmesg");
   });
 
+  it("continues later main-path steps after a non-fatal continue policy failure", async () => {
+    await runManager.createRun({ runId: "run-001", initialState: "planning" });
+    const executor = new PlanExecutor({
+      store,
+      runManager,
+      adapters: new FakeAdapterRegistry({
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 2,
+            stdout: "bad\n",
+            stderr: "failed\n"
+          }
+        },
+        processes: {
+          demo: {
+            pid: 42,
+            state: "running"
+          }
+        },
+        logs: {
+          dmesg: "should not be collected on success\n"
+        }
+      })
+    });
+
+    const plan = demoPlan();
+    const result = await executor.executePlan({
+      runId: "run-001",
+      plan: {
+        ...plan,
+        steps: [
+          ...plan.steps.slice(0, 3),
+          {
+            ...plan.steps[3]!,
+            on_failure: "continue"
+          },
+          {
+            id: "step-after-continue",
+            capability: "check_process",
+            condition: "always",
+            input: {
+              process_name: "demo"
+            },
+            timeout_sec: 30
+          },
+          {
+            id: "step-success-only",
+            capability: "collect_logs",
+            condition: "on_success",
+            input: {
+              items: ["dmesg"]
+            },
+            timeout_sec: 60
+          }
+        ]
+      }
+    });
+
+    expect(result.accepted).toBe(true);
+    if (!result.accepted) {
+      return;
+    }
+    expect(result.run.status).toBe("completed");
+    expect(result.step_results.map(step => step.step_id)).toEqual([
+      "step-flash",
+      "step-serial",
+      "step-adb",
+      "step-smoke",
+      "step-after-continue"
+    ]);
+    expect(result.step_results.find(step => step.step_id === "step-smoke")?.status).toBe("failed");
+    expect((await store.readEvidenceIndex("run-001")).refs.map(ref => ref.ref)).not.toContain("log:dmesg");
+  });
+
+  it("emits step_timeout when an adapter exceeds the executor timeout", async () => {
+    await runManager.createRun({ runId: "run-001", initialState: "planning" });
+    const hangingShellAdapter: CapabilityAdapter = {
+      capability: "shell_exec",
+      execute(_context: CapabilityExecutionContext) {
+        return new Promise(() => undefined);
+      }
+    };
+    const executor = new PlanExecutor({
+      store,
+      runManager,
+      adapters: {
+        get(capability) {
+          return capability === "shell_exec" ? hangingShellAdapter : undefined;
+        }
+      },
+      timeoutMsForStep: () => 1
+    });
+
+    const result = await executor.executePlan({
+      runId: "run-001",
+      plan: oneStepPlan({
+        id: "step-hangs",
+        capability: "shell_exec",
+        condition: "always",
+        input: {
+          command: "/vendor/bin/hangs",
+          expected_exit_code: 0
+        },
+        timeout_sec: 1
+      })
+    });
+
+    expect(result.accepted).toBe(true);
+    if (!result.accepted) {
+      return;
+    }
+    expect(result.run.status).toBe("failed");
+    expect(result.step_results).toMatchObject([
+      {
+        step_id: "step-hangs",
+        status: "timeout",
+        success: false
+      }
+    ]);
+    expect((await store.readEvents("run-001")).map(event => event.type)).toContain("step_timeout");
+  });
+
+  it("rejects duplicate step ids before executing adapters", async () => {
+    await runManager.createRun({ runId: "run-001", initialState: "planning" });
+    const executor = new PlanExecutor({
+      store,
+      runManager,
+      adapters: new FakeAdapterRegistry()
+    });
+    const plan = demoPlan();
+
+    const result = await executor.executePlan({
+      runId: "run-001",
+      plan: {
+        ...plan,
+        steps: [
+          plan.steps[0]!,
+          {
+            ...plan.steps[1]!,
+            id: plan.steps[0]!.id
+          }
+        ]
+      }
+    });
+
+    expect(result.accepted).toBe(false);
+    if (result.accepted) {
+      return;
+    }
+    expect(result.error_code).toBe("plan_rejected");
+    expect(result.message).toContain("duplicate step id step-flash");
+    expect((await store.readRun("run-001")).status).toBe("failed");
+    expect((await store.readEvents("run-001")).map(event => event.type)).not.toContain("step_started");
+  });
+
   it("rejects paused runs instead of restarting the plan without a step cursor", async () => {
     await runManager.createRun({ runId: "run-001", initialState: "planning" });
     await runManager.transitionRun({ runId: "run-001", to: "running", reason: "plan accepted" });
@@ -321,6 +476,19 @@ function demoPlan(): Plan {
       always: ["flash:log", "serial:full"],
       on_success: ["dmesg", "logcat"],
       on_failure: ["dmesg", "logcat", "serial:full"]
+    }
+  };
+}
+
+function oneStepPlan(step: Plan["steps"][number]): Plan {
+  return {
+    plan_id: "plan-one-step",
+    estimated_duration_sec: step.timeout_sec,
+    steps: [step],
+    success_criteria: ["step succeeds"],
+    failure_signals: ["step fails"],
+    evidence_policy: {
+      always: []
     }
   };
 }

@@ -52,6 +52,7 @@ export type PlanExecutorOptions = {
   runManager: RunManager;
   adapters: CapabilityAdapterRegistry;
   now?: () => Date;
+  timeoutMsForStep?: (step: PlanStep) => number;
 };
 
 export class PlanExecutor {
@@ -63,11 +64,14 @@ export class PlanExecutor {
 
   private readonly now: () => Date;
 
+  private readonly timeoutMsForStep: (step: PlanStep) => number;
+
   constructor(options: PlanExecutorOptions) {
     this.store = options.store;
     this.runManager = options.runManager;
     this.adapters = options.adapters;
     this.now = options.now ?? (() => new Date());
+    this.timeoutMsForStep = options.timeoutMsForStep ?? (step => step.timeout_sec * 1000);
   }
 
   async executePlan(input: ExecutePlanInput): Promise<PlanExecutionResult> {
@@ -196,7 +200,7 @@ export class PlanExecutor {
       if (adapter === undefined) {
         throw new Error(`missing adapter for ${step.capability}`);
       }
-      adapterResult = await adapter.execute({ runId, step, store: this.store });
+      adapterResult = await this.executeAdapterWithTimeout(runId, step, adapter);
     } catch (error) {
       adapterResult = {
         capability: step.capability,
@@ -252,6 +256,39 @@ export class PlanExecutor {
       },
       events
     };
+  }
+
+  private async executeAdapterWithTimeout(
+    runId: string,
+    step: PlanStep,
+    adapter: NonNullable<ReturnType<CapabilityAdapterRegistry["get"]>>
+  ): Promise<CapabilityExecutionResult> {
+    const timeoutMs = Math.max(0, this.timeoutMsForStep(step));
+    let timeout: NodeJS.Timeout | undefined;
+
+    try {
+      return await Promise.race([
+        adapter.execute({ runId, step, store: this.store }),
+        new Promise<CapabilityExecutionResult>(resolve => {
+          timeout = setTimeout(() => {
+            resolve({
+              capability: step.capability,
+              success: false,
+              status: "timeout",
+              output: {
+                timeout_sec: step.timeout_sec
+              },
+              evidence_refs: [],
+              summary: `step ${step.id} timed out after ${step.timeout_sec}s`
+            });
+          }, timeoutMs);
+        })
+      ]);
+    } finally {
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
+      }
+    }
   }
 
   private async appendEvent(runId: string, event: Omit<AppendEventInput, "time" | "elapsed_sec">): Promise<RunEvent> {
