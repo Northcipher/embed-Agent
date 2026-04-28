@@ -109,7 +109,7 @@ export class PlanExecutor {
         continue;
       }
 
-      const stepResult = await this.executeStep(input.runId, step);
+      const stepResult = await this.executeStep(input.runId, step, validation.plan.failure_signals);
       events.push(...stepResult.events);
       stepResults.push(stepResult.step);
 
@@ -220,7 +220,11 @@ export class PlanExecutor {
     };
   }
 
-  private async executeStep(runId: string, step: PlanStep): Promise<{ step: ExecutedStepResult; events: RunEvent[] }> {
+  private async executeStep(
+    runId: string,
+    step: PlanStep,
+    failureSignals: string[]
+  ): Promise<{ step: ExecutedStepResult; events: RunEvent[] }> {
     const started = await this.appendEvent(runId, {
       type: "step_started",
       severity: "info",
@@ -268,6 +272,7 @@ export class PlanExecutor {
     });
 
     const events = [started, stepEvent];
+    events.push(...(await this.appendRuleMatchedEvents(runId, step, adapterResult, failureSignals)));
     if (adapterResult.evidence_refs.length > 0) {
       events.push(
         await this.appendEvent(runId, {
@@ -296,6 +301,41 @@ export class PlanExecutor {
       },
       events
     };
+  }
+
+  private async appendRuleMatchedEvents(
+    runId: string,
+    step: PlanStep,
+    adapterResult: CapabilityExecutionResult,
+    failureSignals: string[]
+  ): Promise<RunEvent[]> {
+    if (step.capability !== "watch_serial") {
+      return [];
+    }
+    const matchedPatterns = unique(readStringArray(adapterResult.output.patterns_matched)).filter(pattern =>
+      isRelevantFailurePattern(pattern, failureSignals)
+    );
+    const events: RunEvent[] = [];
+    for (const pattern of matchedPatterns) {
+      events.push(
+        await this.appendEvent(runId, {
+          type: "rule_matched",
+          severity: ruleSeverityForPattern(pattern),
+          source: "rule_engine",
+          step_id: step.id,
+          summary: `${pattern} matched on serial`,
+          payload: {
+            rule_id: `serial.pattern.${safeRuleIdSegment(pattern)}`,
+            source: "serial",
+            kind: "pattern",
+            pattern,
+            step_id: step.id
+          },
+          evidence_refs: adapterResult.evidence_refs.length > 0 ? adapterResult.evidence_refs : undefined
+        })
+      );
+    }
+    return events;
   }
 
   private async executeAdapterWithTimeout(
@@ -528,6 +568,38 @@ function isStringArray(value: unknown): value is string[] {
 
 function isNonEmptyStringArray(value: unknown): value is string[] {
   return isStringArray(value) && value.length > 0;
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+}
+
+function isRelevantFailurePattern(pattern: string, failureSignals: string[]): boolean {
+  if (isFatalPattern(pattern)) {
+    return true;
+  }
+  const normalizedPattern = normalizeRuleText(pattern);
+  return failureSignals.some(signal => {
+    const normalizedSignal = normalizeRuleText(signal);
+    return normalizedSignal.includes(normalizedPattern) || normalizedPattern.includes(normalizedSignal);
+  });
+}
+
+function ruleSeverityForPattern(pattern: string): RunEvent["severity"] {
+  return isFatalPattern(pattern) ? "error" : "warning";
+}
+
+function isFatalPattern(pattern: string): boolean {
+  return /\b(panic|oops|fatal|crash|bug|assert)\b/i.test(pattern);
+}
+
+function normalizeRuleText(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function safeRuleIdSegment(value: string): string {
+  const segment = normalizeRuleText(value).replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return segment.length > 0 ? segment : "pattern";
 }
 
 function assertNeverCapability(capability: never): never {

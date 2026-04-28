@@ -94,6 +94,58 @@ describe("PlanExecutor", () => {
     ]);
   });
 
+  it("writes rule_matched events for serial failure patterns", async () => {
+    await runManager.createRun({ runId: "run-001", initialState: "planning" });
+    const executor = new PlanExecutor({
+      store,
+      runManager,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "kernel panic", "rebooting"],
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 0,
+            stdout: "pass\n",
+            stderr: ""
+          }
+        },
+        logs: {
+          dmesg: "panic trace\n",
+          logcat: "panic logcat\n"
+        }
+      }),
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    const result = await executor.executePlan({
+      runId: "run-001",
+      plan: demoPlan()
+    });
+
+    expect(result.accepted).toBe(true);
+    const events = await store.readEvents("run-001", { types: ["rule_matched"] });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "rule_matched",
+      severity: "error",
+      source: "rule_engine",
+      step_id: "step-serial",
+      summary: "kernel panic matched on serial",
+      evidence_refs: ["serial:full"],
+      payload: {
+        rule_id: "serial.pattern.kernel_panic",
+        source: "serial",
+        kind: "pattern",
+        pattern: "kernel panic",
+        step_id: "step-serial"
+      }
+    });
+    expect((await store.readEvidenceIndex("run-001")).key_events).toContainEqual({
+      seq: events[0]!.seq,
+      summary: "kernel panic matched on serial",
+      evidence_refs: ["serial:full"]
+    });
+  });
+
   it("rejects a plan with missing adapter coverage and fails a planning run", async () => {
     await runManager.createRun({ runId: "run-001", initialState: "planning" });
     const registry: CapabilityAdapterRegistry = {
