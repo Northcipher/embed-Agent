@@ -9,6 +9,7 @@ Non-goals:
 - 不接 LLM Task Planner / Observer / Reply Generator。
 - 不实现真实 ADB / fastboot / serial adapter。
 - 不实现完整 Rule Engine。
+- 不实现 paused run 的 step-cursor resume；P0 resume 由后续 `intervene_run` 切片处理，不能通过重跑整份 Plan 伪装。
 
 References checked:
 - `docs/01-foundation/ARTIFACT-VALIDATION-AGENT-RUNTIME-CONTRACTS.md` sections 2 and 6
@@ -29,6 +30,8 @@ Acceptance criteria:
 - [x] Hand-written Plan can run through fake `flash -> watch_serial -> wait_adb -> shell_exec`.
 - [x] Step execution writes `step_started`, `step_completed` / `step_failed` / `step_timeout`, and `evidence_collected` events.
 - [x] Failure path can execute `on_failure` collection steps and end run as failed.
+- [x] `fail` 和 `collect_and_fail` failure policy 行为不同：前者立即停，后者允许失败采集。
+- [x] Paused run 不会被 `executePlan` 从头重跑。
 - [x] Successful path transitions to `collecting_evidence` then `completed`.
 
 Verification:

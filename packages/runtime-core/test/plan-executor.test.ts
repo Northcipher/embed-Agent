@@ -184,6 +184,82 @@ describe("PlanExecutor", () => {
     expect((await store.readEvidenceIndex("run-001")).refs.map(ref => ref.ref)).toContain("log:dmesg");
     expect((await store.readEvents("run-001")).map(event => event.type)).toContain("step_failed");
   });
+
+  it("does not run on_failure collection steps when a failed step policy is fail", async () => {
+    await runManager.createRun({ runId: "run-001", initialState: "planning" });
+    const executor = new PlanExecutor({
+      store,
+      runManager,
+      adapters: new FakeAdapterRegistry({
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 2,
+            stdout: "bad\n",
+            stderr: "failed\n"
+          }
+        },
+        logs: {
+          dmesg: "should not be collected\n"
+        }
+      })
+    });
+
+    const plan = demoPlan();
+    const result = await executor.executePlan({
+      runId: "run-001",
+      plan: {
+        ...plan,
+        steps: [
+          ...plan.steps.slice(0, 3),
+          {
+            ...plan.steps[3]!,
+            on_failure: "fail"
+          },
+          {
+            id: "step-logs",
+            capability: "collect_logs",
+            condition: "on_failure",
+            input: {
+              items: ["dmesg"]
+            },
+            timeout_sec: 60
+          }
+        ]
+      }
+    });
+
+    expect(result.accepted).toBe(true);
+    if (!result.accepted) {
+      return;
+    }
+    expect(result.run.status).toBe("failed");
+    expect(result.step_results.map(step => step.step_id)).toEqual(["step-flash", "step-serial", "step-adb", "step-smoke"]);
+    expect((await store.readEvidenceIndex("run-001")).refs.map(ref => ref.ref)).not.toContain("log:dmesg");
+  });
+
+  it("rejects paused runs instead of restarting the plan without a step cursor", async () => {
+    await runManager.createRun({ runId: "run-001", initialState: "planning" });
+    await runManager.transitionRun({ runId: "run-001", to: "running", reason: "plan accepted" });
+    await runManager.transitionRun({ runId: "run-001", to: "paused", reason: "human pause" });
+    const executor = new PlanExecutor({
+      store,
+      runManager,
+      adapters: new FakeAdapterRegistry()
+    });
+
+    const result = await executor.executePlan({
+      runId: "run-001",
+      plan: demoPlan()
+    });
+
+    expect(result).toEqual({
+      accepted: false,
+      error_code: "invalid_request",
+      message: "cannot execute plan while run run-001 is paused"
+    });
+    expect((await store.readRun("run-001")).status).toBe("paused");
+    expect((await store.readEvents("run-001")).map(event => event.type)).not.toContain("step_started");
+  });
 });
 
 function demoPlan(): Plan {

@@ -98,8 +98,12 @@ export class PlanExecutor {
 
       if (!stepResult.step.success || stepResult.step.status !== "completed") {
         sawFailure = true;
-        if (step.on_failure !== "continue") {
+        const failurePolicy = step.on_failure ?? "collect_and_fail";
+        if (failurePolicy !== "continue") {
           sawFatalFailure = true;
+        }
+        if (failurePolicy === "fail") {
+          break;
         }
       }
     }
