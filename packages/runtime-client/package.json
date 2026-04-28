@@ -1,11 +1,8 @@
 {
-  "name": "@artifact-validation/mcp-server",
+  "name": "@artifact-validation/runtime-client",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "bin": {
-    "artifact-validation-mcp": "./dist/index.js"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -19,8 +16,6 @@
   },
   "dependencies": {
     "@artifact-validation/contracts": "workspace:*",
-    "@artifact-validation/runtime-client": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.2.1"
   },
   "devDependencies": {

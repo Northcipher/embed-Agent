@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RuntimeHttpClient, type FetchLike } from "../src/runtime-client.js";
+import { RuntimeHttpClient, type FetchLike } from "../src/index.js";
 
 describe("RuntimeHttpClient", () => {
   it("posts validate_artifact to Runtime HTTP API and parses contract output", async () => {

@@ -4,6 +4,7 @@
     { "path": "./apps/mcp-server" },
     { "path": "./apps/runtime-server" },
     { "path": "./packages/contracts" },
+    { "path": "./packages/runtime-client" },
     { "path": "./packages/adapters" },
     { "path": "./packages/file-store" },
     { "path": "./packages/runtime-core" }
