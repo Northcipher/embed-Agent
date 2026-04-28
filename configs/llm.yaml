@@ -1,0 +1,33 @@
+# Safe local example. Do not put API keys in this file.
+# Use api_key_env to reference environment variables for real providers.
+enabled: false
+default_provider: mock
+
+roles:
+  task_planner: mock
+  observer: mock
+  reply_generator: mock
+
+providers:
+  mock:
+    type: mock
+    model: mock-model
+    outputs: []
+
+  anthropic:
+    type: anthropic
+    api_key_env: ANTHROPIC_API_KEY
+    model: claude-sonnet-4-5
+    max_tokens: 4096
+
+  openai:
+    type: openai
+    api_key_env: OPENAI_API_KEY
+    model: gpt-5.2
+
+  gateway:
+    type: gateway
+    base_url: https://llm-gateway.example.com/v1/complete-json
+    api_key_env: LLM_GATEWAY_API_KEY
+    model: gateway-model
+    headers: {}

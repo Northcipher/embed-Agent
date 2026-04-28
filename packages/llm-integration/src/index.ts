@@ -8,3 +8,4 @@ export * from "./brain-output-store.js";
 export * from "./task-planner-runner.js";
 export * from "./observer-runner.js";
 export * from "./reply-generator-runner.js";
+export * from "./config.js";

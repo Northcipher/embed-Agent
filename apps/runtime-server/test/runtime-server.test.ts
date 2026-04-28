@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeAdapterRegistry } from "@artifact-validation/adapters";
 import type { Plan, ValidateArtifactInput } from "@artifact-validation/contracts";
-import { buildRuntimeServer, type RuntimeReplyGeneratorInput, type RuntimeServer } from "../src/index.js";
+import { buildRuntimeServer, buildRuntimeServerWithLlmConfig, type RuntimeReplyGeneratorInput, type RuntimeServer } from "../src/index.js";
 
 describe("runtime-server HTTP API", () => {
   let rootDir: string;
@@ -150,6 +150,71 @@ describe("runtime-server HTTP API", () => {
       status: "accepted",
       run_id: "run-planner-001",
       state: "completed"
+    });
+  });
+
+  it("uses mock LLM config to plan and generate the final reply", async () => {
+    const configPath = path.join(rootDir, "llm.yaml");
+    await writeFile(
+      configPath,
+      [
+        "enabled: true",
+        "default_provider: mock",
+        "providers:",
+        "  mock:",
+        "    type: mock",
+        "    model: mock-model",
+        "    outputs:",
+        `      - '${yamlSingleQuotedJson(taskPlannerOutput(demoPlan()))}'`,
+        `      - '${yamlSingleQuotedJson({
+          run_id: "run-llm-config",
+          status: "completed",
+          summary: "configured LLM reply",
+          confidence: 0.8,
+          key_evidence: [],
+          suggested_next: "review configured reply and evidence refs",
+          evidence_path: path.join(rootDir, "runs", "run-llm-config")
+        })}'`,
+        ""
+      ].join("\n")
+    );
+    server = await buildRuntimeServerWithLlmConfig({
+      rootDir,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "boot completed"],
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 0,
+            stdout: "pass\n",
+            stderr: ""
+          }
+        },
+        logs: {
+          dmesg: "clean dmesg\n"
+        }
+      }),
+      llmConfigPath: configPath,
+      executePlansInline: true,
+      idFactory: () => "run-llm-config",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    const created = await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+    expect(created.json()).toMatchObject({
+      status: "accepted",
+      run_id: "run-llm-config",
+      state: "completed"
+    });
+
+    const result = await server.app.inject({ method: "GET", url: "/api/runs/run-llm-config/result" });
+    expect(result.json()).toMatchObject({
+      run_id: "run-llm-config",
+      status: "completed",
+      summary: "configured LLM reply"
     });
   });
 
@@ -740,6 +805,33 @@ function duplicateStepPlan(): Plan {
       }
     ]
   };
+}
+
+function taskPlannerOutput(plan: Plan): Record<string, unknown> {
+  return {
+    status: "planned",
+    validation_intent: {
+      intent_id: "intent-001",
+      feature_area: "boot",
+      confidence: 0.8,
+      matched_scenarios: [{ name: "boot", reason: "boot validation request" }],
+      expected_behavior: ["device boots and adb returns"],
+      risk_focus: ["panic", "adb offline"],
+      suggested_actions: ["execute validation plan"],
+      observe: ["serial", "adb"],
+      evidence_need: ["serial log", "adb command output"],
+      pass_fail: ["smoke test exits 0"],
+      assumptions: [],
+      missing_info: []
+    },
+    plan,
+    missing_info: [],
+    assumptions: []
+  };
+}
+
+function yamlSingleQuotedJson(value: unknown): string {
+  return JSON.stringify(value).replaceAll("'", "''");
 }
 
 function inputWithoutTestHint(artifact: string): ValidateArtifactInput {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { EventSeverity, EventSource, EventType, RunEvent } from "@artifact-validation/contracts";
@@ -14,8 +14,12 @@ import {
   TaskPlannerRunner,
   assemblePrompt,
   createDefaultPromptRegistry,
+  createLlmProvider,
+  createLlmRunnersFromConfig,
   createRuleBasedReply,
+  loadLlmConfig,
   parseSingleJsonObject,
+  parseLlmConfig,
   validateAgentReply,
   validateObserverIntent,
   validateTaskPlannerOutput
@@ -149,6 +153,68 @@ describe("llm-integration foundation", () => {
     });
 
     expect(result.rawText).toBe("{\"status\":\"ok\"}");
+  });
+
+  it("loads LLM YAML config and creates mock runners", async () => {
+    const configPath = join(await mkdtemp(join(tmpdir(), "artifact-agent-llm-config-")), "llm.yaml");
+    await writeFile(
+      configPath,
+      [
+        "enabled: true",
+        "default_provider: mock",
+        "providers:",
+        "  mock:",
+        "    type: mock",
+        "    model: mock-model",
+        "    outputs:",
+        `      - '${JSON.stringify(plannedOutput("watch_serial")).replaceAll("'", "''")}'`,
+        ""
+      ].join("\n")
+    );
+
+    const config = await loadLlmConfig(configPath);
+    const runners = createLlmRunnersFromConfig(config, {
+      now: () => new Date("2026-04-28T00:00:00.000Z")
+    });
+
+    expect(runners.taskPlanner).toBeDefined();
+    expect(runners.replyGenerator).toBeDefined();
+    const result = await runners.taskPlanner!.plan({
+      runId: "run-001",
+      runDir: await mkdtemp(join(tmpdir(), "artifact-agent-config-run-")),
+      request: plannerRequest("/tmp/firmware.img"),
+      targetCapabilities: [
+        {
+          name: "watch_serial",
+          available: true,
+          limits: { default_timeout_sec: 180, max_duration_sec: 600 },
+          risk: "low",
+          requires: { connection: "serial" }
+        }
+      ]
+    });
+    expect(result.status).toBe("planned");
+  });
+
+  it("rejects missing configured provider and missing required api key env", () => {
+    const missingProviderConfig = parseLlmConfig({
+      enabled: true,
+      default_provider: "missing",
+      providers: {}
+    });
+    expect(() => createLlmRunnersFromConfig(missingProviderConfig)).toThrow("provider missing");
+
+    expect(() =>
+      createLlmProvider(
+        "anthropic",
+        {
+          type: "anthropic",
+          model: "claude-sonnet",
+          api_key_env: "MISSING_ANTHROPIC_KEY"
+        },
+        {}
+      )
+    ).toThrow("MISSING_ANTHROPIC_KEY");
   });
 
   it("rejects planner output with unknown capability", () => {

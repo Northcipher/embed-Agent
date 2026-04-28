@@ -1,4 +1,5 @@
 import fastify, { type FastifyInstance } from "fastify";
+import { createLlmRunnersFromConfig, loadLlmConfig } from "@artifact-validation/llm-integration";
 import {
   CancelRunInputSchema,
   GetEvidenceInputSchema,
@@ -13,6 +14,11 @@ import { RuntimeService, type RuntimeServiceOptions } from "./service.js";
 
 export type RuntimeServerOptions = RuntimeServiceOptions & {
   logger?: boolean;
+};
+
+export type RuntimeServerLlmConfigOptions = RuntimeServerOptions & {
+  llmConfigPath: string;
+  llmEnv?: Record<string, string | undefined>;
 };
 
 export type RuntimeServer = {
@@ -115,6 +121,23 @@ export function buildRuntimeServer(options: RuntimeServerOptions): RuntimeServer
   });
 
   return { app, service };
+}
+
+export async function buildRuntimeServerWithLlmConfig(options: RuntimeServerLlmConfigOptions): Promise<RuntimeServer> {
+  const { llmConfigPath, llmEnv, taskPlanner, replyGenerator, ...baseOptions } = options;
+  const config = await loadLlmConfig(llmConfigPath);
+  const runners = createLlmRunnersFromConfig(config, {
+    ...(llmEnv === undefined ? {} : { env: llmEnv }),
+    ...(options.now === undefined ? {} : { now: options.now })
+  });
+  const configuredTaskPlanner = taskPlanner ?? runners.taskPlanner;
+  const configuredReplyGenerator = replyGenerator ?? runners.replyGenerator;
+
+  return buildRuntimeServer({
+    ...baseOptions,
+    ...(configuredTaskPlanner === undefined ? {} : { taskPlanner: configuredTaskPlanner }),
+    ...(configuredReplyGenerator === undefined ? {} : { replyGenerator: configuredReplyGenerator })
+  });
 }
 
 function parseWithSchema<T>(schema: ZodType<T>, value: unknown, label: string): T {
