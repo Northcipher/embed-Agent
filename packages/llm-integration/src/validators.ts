@@ -123,7 +123,34 @@ function invalid(failureStatus: FailureStatus, reason: string): ValidationResult
   };
 }
 
-function containsConnectionParameter(input: Record<string, unknown>): boolean {
-  const forbiddenKeys = new Set(["serial_port", "port", "baud", "device_id", "adb_device_id", "fastboot_id", "connection"]);
-  return Object.keys(input).some(key => forbiddenKeys.has(key));
+function containsConnectionParameter(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some(item => containsConnectionParameter(item));
+  }
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+
+  return Object.entries(value as Record<string, unknown>).some(([key, nestedValue]) => {
+    return forbiddenConnectionKeys.has(normalizeKey(key)) || containsConnectionParameter(nestedValue);
+  });
 }
+
+function normalizeKey(key: string): string {
+  return key.replace(/[-_]/g, "").toLowerCase();
+}
+
+const forbiddenConnectionKeys = new Set([
+  "adbdeviceid",
+  "adbserial",
+  "baud",
+  "connection",
+  "customflashcommand",
+  "deviceid",
+  "fastbootid",
+  "fastbootserial",
+  "port",
+  "serialdevice",
+  "serialport",
+  "usbport"
+]);

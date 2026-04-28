@@ -7,6 +7,8 @@ import {
   GatewayProvider,
   LlmCallManager,
   MockProvider,
+  PromptRegistry,
+  TaskPlannerRunner,
   assemblePrompt,
   createDefaultPromptRegistry,
   createRuleBasedReply,
@@ -31,6 +33,32 @@ describe("llm-integration foundation", () => {
     expect(prompt.user).toContain("## run");
     expect(prompt.user).toContain("ObserverIntent.v1");
     expect(prompt.truncated).toBe(false);
+  });
+
+  it("preserves priority sections when prompt input is truncated", () => {
+    const prompt = assemblePrompt(
+      {
+        prompt_id: "task_planner.test",
+        role: "task_planner",
+        version: 1,
+        status: "active",
+        input_contract: "TaskPlannerInput.v1",
+        output_contract: "TaskPlannerOutput.v1",
+        timeout_sec: 60,
+        max_input_chars: 120,
+        system: "json only",
+        developer: "follow policy",
+        user_sections: ["request", "output_schema"]
+      },
+      [
+        { name: "request", content: "x".repeat(500) },
+        { name: "output_schema", content: "IMPORTANT_SCHEMA" }
+      ]
+    );
+
+    expect(prompt.truncated).toBe(true);
+    expect(prompt.user).toContain("IMPORTANT_SCHEMA");
+    expect(prompt.user.length).toBeLessThanOrEqual(120);
   });
 
   it("extracts exactly one JSON object from model output", () => {
@@ -137,6 +165,18 @@ describe("llm-integration foundation", () => {
     });
   });
 
+  it("rejects nested and camelCase connection parameters in planner output", () => {
+    const validation = validateTaskPlannerOutput(plannedOutput("watch_serial", { options: { serialPort: "/dev/ttyUSB0" } }), {
+      availableCapabilities: ["watch_serial"],
+      hasTestHint: true
+    });
+
+    expect(validation).toMatchObject({
+      status: "invalid",
+      failure_status: "plan_rejected"
+    });
+  });
+
   it("rejects observer requested actions outside the allowed follow-up set", () => {
     const validation = validateObserverIntent(
       {
@@ -229,7 +269,241 @@ describe("llm-integration foundation", () => {
     ).rejects.toThrow("call_id contains unsupported characters");
     await expect(stat(join(runDir, "brain"))).rejects.toThrow();
   });
+
+  it("serializes concurrent brain calls into readable jsonl records", async () => {
+    const runDir = await mkdtemp(join(tmpdir(), "artifact-agent-brain-"));
+    const store = new BrainOutputStore({ runDir });
+
+    await Promise.all(
+      Array.from({ length: 5 }, (_, index) =>
+        store.writeCall({
+          callId: `observer-${index}`,
+          role: "observer",
+          promptId: "observer.v1",
+          startedAt: "2026-04-28T00:00:00.000Z",
+          endedAt: "2026-04-28T00:00:01.000Z",
+          status: "validated",
+          model: "mock-model",
+          input: { index },
+          validation: { status: "valid" }
+        })
+      )
+    );
+
+    const records = await store.readCallRecords();
+    expect(records).toHaveLength(5);
+    expect(new Set(records.map(record => record.call_id))).toEqual(
+      new Set(["observer-0", "observer-1", "observer-2", "observer-3", "observer-4"])
+    );
+  });
+
+  it("runs Task Planner through provider, validator, and brain output store", async () => {
+    const runDir = await mkdtemp(join(tmpdir(), "artifact-agent-planner-"));
+    const runner = new TaskPlannerRunner({
+      provider: new MockProvider([JSON.stringify(plannedOutput("watch_serial"))]),
+      model: "mock-model",
+      callIdFactory: () => "task-planner-001",
+      now: () => new Date("2026-04-28T00:00:00.000Z")
+    });
+
+    const result = await runner.plan({
+      runId: "run-001",
+      runDir,
+      request: plannerRequest("/tmp/firmware.img"),
+      targetCapabilities: [
+        {
+          name: "watch_serial",
+          available: true,
+          limits: { default_timeout_sec: 180, max_duration_sec: 600 },
+          risk: "low",
+          requires: { connection: "serial" }
+        }
+      ]
+    });
+
+    expect(result).toMatchObject({
+      status: "planned",
+      brain_call: "task-planner-001"
+    });
+    const calls = await new BrainOutputStore({ runDir }).readCallRecords();
+    expect(calls[0]).toMatchObject({
+      call_id: "task-planner-001",
+      status: "validated",
+      provider_id: "mock",
+      input_ref: "brain/task-planner-001.input.json"
+    });
+  });
+
+  it("retries Task Planner once after provider transport errors", async () => {
+    const runDir = await mkdtemp(join(tmpdir(), "artifact-agent-planner-"));
+    let attempts = 0;
+    const runner = new TaskPlannerRunner({
+      provider: {
+        providerId: "flaky",
+        completeJson: async input => {
+          attempts += 1;
+          if (attempts === 1) {
+            throw new Error("temporary network failure");
+          }
+          return {
+            providerId: "flaky",
+            model: input.model,
+            rawText: JSON.stringify(plannedOutput("watch_serial"))
+          };
+        }
+      },
+      model: "mock-model",
+      callIdFactory: (_input, attempt) => `task-planner-${attempt}`
+    });
+
+    const result = await runner.plan({
+      runId: "run-001",
+      runDir,
+      request: plannerRequest("/tmp/firmware.img"),
+      targetCapabilities: [
+        {
+          name: "watch_serial",
+          available: true,
+          limits: { default_timeout_sec: 180 },
+          risk: "low",
+          requires: { connection: "serial" }
+        }
+      ]
+    });
+
+    expect(result.status).toBe("planned");
+    const calls = await new BrainOutputStore({ runDir }).readCallRecords();
+    expect(calls.map(call => call.status)).toEqual(["provider_error", "validated"]);
+  });
+
+  it("returns clarification when Task Planner times out", async () => {
+    const runDir = await mkdtemp(join(tmpdir(), "artifact-agent-planner-"));
+    const definition = createDefaultPromptRegistry().getActiveByRole("task_planner");
+    const runner = new TaskPlannerRunner({
+      provider: {
+        providerId: "slow",
+        completeJson: input =>
+          new Promise((_resolve, reject) => {
+            input.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+          })
+      },
+      model: "mock-model",
+      registry: new PromptRegistry([{ ...definition, timeout_sec: 0 }]),
+      callIdFactory: () => "task-planner-timeout"
+    });
+
+    const result = await runner.plan({
+      runId: "run-001",
+      runDir,
+      request: plannerRequest("/tmp/firmware.img"),
+      targetCapabilities: []
+    });
+
+    expect(result.status).toBe("clarification_needed");
+    const calls = await new BrainOutputStore({ runDir }).readCallRecords();
+    expect(calls[0]?.status).toBe("timeout");
+  });
+
+  it("returns clarification when Task Planner output cannot be parsed", async () => {
+    const runDir = await mkdtemp(join(tmpdir(), "artifact-agent-planner-"));
+    const runner = new TaskPlannerRunner({
+      provider: new MockProvider(["not json"]),
+      model: "mock-model",
+      callIdFactory: () => "task-planner-parse"
+    });
+
+    const result = await runner.plan({
+      runId: "run-001",
+      runDir,
+      request: plannerRequest("/tmp/firmware.img"),
+      targetCapabilities: []
+    });
+
+    expect(result.status).toBe("clarification_needed");
+    const calls = await new BrainOutputStore({ runDir }).readCallRecords();
+    expect(calls[0]?.status).toBe("parse_failed");
+  });
+
+  it("returns clarification when Task Planner invents shell_exec without test_hint", async () => {
+    const runDir = await mkdtemp(join(tmpdir(), "artifact-agent-planner-"));
+    const runner = new TaskPlannerRunner({
+      provider: new MockProvider([JSON.stringify(plannedOutput("shell_exec", { command: "/vendor/bin/smoke_test" }))]),
+      model: "mock-model",
+      callIdFactory: () => "task-planner-shell"
+    });
+
+    const result = await runner.plan({
+      runId: "run-001",
+      runDir,
+      request: plannerRequest("/tmp/firmware.img"),
+      targetCapabilities: [
+        {
+          name: "shell_exec",
+          available: true,
+          limits: { default_timeout_sec: 60 },
+          risk: "medium",
+          requires: { connection: "adb" }
+        }
+      ]
+    });
+
+    expect(result).toMatchObject({
+      status: "clarification_needed",
+      reasons: ["planner cannot invent shell_exec command without test_hint"]
+    });
+    const calls = await new BrainOutputStore({ runDir }).readCallRecords();
+    expect(calls[0]?.status).toBe("validation_failed");
+  });
+
+  it("maps invalid Task Planner output to plan_rejected and records validation failure", async () => {
+    const runDir = await mkdtemp(join(tmpdir(), "artifact-agent-planner-"));
+    const runner = new TaskPlannerRunner({
+      provider: new MockProvider([JSON.stringify(plannedOutput("push"))]),
+      model: "mock-model",
+      callIdFactory: () => "task-planner-001"
+    });
+
+    const result = await runner.plan({
+      runId: "run-001",
+      runDir,
+      request: plannerRequest("/tmp/firmware.img"),
+      targetCapabilities: [
+        {
+          name: "watch_serial",
+          available: true,
+          limits: { default_timeout_sec: 180 },
+          risk: "low",
+          requires: { connection: "serial" }
+        }
+      ]
+    });
+
+    expect(result).toMatchObject({
+      status: "plan_rejected",
+      reasons: ["unknown or unavailable capability push"]
+    });
+    const calls = await new BrainOutputStore({ runDir }).readCallRecords();
+    expect(calls[0]?.status).toBe("validation_failed");
+  });
 });
+
+function plannerRequest(artifact: string) {
+  return {
+    context: {
+      task: "verify boot",
+      expected: "device boots"
+    },
+    artifact: {
+      path: artifact,
+      type: "firmware_img"
+    },
+    target: "board-01",
+    constraints: {
+      max_duration_sec: 600,
+      allow_flash: true
+    }
+  };
+}
 
 function plannedOutput(capability: string, input: Record<string, unknown> = {}): Record<string, unknown> {
   return {

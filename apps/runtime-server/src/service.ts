@@ -26,10 +26,36 @@ import { RuntimeHttpError, resourceNotFound, runNotFound, unsupportedAction } fr
 
 export type PlanFactory = (input: ValidateArtifactInput) => Plan | undefined | Promise<Plan | undefined>;
 
+export type RuntimeTaskPlannerInput = {
+  runId: string;
+  runDir: string;
+  request: ValidateArtifactInput;
+  targetCapabilities: CapabilityStatus[];
+};
+
+export type RuntimeTaskPlannerResult =
+  | {
+      status: "planned";
+      plan: Plan;
+      brain_call?: string;
+    }
+  | {
+      status: "clarification_needed" | "plan_rejected";
+      reasons: string[];
+      missing_info: string[];
+      suggested_next: string;
+      brain_call?: string;
+    };
+
+export type RuntimeTaskPlanner = {
+  plan(input: RuntimeTaskPlannerInput): Promise<RuntimeTaskPlannerResult>;
+};
+
 export type RuntimeServiceOptions = {
   rootDir: string;
   adapters: CapabilityAdapterRegistry;
   planFactory?: PlanFactory;
+  taskPlanner?: RuntimeTaskPlanner;
   executePlansInline?: boolean;
   idFactory?: () => string;
   now?: () => Date;
@@ -47,6 +73,8 @@ export class RuntimeService {
   private readonly adapters: CapabilityAdapterRegistry;
 
   private readonly planFactory: PlanFactory | undefined;
+
+  private readonly taskPlanner: RuntimeTaskPlanner | undefined;
 
   private readonly executePlansInline: boolean;
 
@@ -66,6 +94,7 @@ export class RuntimeService {
       now: this.now
     });
     this.planFactory = options.planFactory;
+    this.taskPlanner = options.taskPlanner;
     this.executePlansInline = options.executePlansInline ?? false;
     this.idFactory = options.idFactory ?? (() => `run-${randomUUID()}`);
   }
@@ -77,21 +106,36 @@ export class RuntimeService {
     }
 
     const runId = this.idFactory();
+    const targetCapabilities = this.capabilityStatuses();
     const created = await this.runManager.createRun({
       runId,
       initialState: "planning",
       request: input,
-      inferredCapabilities: this.capabilityStatuses()
+      inferredCapabilities: targetCapabilities
     });
     if (!created.accepted) {
       throw new RuntimeHttpError(400, created.error_code, created.message);
     }
 
-    const plan = await this.planFactory?.(input);
+    const plannerResult = await this.createPlanForRun(runId, created.run.evidence_path, input, targetCapabilities);
+    if (plannerResult.status !== "planned" && plannerResult.status !== "no_plan") {
+      await this.failPlanningRun(runId, plannerResult.reasons.join("; "));
+      return {
+        status: plannerResult.status,
+        run_id: runId,
+        target: input.target,
+        reasons: plannerResult.reasons,
+        missing_info: plannerResult.missing_info,
+        suggested_next: plannerResult.suggested_next
+      };
+    }
+
+    const plan = plannerResult.status === "planned" ? plannerResult.plan : undefined;
     if (plan !== undefined) {
       if (this.executePlansInline) {
         const execution = await this.executor.executePlan({ runId, plan });
         if (!execution.accepted) {
+          await this.failPlanningRun(runId, execution.message);
           return {
             status: "plan_rejected",
             run_id: runId,
@@ -114,6 +158,57 @@ export class RuntimeService {
       state: run.status,
       evidence_path: run.evidence_path
     };
+  }
+
+  private async createPlanForRun(
+    runId: string,
+    runDir: string,
+    input: ValidateArtifactInput,
+    targetCapabilities: CapabilityStatus[]
+  ): Promise<
+    | { status: "planned"; plan: Plan }
+    | { status: "no_plan" }
+    | { status: "clarification_needed" | "plan_rejected"; reasons: string[]; missing_info: string[]; suggested_next: string }
+  > {
+    const handWrittenPlan = await this.planFactory?.(input);
+    if (handWrittenPlan !== undefined) {
+      return { status: "planned", plan: handWrittenPlan };
+    }
+    if (this.taskPlanner === undefined) {
+      return { status: "no_plan" };
+    }
+    try {
+      const plannerResult = await this.taskPlanner.plan({
+        runId,
+        runDir,
+        request: input,
+        targetCapabilities
+      });
+      if (plannerResult.status === "planned") {
+        return { status: "planned", plan: plannerResult.plan };
+      }
+      return plannerResult;
+    } catch (error) {
+      return {
+        status: "plan_rejected",
+        reasons: [error instanceof Error ? error.message : "Task Planner failed"],
+        missing_info: [],
+        suggested_next: "Fix Task Planner integration or use a hand-written Plan."
+      };
+    }
+  }
+
+  private async failPlanningRun(runId: string, reason: string): Promise<void> {
+    const current = await this.readRunOrThrow(runId);
+    if (current.status !== "planning") {
+      return;
+    }
+    await this.runManager.transitionRun({
+      runId,
+      to: "failed",
+      reason,
+      source: "orchestrator"
+    });
   }
 
   async getRunStatus(runId: string): Promise<RunStatusResponse> {

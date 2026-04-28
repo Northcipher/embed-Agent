@@ -57,22 +57,79 @@ export function createDefaultPromptRegistry(): PromptRegistry {
 
 export function assemblePrompt(definition: PromptDefinition, sections: PromptSection[]): AssembledPrompt {
   const sectionMap = new Map(sections.map(section => [section.name, section.content]));
-  const user = definition.user_sections
-    .map(sectionName => {
-      const content = sectionMap.get(sectionName) ?? "";
-      return `## ${sectionName}\n${content}`;
-    })
-    .join("\n\n");
-  const truncated = user.length > definition.max_input_chars;
+  const orderedSections = definition.user_sections.map(sectionName => ({
+    name: sectionName,
+    text: `## ${sectionName}\n${sectionMap.get(sectionName) ?? ""}`
+  }));
+  const full = joinSections(orderedSections);
+  const truncated = full.length > definition.max_input_chars;
+  const user = truncated ? assembleBoundedSections(orderedSections, definition.max_input_chars) : full;
   return {
     prompt_id: definition.prompt_id,
     role: definition.role,
     system: definition.system,
     developer: definition.developer,
-    user: truncated ? user.slice(0, definition.max_input_chars) : user,
+    user: user.length > definition.max_input_chars ? user.slice(0, definition.max_input_chars) : user,
     truncated
   };
 }
+
+function assembleBoundedSections(sections: Array<{ name: string; text: string }>, maxChars: number): string {
+  const full = joinSections(sections);
+  if (full.length <= maxChars) {
+    return full;
+  }
+
+  const selected = new Map<string, string>();
+  let remaining = maxChars;
+
+  for (const section of sections.filter(section => prioritySections.has(section.name))) {
+    if (remaining <= 0) {
+      break;
+    }
+    const text = truncateText(section.text, remaining);
+    selected.set(section.name, text);
+    remaining -= text.length + 2;
+  }
+
+  for (const section of sections.filter(section => !prioritySections.has(section.name))) {
+    if (remaining <= 0) {
+      break;
+    }
+    const text = truncateText(section.text, remaining);
+    selected.set(section.name, text);
+    remaining -= text.length + 2;
+  }
+
+  return joinSections(sections.flatMap(section => (selected.has(section.name) ? [{ name: section.name, text: selected.get(section.name)! }] : [])));
+}
+
+function joinSections(sections: Array<{ text: string }>): string {
+  return sections.map(section => section.text).join("\n\n");
+}
+
+function truncateText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  const marker = "\n[truncated]";
+  if (maxChars <= marker.length) {
+    return text.slice(0, Math.max(0, maxChars));
+  }
+  return `${text.slice(0, maxChars - marker.length)}${marker}`;
+}
+
+const prioritySections = new Set([
+  "constraints",
+  "constraints_remaining",
+  "evidence_index",
+  "evidence_windows",
+  "output_schema",
+  "run",
+  "target_capabilities",
+  "target_state",
+  "trigger_event"
+]);
 
 function prompt(
   promptId: string,

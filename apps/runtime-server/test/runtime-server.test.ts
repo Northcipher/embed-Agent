@@ -116,6 +116,105 @@ describe("runtime-server HTTP API", () => {
     });
   });
 
+  it("uses Task Planner output when no hand-written plan is supplied", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "boot completed"],
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 0,
+            stdout: "pass\n",
+            stderr: ""
+          }
+        },
+        logs: {
+          dmesg: "clean dmesg\n"
+        }
+      }),
+      taskPlanner: plannerThatReturns({ status: "planned", plan: demoPlan() }),
+      executePlansInline: true,
+      idFactory: () => "run-planner-001",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    const created = await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toMatchObject({
+      status: "accepted",
+      run_id: "run-planner-001",
+      state: "completed"
+    });
+  });
+
+  it("returns clarification_needed and fails the run when Task Planner needs missing input", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry(),
+      taskPlanner: plannerThatReturns({
+        status: "clarification_needed",
+        reasons: ["planner cannot invent shell_exec command without test_hint"],
+        missing_info: ["Task Planner output needs more input"],
+        suggested_next: "Provide a test_hint and retry."
+      }),
+      executePlansInline: true,
+      idFactory: () => "run-planner-reject",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    const created = await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: inputWithoutTestHint(artifactPath)
+    });
+
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toMatchObject({
+      status: "clarification_needed",
+      run_id: "run-planner-reject",
+      missing_info: ["Task Planner output needs more input"]
+    });
+
+    const status = await server.app.inject({ method: "GET", url: "/api/runs/run-planner-reject/status" });
+    expect(status.json()).toMatchObject({
+      run_id: "run-planner-reject",
+      status: "failed"
+    });
+  });
+
+  it("fails the run when executor rejects a Task Planner plan", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry(),
+      taskPlanner: plannerThatReturns({ status: "planned", plan: duplicateStepPlan() }),
+      executePlansInline: true,
+      idFactory: () => "run-bad-plan",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    const created = await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+
+    expect(created.json()).toMatchObject({
+      status: "plan_rejected",
+      run_id: "run-bad-plan"
+    });
+
+    const status = await server.app.inject({ method: "GET", url: "/api/runs/run-bad-plan/status" });
+    expect(status.json()).toMatchObject({
+      run_id: "run-bad-plan",
+      status: "failed"
+    });
+  });
+
   it("returns public errors for invalid input and missing runs", async () => {
     server = buildRuntimeServer({
       rootDir,
@@ -304,5 +403,52 @@ function demoPlan(): Plan {
       on_success: ["dmesg"],
       on_failure: ["dmesg", "serial:full"]
     }
+  };
+}
+
+function duplicateStepPlan(): Plan {
+  const plan = demoPlan();
+  return {
+    ...plan,
+    plan_id: "plan-duplicate-step",
+    steps: [
+      {
+        id: "step-duplicate",
+        capability: "watch_serial",
+        condition: "always",
+        input: {
+          duration_sec: 10
+        },
+        timeout_sec: 10
+      },
+      {
+        id: "step-duplicate",
+        capability: "wait_adb",
+        condition: "always",
+        input: {
+          timeout_sec: 10
+        },
+        timeout_sec: 10
+      }
+    ]
+  };
+}
+
+function inputWithoutTestHint(artifact: string): ValidateArtifactInput {
+  const input = validInput(artifact);
+  return {
+    ...input,
+    context: {
+      task: "验证 boot crash 是否修复",
+      what_changed: "调整 init service 启动顺序",
+      expected: "设备能启动完成，ADB 能回来",
+      concerns: ["kernel panic", "init timeout", "adb offline"]
+    }
+  };
+}
+
+function plannerThatReturns(result: Awaited<ReturnType<NonNullable<Parameters<typeof buildRuntimeServer>[0]["taskPlanner"]>["plan"]>>) {
+  return {
+    plan: async () => result
   };
 }

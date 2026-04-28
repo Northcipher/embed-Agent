@@ -48,6 +48,8 @@ export type WriteBrainCallResult = {
   record: BrainCallRecord;
 };
 
+const appendQueues = new Map<string, Promise<void>>();
+
 export class BrainOutputStore {
   private readonly runDir: string;
 
@@ -90,7 +92,7 @@ export class BrainOutputStore {
       validation_ref: validationRef
     });
     await mkdir(this.brainDir(), { recursive: true });
-    await appendFile(this.resolveBrainRef("brain/calls.jsonl"), `${JSON.stringify(record)}\n`, "utf8");
+    await enqueueAppend(this.resolveBrainRef("brain/calls.jsonl"), `${JSON.stringify(record)}\n`);
 
     return { record };
   }
@@ -140,4 +142,18 @@ function safeSegment(value: string, label: string): string {
     throw new Error(`${label} contains unsupported characters`);
   }
   return value;
+}
+
+async function enqueueAppend(filePath: string, line: string): Promise<void> {
+  const previous = appendQueues.get(filePath) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(() => appendFile(filePath, line, "utf8"));
+  appendQueues.set(
+    filePath,
+    current.finally(() => {
+      if (appendQueues.get(filePath) === current) {
+        appendQueues.delete(filePath);
+      }
+    })
+  );
+  return current;
 }
