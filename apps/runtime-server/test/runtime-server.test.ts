@@ -789,6 +789,56 @@ describe("runtime-server HTTP API", () => {
     expect(new Set(triggerSeqs).size).toBe(2);
   });
 
+  it("debounces observer triggers for repeated rule_matched events with the same rule_id", async () => {
+    const triggerEvents: Array<{ type: string; ruleId: string | undefined }> = [];
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "service timeout", "boot completed"]
+      }),
+      planFactory: () => duplicateRuleMatchedPlan(),
+      observer: {
+        observe: async input => {
+          triggerEvents.push({
+            type: input.triggerEvent.type,
+            ruleId: typeof input.triggerEvent.payload?.rule_id === "string" ? input.triggerEvent.payload.rule_id : undefined
+          });
+          return {
+            status: "accepted",
+            intent: {
+              intent: "continue",
+              reason: "duplicate rule matched handled",
+              confidence: 0.6,
+              requested_actions: [],
+              report_to_caller: false
+            },
+            brain_call: `observer-rule-${triggerEvents.length}`
+          };
+        }
+      },
+      executePlansInline: true,
+      idFactory: () => "run-observer-rule-debounce",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+
+    expect(triggerEvents).toEqual([
+      {
+        type: "rule_matched",
+        ruleId: "serial.pattern.service_timeout"
+      }
+    ]);
+
+    const events = await server.app.inject({ method: "GET", url: "/api/runs/run-observer-rule-debounce/events?after_seq=0&limit=200" });
+    const observerEvents = events.json().events.filter((event: { type: string }) => event.type === "observer_intent");
+    expect(observerEvents).toHaveLength(1);
+  });
+
   it("only treats rule_matched warning and error events as Observer triggers", () => {
     expect(shouldTriggerObserver(runEvent("rule_matched", "error"))).toBe(true);
     expect(shouldTriggerObserver(runEvent("rule_matched", "warning"))).toBe(true);
@@ -1560,6 +1610,44 @@ function twoFailurePlan(): Plan {
       always: [],
       on_success: [],
       on_failure: ["adb:step-nonfatal", "adb:step-fatal"]
+    }
+  };
+}
+
+function duplicateRuleMatchedPlan(): Plan {
+  return {
+    plan_id: "plan-duplicate-rule-match",
+    estimated_duration_sec: 120,
+    steps: [
+      {
+        id: "step-watch-1",
+        capability: "watch_serial",
+        condition: "always",
+        input: {
+          duration_sec: 10,
+          patterns: ["service timeout"]
+        },
+        timeout_sec: 10,
+        on_failure: "continue"
+      },
+      {
+        id: "step-watch-2",
+        capability: "watch_serial",
+        condition: "always",
+        input: {
+          duration_sec: 10,
+          patterns: ["service timeout"]
+        },
+        timeout_sec: 10,
+        on_failure: "continue"
+      }
+    ],
+    success_criteria: ["serial observation finished"],
+    failure_signals: ["service timeout"],
+    evidence_policy: {
+      always: ["serial:full"],
+      on_success: [],
+      on_failure: ["serial:full"]
     }
   };
 }

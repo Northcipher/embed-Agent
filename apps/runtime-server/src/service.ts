@@ -667,7 +667,10 @@ export class RuntimeService {
     if (this.observer === undefined) {
       return;
     }
-    const triggerEvents = events.filter(shouldTriggerObserver).slice(0, MAX_OBSERVER_TRIGGERS_PER_EXECUTION);
+    const triggerEvents = applyObserverRuleDebounce(events.filter(shouldTriggerObserver), OBSERVER_RULE_DEBOUNCE_SEC).slice(
+      0,
+      MAX_OBSERVER_TRIGGERS_PER_EXECUTION
+    );
     if (triggerEvents.length === 0) {
       return;
     }
@@ -921,8 +924,48 @@ export function shouldTriggerObserver(event: RunEvent): boolean {
 }
 
 const MAX_OBSERVER_TRIGGERS_PER_EXECUTION = 3;
+const OBSERVER_RULE_DEBOUNCE_SEC = 30;
 const MAX_OBSERVER_EVIDENCE_WINDOWS = 5;
 const MAX_OBSERVER_EVIDENCE_WINDOW_CHARS = 4000;
+
+function applyObserverRuleDebounce(events: RunEvent[], debounceSec: number): RunEvent[] {
+  const accepted: RunEvent[] = [];
+  const lastRuleTriggerAt = new Map<string, number>();
+
+  for (const event of events) {
+    if (event.type !== "rule_matched") {
+      accepted.push(event);
+      continue;
+    }
+    const ruleId = observerRuleId(event);
+    if (ruleId === undefined) {
+      accepted.push(event);
+      continue;
+    }
+
+    const eventAt = Date.parse(event.time);
+    if (Number.isNaN(eventAt)) {
+      accepted.push(event);
+      continue;
+    }
+
+    const lastAt = lastRuleTriggerAt.get(ruleId);
+    if (lastAt !== undefined && eventAt - lastAt < debounceSec * 1000) {
+      continue;
+    }
+    lastRuleTriggerAt.set(ruleId, eventAt);
+    accepted.push(event);
+  }
+  return accepted;
+}
+
+function observerRuleId(event: RunEvent): string | undefined {
+  if (event.type !== "rule_matched") {
+    return undefined;
+  }
+  const ruleId = event.payload?.rule_id;
+  return typeof ruleId === "string" && ruleId.length > 0 ? ruleId : undefined;
+}
 
 function replyStatusFromRunState(state: RunState): AgentReply["status"] | undefined {
   if (state === "completed" || state === "failed" || state === "cancelled") {
