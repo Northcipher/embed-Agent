@@ -317,7 +317,7 @@ export class RuntimeService {
       ...(currentStep === undefined ? {} : { phase: currentStep.capability, current_step: currentStep }),
       target: {
         ...(targetId === undefined ? {} : { target_id: targetId }),
-        state: terminal ? "idle" : "busy",
+        state: targetRuntimeStateFromCurrentStep(terminal, currentStep?.capability),
         current_run_id: terminal ? null : run.run_id,
         updated_at: run.updated_at
       },
@@ -906,6 +906,25 @@ const STEP_STATUS_EVENT_TYPES: EventType[] = ["step_started", "step_completed", 
 
 function availableCapabilityNames(capabilities: CapabilityStatus[]): CapabilityName[] {
   return capabilities.filter(capability => capability.available).map(capability => capability.name);
+}
+
+function targetRuntimeStateFromCurrentStep(
+  terminal: boolean,
+  capability: CapabilityName | undefined
+): "idle" | "busy" | "flashing" | "booting" | "adb_ready" {
+  if (terminal) {
+    return "idle";
+  }
+  if (capability === "flash") {
+    return "flashing";
+  }
+  if (capability === "watch_serial" || capability === "wait_adb") {
+    return "booting";
+  }
+  if (capability === "push" || capability === "shell_exec" || capability === "check_process") {
+    return "adb_ready";
+  }
+  return "busy";
 }
 
 function elapsedSec(createdAt: string, now: Date): number {

@@ -226,6 +226,54 @@ describe("runtime-server HTTP API", () => {
     expect(terminal.json()).not.toHaveProperty("current_step");
   });
 
+  it("derives target runtime state from current step capability in get_run_status", async () => {
+    const now = () => new Date("2026-04-28T02:00:30.000Z");
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry(),
+      now
+    });
+    const store = new FileStore({ rootDir, now });
+    await store.createRun({
+      run_id: "run-target-state-step",
+      status: "running",
+      request: validInput(artifactPath)
+    });
+
+    const cases: Array<{ capability: string; expectedState: string }> = [
+      { capability: "flash", expectedState: "flashing" },
+      { capability: "watch_serial", expectedState: "booting" },
+      { capability: "wait_adb", expectedState: "booting" },
+      { capability: "push", expectedState: "adb_ready" },
+      { capability: "shell_exec", expectedState: "adb_ready" },
+      { capability: "check_process", expectedState: "adb_ready" },
+      { capability: "collect_logs", expectedState: "busy" },
+      { capability: "save_snapshot", expectedState: "busy" }
+    ];
+
+    for (const item of cases) {
+      await store.appendEvent("run-target-state-step", {
+        time: "2026-04-28T02:00:10.000Z",
+        elapsed_sec: 10,
+        type: "step_started",
+        severity: "info",
+        source: "orchestrator",
+        step_id: `step-${item.capability}`,
+        summary: `${item.capability} started`,
+        payload: {
+          capability: item.capability,
+          timeout_sec: 60
+        }
+      });
+      const status = await server.app.inject({ method: "GET", url: "/api/runs/run-target-state-step/status" });
+      expect(status.json()).toMatchObject({
+        target: {
+          state: item.expectedState
+        }
+      });
+    }
+  });
+
   it("filters run events by event types from HTTP query", async () => {
     server = buildRuntimeServer({
       rootDir,
