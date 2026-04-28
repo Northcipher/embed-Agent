@@ -105,7 +105,7 @@ export class FakeCapabilityAdapter {
                 missingItems.push(item);
                 continue;
             }
-            const ref = `log:${item}`;
+            const ref = `log:${safeItem}`;
             await context.store.addEvidenceRef(context.runId, {
                 ref,
                 kind: "log",
