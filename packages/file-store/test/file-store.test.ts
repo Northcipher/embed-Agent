@@ -40,6 +40,29 @@ describe("FileStore", () => {
     expect(index.root_path).toBe(path.join(rootDir, "runs", "run-001"));
   });
 
+  it("reads the persisted run request when one was stored", async () => {
+    await store.createRun({
+      run_id: "run-001",
+      request: {
+        context: {
+          task: "verify boot",
+          expected: "device boots"
+        },
+        target: "board-01"
+      }
+    });
+    await store.createRun({ run_id: "run-002" });
+
+    await expect(store.readRunRequest("run-001")).resolves.toMatchObject({
+      context: {
+        task: "verify boot",
+        expected: "device boots"
+      },
+      target: "board-01"
+    });
+    await expect(store.readRunRequest("run-002")).resolves.toBeUndefined();
+  });
+
   it("appends events with monotonic sequence and reads by cursor", async () => {
     await store.createRun({ run_id: "run-001" });
 

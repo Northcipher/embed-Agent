@@ -52,11 +52,36 @@ export type RuntimeTaskPlanner = {
   plan(input: RuntimeTaskPlannerInput): Promise<RuntimeTaskPlannerResult>;
 };
 
+export type RuntimeReplyGeneratorInput = {
+  runId: string;
+  runDir: string;
+  finalStatus: AgentReply["status"];
+  evidencePath: string;
+  evidenceRefs: string[];
+  requestSummary: Record<string, unknown>;
+  run: Record<string, unknown>;
+  eventSummary: Array<Record<string, unknown>>;
+  evidenceIndex: unknown;
+  observerNotes: unknown[];
+};
+
+export type RuntimeReplyGeneratorResult = {
+  status: "generated" | "fallback";
+  reply: AgentReply;
+  reasons?: string[];
+  brain_call?: string;
+};
+
+export type RuntimeReplyGenerator = {
+  generate(input: RuntimeReplyGeneratorInput): Promise<RuntimeReplyGeneratorResult>;
+};
+
 export type RuntimeServiceOptions = {
   rootDir: string;
   adapters: CapabilityAdapterRegistry;
   planFactory?: PlanFactory;
   taskPlanner?: RuntimeTaskPlanner;
+  replyGenerator?: RuntimeReplyGenerator;
   executePlansInline?: boolean;
   idFactory?: () => string;
   now?: () => Date;
@@ -77,6 +102,8 @@ export class RuntimeService {
 
   private readonly taskPlanner: RuntimeTaskPlanner | undefined;
 
+  private readonly replyGenerator: RuntimeReplyGenerator | undefined;
+
   private readonly executePlansInline: boolean;
 
   private readonly idFactory: () => string;
@@ -96,6 +123,7 @@ export class RuntimeService {
     });
     this.planFactory = options.planFactory;
     this.taskPlanner = options.taskPlanner;
+    this.replyGenerator = options.replyGenerator;
     this.executePlansInline = options.executePlansInline ?? false;
     this.idFactory = options.idFactory ?? (() => `run-${randomUUID()}`);
   }
@@ -121,6 +149,7 @@ export class RuntimeService {
     const plannerResult = await this.createPlanForRun(runId, created.run.evidence_path, input, targetCapabilities);
     if (plannerResult.status !== "planned" && plannerResult.status !== "no_plan") {
       await this.failPlanningRun(runId, plannerResult.reasons.join("; "));
+      await this.writeFinalReply(await this.store.readRun(runId));
       return {
         status: plannerResult.status,
         run_id: runId,
@@ -137,6 +166,7 @@ export class RuntimeService {
         const execution = await this.executor.executePlan({ runId, plan });
         if (!execution.accepted) {
           await this.failPlanningRun(runId, execution.message);
+          await this.writeFinalReply(await this.store.readRun(runId));
           return {
             status: "plan_rejected",
             run_id: runId,
@@ -146,7 +176,7 @@ export class RuntimeService {
             suggested_next: "Fix the hand-written plan or planner output and retry."
           };
         }
-        await this.writeRuleBasedReply(execution.run);
+        await this.writeFinalReply(execution.run);
       } else {
         this.startBackgroundPlan(runId, plan);
       }
@@ -312,7 +342,7 @@ export class RuntimeService {
   async cancelRun(runId: string, reason?: string): Promise<CancelRunResponse> {
     const run = await this.readRunOrThrow(runId);
     if (run.status === "cancelled") {
-      await this.writeRuleBasedReply(run);
+      await this.writeFinalReply(run);
       return {
         run_id: runId,
         status: "cancelled",
@@ -329,7 +359,7 @@ export class RuntimeService {
     if (!transitioned.accepted) {
       throw unsupportedAction(transitioned.message);
     }
-    await this.writeRuleBasedReply(transitioned.run);
+    await this.writeFinalReply(transitioned.run);
     return {
       run_id: runId,
       status: "cancelled",
@@ -423,10 +453,10 @@ export class RuntimeService {
       try {
         const execution = await this.executor.executePlan({ runId, plan });
         if (execution.accepted) {
-          await this.writeRuleBasedReply(execution.run);
+          await this.writeFinalReply(execution.run);
         } else {
           const run = await this.store.readRun(runId);
-          await this.writeRuleBasedReply(run);
+          await this.writeFinalReply(run);
         }
       } catch (error) {
         await this.failRunAfterBackgroundError(runId, error);
@@ -465,7 +495,7 @@ export class RuntimeService {
   private async transitionFailedIfAllowed(runId: string, error: unknown): Promise<void> {
     const current = await this.readRunOrThrow(runId);
     if (isTerminalRunState(current.status)) {
-      await this.writeRuleBasedReply(current);
+      await this.writeFinalReply(current);
       return;
     }
     if (current.status !== "planning" && current.status !== "collecting_evidence") {
@@ -477,7 +507,30 @@ export class RuntimeService {
       reason: error instanceof Error ? error.message : "background execution failed",
       source: "orchestrator"
     });
-    await this.writeRuleBasedReply(await this.store.readRun(runId));
+    await this.writeFinalReply(await this.store.readRun(runId));
+  }
+
+  private async writeFinalReply(run: StoredRun): Promise<void> {
+    const finalStatus = replyStatusFromRunState(run.status);
+    if (finalStatus === undefined) {
+      return;
+    }
+    if ((await this.store.readAgentReply(run.run_id)) !== undefined) {
+      return;
+    }
+    if (this.replyGenerator === undefined) {
+      await this.writeRuleBasedReply(run);
+      return;
+    }
+
+    const index = await this.store.readEvidenceIndex(run.run_id);
+    try {
+      const result = await this.replyGenerator.generate(await this.buildReplyGeneratorInput(run, finalStatus, index));
+      const reply = validateReplyForRun(result.reply, run, finalStatus, index.refs.map(ref => ref.ref));
+      await this.store.writeAgentReply(run.run_id, reply);
+    } catch {
+      await this.writeRuleBasedReply(run);
+    }
   }
 
   private async writeRuleBasedReply(run: StoredRun): Promise<void> {
@@ -498,6 +551,42 @@ export class RuntimeService {
       evidence_path: run.evidence_path
     });
     await this.store.writeAgentReply(run.run_id, reply);
+  }
+
+  private async buildReplyGeneratorInput(
+    run: StoredRun,
+    finalStatus: AgentReply["status"],
+    evidenceIndex: Awaited<ReturnType<FileStore["readEvidenceIndex"]>>
+  ): Promise<RuntimeReplyGeneratorInput> {
+    const events = await this.store.readEvents(run.run_id, {
+      afterSeq: Math.max(0, run.last_event_seq - 50),
+      limit: 50
+    });
+    const request = await this.store.readRunRequest(run.run_id);
+    return {
+      runId: run.run_id,
+      runDir: run.evidence_path,
+      finalStatus,
+      evidencePath: run.evidence_path,
+      evidenceRefs: evidenceIndex.refs.map(ref => ref.ref),
+      requestSummary: summarizeRequest(request),
+      run: {
+        run_id: run.run_id,
+        state: run.status,
+        elapsed_sec: elapsedSec(run.created_at, this.now()),
+        last_event_seq: run.last_event_seq
+      },
+      eventSummary: events.map(event => ({
+        seq: event.seq,
+        type: event.type,
+        severity: event.severity,
+        source: event.source,
+        summary: event.summary,
+        evidence_refs: event.evidence_refs ?? []
+      })),
+      evidenceIndex,
+      observerNotes: []
+    };
   }
 }
 
@@ -562,4 +651,63 @@ function elapsedSec(createdAt: string, now: Date): number {
 
 function lastSeq(events: RunEvent[], fallback: number): number {
   return events.length === 0 ? fallback : events[events.length - 1]!.seq;
+}
+
+function replyStatusFromRunState(state: RunState): AgentReply["status"] | undefined {
+  if (state === "completed" || state === "failed" || state === "cancelled") {
+    return state;
+  }
+  return undefined;
+}
+
+function validateReplyForRun(
+  reply: AgentReply,
+  run: StoredRun,
+  finalStatus: AgentReply["status"],
+  evidenceRefs: string[]
+): AgentReply {
+  const parsed = AgentReplySchema.parse(reply);
+  if (parsed.run_id !== run.run_id) {
+    throw new Error("reply run_id does not match current run");
+  }
+  if (parsed.status !== finalStatus) {
+    throw new Error("reply status does not match final run state");
+  }
+  const availableEvidenceRefs = new Set(evidenceRefs);
+  for (const item of parsed.key_evidence) {
+    for (const ref of item.evidence_refs) {
+      if (!availableEvidenceRefs.has(ref)) {
+        throw new Error(`reply references missing evidence ref ${ref}`);
+      }
+    }
+  }
+  return parsed;
+}
+
+function summarizeRequest(request: unknown): Record<string, unknown> {
+  if (!isRecord(request)) {
+    return {};
+  }
+  const context = isRecord(request.context) ? request.context : {};
+  const artifact = isRecord(request.artifact) ? request.artifact : {};
+  const summary: Record<string, unknown> = {};
+  copyIfPresent(summary, context, "task");
+  copyIfPresent(summary, context, "expected");
+  copyIfPresent(summary, context, "what_changed");
+  copyIfPresent(summary, context, "concerns");
+  copyIfPresent(summary, request, "target");
+  if (typeof artifact.type === "string") {
+    summary.artifact_type = artifact.type;
+  }
+  return summary;
+}
+
+function copyIfPresent(target: Record<string, unknown>, source: Record<string, unknown>, key: string): void {
+  if (source[key] !== undefined) {
+    target[key] = source[key];
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

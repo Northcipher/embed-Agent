@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeAdapterRegistry } from "@artifact-validation/adapters";
 import type { Plan, ValidateArtifactInput } from "@artifact-validation/contracts";
-import { buildRuntimeServer, type RuntimeServer } from "../src/index.js";
+import { buildRuntimeServer, type RuntimeReplyGeneratorInput, type RuntimeServer } from "../src/index.js";
 
 describe("runtime-server HTTP API", () => {
   let rootDir: string;
@@ -221,6 +221,223 @@ describe("runtime-server HTTP API", () => {
     });
   });
 
+  it("uses configured Reply Generator for terminal run result context", async () => {
+    let capturedInput: RuntimeReplyGeneratorInput | undefined;
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "boot completed"],
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 0,
+            stdout: "pass\n",
+            stderr: ""
+          }
+        },
+        logs: {
+          dmesg: "clean dmesg\n"
+        }
+      }),
+      planFactory: () => demoPlan(),
+      replyGenerator: {
+        generate: async input => {
+          capturedInput = input;
+          return {
+            status: "generated",
+            reply: {
+              run_id: input.runId,
+              status: input.finalStatus,
+              summary: "generated validation summary",
+              confidence: 0.8,
+              key_evidence: [],
+              suggested_next: "review the generated summary and evidence refs",
+              evidence_path: input.evidencePath
+            },
+            brain_call: "reply-generator-001"
+          };
+        }
+      },
+      executePlansInline: true,
+      idFactory: () => "run-generated-reply",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+
+    const result = await server.app.inject({ method: "GET", url: "/api/runs/run-generated-reply/result" });
+    expect(result.json()).toMatchObject({
+      run_id: "run-generated-reply",
+      status: "completed",
+      summary: "generated validation summary"
+    });
+    expect(capturedInput).toMatchObject({
+      runId: "run-generated-reply",
+      finalStatus: "completed",
+      requestSummary: {
+        task: "验证 boot crash 是否修复",
+        expected: "设备能启动完成，ADB 能回来"
+      },
+      run: {
+        run_id: "run-generated-reply",
+        state: "completed"
+      }
+    });
+    expect(capturedInput?.eventSummary.length).toBeGreaterThan(0);
+    expect(capturedInput?.evidenceRefs).toEqual(["flash:log", "serial:full", "adb:step-smoke", "log:dmesg"]);
+  });
+
+  it("falls back to rule-based Agent Reply when configured Reply Generator fails", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "boot completed"],
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 0,
+            stdout: "pass\n",
+            stderr: ""
+          }
+        }
+      }),
+      planFactory: () => demoPlan(),
+      replyGenerator: {
+        generate: async () => {
+          throw new Error("reply generator unavailable");
+        }
+      },
+      executePlansInline: true,
+      idFactory: () => "run-reply-fallback",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+
+    const result = await server.app.inject({ method: "GET", url: "/api/runs/run-reply-fallback/result" });
+    expect(result.json()).toMatchObject({
+      run_id: "run-reply-fallback",
+      status: "completed",
+      summary: "run completed; review event stream and evidence refs for details"
+    });
+  });
+
+  it("falls back to rule-based Agent Reply when configured Reply Generator returns invalid evidence refs", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "boot completed"],
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 0,
+            stdout: "pass\n",
+            stderr: ""
+          }
+        }
+      }),
+      planFactory: () => demoPlan(),
+      replyGenerator: {
+        generate: async input => ({
+          status: "generated",
+          reply: {
+            run_id: input.runId,
+            status: input.finalStatus,
+            summary: "generated validation summary",
+            confidence: 0.8,
+            key_evidence: [
+              {
+                summary: "missing evidence",
+                evidence_refs: ["missing:ref"]
+              }
+            ],
+            suggested_next: "review the generated summary and evidence refs",
+            evidence_path: input.evidencePath
+          },
+          brain_call: "reply-generator-invalid"
+        })
+      },
+      executePlansInline: true,
+      idFactory: () => "run-reply-invalid",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+
+    const result = await server.app.inject({ method: "GET", url: "/api/runs/run-reply-invalid/result" });
+    expect(result.json()).toMatchObject({
+      run_id: "run-reply-invalid",
+      status: "completed",
+      summary: "run completed; review event stream and evidence refs for details",
+      key_evidence: []
+    });
+  });
+
+  it("does not call configured Reply Generator again when terminal reply already exists", async () => {
+    let callCount = 0;
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry(),
+      replyGenerator: {
+        generate: async input => {
+          callCount += 1;
+          return {
+            status: "generated",
+            reply: {
+              run_id: input.runId,
+              status: input.finalStatus,
+              summary: "generated cancelled summary",
+              confidence: 0.8,
+              key_evidence: [],
+              suggested_next: "review cancellation reason and rerun when ready",
+              evidence_path: input.evidencePath
+            },
+            brain_call: `reply-generator-${callCount}`
+          };
+        }
+      },
+      idFactory: () => "run-reply-once",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: validInput(artifactPath)
+    });
+    await server.app.inject({
+      method: "POST",
+      url: "/api/runs/run-reply-once/cancel",
+      payload: {
+        reason: "first cancel"
+      }
+    });
+    await server.app.inject({
+      method: "POST",
+      url: "/api/runs/run-reply-once/cancel",
+      payload: {
+        reason: "second cancel"
+      }
+    });
+
+    expect(callCount).toBe(1);
+    const result = await server.app.inject({ method: "GET", url: "/api/runs/run-reply-once/result" });
+    expect(result.json()).toMatchObject({
+      run_id: "run-reply-once",
+      status: "cancelled",
+      summary: "generated cancelled summary"
+    });
+  });
+
   it("returns clarification_needed and fails the run when Task Planner needs missing input", async () => {
     server = buildRuntimeServer({
       rootDir,
@@ -281,6 +498,13 @@ describe("runtime-server HTTP API", () => {
     expect(status.json()).toMatchObject({
       run_id: "run-bad-plan",
       status: "failed"
+    });
+
+    const result = await server.app.inject({ method: "GET", url: "/api/runs/run-bad-plan/result" });
+    expect(result.json()).toMatchObject({
+      run_id: "run-bad-plan",
+      status: "failed",
+      summary: "run failed; review event stream and evidence refs for details"
     });
   });
 

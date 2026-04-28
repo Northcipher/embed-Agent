@@ -106,6 +106,17 @@ export class FileStore {
     return StoredRunSchema.parse(raw);
   }
 
+  async readRunRequest(runId: string): Promise<unknown | undefined> {
+    try {
+      return await this.readJson(path.join(this.runDir(runId), "request.json"));
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
   async writeRun(run: StoredRun): Promise<StoredRun> {
     const parsed = StoredRunSchema.parse({
       ...run,
