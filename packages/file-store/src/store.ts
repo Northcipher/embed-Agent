@@ -132,6 +132,7 @@ export class FileStore {
     const parsed = RunEventSchema.parse({ ...event, run_id: runId, seq: nextSeq });
     await appendFile(path.join(this.runDir(runId), "events.jsonl"), `${JSON.stringify(parsed)}\n`, "utf8");
     await this.writeRun({ ...run, last_event_seq: nextSeq });
+    await this.addKeyEventFromRunEvent(parsed);
     return parsed;
   }
 
@@ -204,6 +205,17 @@ export class FileStore {
     });
     await this.writeJsonAtomic(path.join(this.runDir(runId), "evidence-index.json"), updated);
     return updated;
+  }
+
+  private async addKeyEventFromRunEvent(event: RunEvent): Promise<void> {
+    if (!shouldPromoteEventToKeyEvent(event)) {
+      return;
+    }
+    await this.addKeyEvent(event.run_id, {
+      seq: event.seq,
+      summary: event.summary,
+      evidence_refs: event.evidence_refs
+    });
   }
 
   async writeAgentReply(runId: string, reply: AgentReply): Promise<AgentReply> {
@@ -326,6 +338,13 @@ function truncateForError(text: string, maxLength = 160): string {
     return text;
   }
   return `${text.slice(0, maxLength)}...`;
+}
+
+function shouldPromoteEventToKeyEvent(event: RunEvent): event is RunEvent & { evidence_refs: string[] } {
+  if (event.evidence_refs === undefined || event.evidence_refs.length === 0) {
+    return false;
+  }
+  return event.type === "rule_matched" || event.severity === "warning" || event.severity === "error";
 }
 
 function isMissingFileError(error: unknown): boolean {

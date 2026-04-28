@@ -220,6 +220,52 @@ describe("FileStore", () => {
     ]);
   });
 
+  it("promotes critical events with evidence refs into the evidence index key events", async () => {
+    await store.createRun({ run_id: "run-001" });
+
+    await store.appendEvent("run-001", {
+      time: "2026-04-28T10:00:01+08:00",
+      elapsed_sec: 1,
+      type: "rule_matched",
+      severity: "error",
+      source: "rule_engine",
+      summary: "kernel panic matched on serial",
+      evidence_refs: ["serial:last-200-lines"]
+    });
+    await store.appendEvent("run-001", {
+      time: "2026-04-28T10:00:02+08:00",
+      elapsed_sec: 2,
+      type: "evidence_collected",
+      severity: "info",
+      source: "evidence_store",
+      summary: "serial log collected",
+      evidence_refs: ["serial:full"]
+    });
+    await store.appendEvent("run-001", {
+      time: "2026-04-28T10:00:03+08:00",
+      elapsed_sec: 3,
+      type: "step_failed",
+      severity: "warning",
+      source: "tool_adapter",
+      summary: "smoke test failed",
+      evidence_refs: ["adb:step-smoke"]
+    });
+
+    const index = await store.readEvidenceIndex("run-001");
+    expect(index.key_events).toEqual([
+      {
+        seq: 1,
+        summary: "kernel panic matched on serial",
+        evidence_refs: ["serial:last-200-lines"]
+      },
+      {
+        seq: 3,
+        summary: "smoke test failed",
+        evidence_refs: ["adb:step-smoke"]
+      }
+    ]);
+  });
+
   it("writes and reads validated agent replies", async () => {
     await store.createRun({ run_id: "run-001" });
 
