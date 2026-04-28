@@ -333,13 +333,17 @@ export class RuntimeService {
 
     const events = await this.store.readEvents(run.run_id, {
       afterSeq: 0,
-      limit: Math.max(1, run.last_event_seq)
+      limit: Math.max(1, run.last_event_seq),
+      types: STEP_STATUS_EVENT_TYPES
     });
     let currentStep: CurrentStepStatus | undefined;
 
     for (const event of events) {
       if (event.type === "step_started") {
-        currentStep = currentStepFromStartedEvent(event);
+        const startedStep = currentStepFromStartedEvent(event);
+        if (startedStep !== undefined) {
+          currentStep = startedStep;
+        }
         continue;
       }
       if (isStepFinishedEvent(event.type) && event.step_id !== undefined && currentStep?.id === event.step_id) {
@@ -860,6 +864,8 @@ function currentStepFromStartedEvent(event: RunEvent): CurrentStepStatus | undef
 function isStepFinishedEvent(type: EventType): boolean {
   return type === "step_completed" || type === "step_failed" || type === "step_timeout";
 }
+
+const STEP_STATUS_EVENT_TYPES: EventType[] = ["step_started", "step_completed", "step_failed", "step_timeout"];
 
 function availableCapabilityNames(capabilities: CapabilityStatus[]): CapabilityName[] {
   return capabilities.filter(capability => capability.available).map(capability => capability.name);

@@ -166,6 +166,27 @@ describe("runtime-server HTTP API", () => {
       }
     });
 
+    await store.appendEvent("run-active-step", {
+      time: "2026-04-28T02:00:11.000Z",
+      elapsed_sec: 11,
+      type: "step_started",
+      severity: "warning",
+      source: "orchestrator",
+      summary: "malformed step event should be ignored",
+      payload: {
+        capability: "unknown_capability",
+        timeout_sec: 180
+      }
+    });
+    const afterMalformedStarted = await server.app.inject({ method: "GET", url: "/api/runs/run-active-step/status" });
+    expect(afterMalformedStarted.json()).toMatchObject({
+      phase: "watch_serial",
+      current_step: {
+        id: "step-watch-serial",
+        capability: "watch_serial"
+      }
+    });
+
     for (const type of ["step_completed", "step_failed", "step_timeout"] as const) {
       await store.appendEvent("run-active-step", {
         time: "2026-04-28T02:00:20.000Z",
