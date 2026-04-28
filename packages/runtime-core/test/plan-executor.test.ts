@@ -146,6 +146,86 @@ describe("PlanExecutor", () => {
     });
   });
 
+  it("treats error rule matches as fatal plan failures and runs on_failure steps", async () => {
+    await runManager.createRun({ runId: "run-001", initialState: "planning" });
+    const executor = new PlanExecutor({
+      store,
+      runManager,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "kernel panic", "rebooting"],
+        logs: {
+          dmesg: "panic trace\n"
+        }
+      })
+    });
+
+    const result = await executor.executePlan({
+      runId: "run-001",
+      plan: serialRulePlan("kernel panic", ["kernel panic"])
+    });
+
+    expect(result.accepted).toBe(true);
+    if (!result.accepted) {
+      return;
+    }
+    expect(result.run.status).toBe("failed");
+    expect(result.step_results).toMatchObject([
+      {
+        step_id: "step-serial",
+        status: "completed",
+        success: true
+      },
+      {
+        step_id: "step-logs",
+        status: "completed",
+        success: true
+      }
+    ]);
+    expect(result.step_results.map(step => step.step_id)).not.toContain("step-smoke");
+    expect((await store.readEvents("run-001")).filter(event => event.type === "rule_matched")).toMatchObject([
+      {
+        severity: "error",
+        summary: "kernel panic matched on serial"
+      }
+    ]);
+  });
+
+  it("does not fail the run for warning-level rule matches", async () => {
+    await runManager.createRun({ runId: "run-001", initialState: "planning" });
+    const executor = new PlanExecutor({
+      store,
+      runManager,
+      adapters: new FakeAdapterRegistry({
+        serialOutput: ["Booting Linux", "service timeout", "boot completed"],
+        commandResults: {
+          "/vendor/bin/smoke_test": {
+            exit_code: 0,
+            stdout: "pass\n",
+            stderr: ""
+          }
+        }
+      })
+    });
+
+    const result = await executor.executePlan({
+      runId: "run-001",
+      plan: serialRulePlan("service timeout", ["service timeout"])
+    });
+
+    expect(result.accepted).toBe(true);
+    if (!result.accepted) {
+      return;
+    }
+    expect(result.run.status).toBe("completed");
+    expect(result.step_results.map(step => step.step_id)).toEqual(["step-serial", "step-smoke"]);
+    expect((await store.readEvents("run-001")).filter(event => event.type === "rule_matched")).toMatchObject([
+      {
+        severity: "warning",
+        summary: "service timeout matched on serial"
+      }
+    ]);
+  });
+
   it("rejects a plan with missing adapter coverage and fails a planning run", async () => {
     await runManager.createRun({ runId: "run-001", initialState: "planning" });
     const registry: CapabilityAdapterRegistry = {
@@ -853,6 +933,50 @@ function twoStepShellPlan(): Plan {
     failure_signals: ["step fails"],
     evidence_policy: {
       always: []
+    }
+  };
+}
+
+function serialRulePlan(pattern: string, failureSignals: string[]): Plan {
+  return {
+    plan_id: "plan-serial-rule",
+    estimated_duration_sec: 240,
+    steps: [
+      {
+        id: "step-serial",
+        capability: "watch_serial",
+        condition: "always",
+        input: {
+          duration_sec: 60,
+          patterns: [pattern]
+        },
+        timeout_sec: 60
+      },
+      {
+        id: "step-smoke",
+        capability: "shell_exec",
+        condition: "always",
+        input: {
+          command: "/vendor/bin/smoke_test",
+          expected_exit_code: 0
+        },
+        timeout_sec: 60
+      },
+      {
+        id: "step-logs",
+        capability: "collect_logs",
+        condition: "on_failure",
+        input: {
+          items: ["dmesg"]
+        },
+        timeout_sec: 60
+      }
+    ],
+    success_criteria: ["serial stays clean", "smoke test exits 0"],
+    failure_signals: failureSignals,
+    evidence_policy: {
+      always: ["serial:full"],
+      on_failure: ["dmesg"]
     }
   };
 }

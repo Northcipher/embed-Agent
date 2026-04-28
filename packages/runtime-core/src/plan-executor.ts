@@ -57,6 +57,12 @@ export type PlanExecutorOptions = {
   controlPollMs?: number;
 };
 
+type ExecutedStepOutcome = {
+  step: ExecutedStepResult;
+  events: RunEvent[];
+  fatalRuleMatched: boolean;
+};
+
 export class PlanExecutor {
   private readonly store: FileStore;
 
@@ -113,10 +119,10 @@ export class PlanExecutor {
       events.push(...stepResult.events);
       stepResults.push(stepResult.step);
 
-      if (!stepResult.step.success || stepResult.step.status !== "completed") {
+      if (!stepResult.step.success || stepResult.step.status !== "completed" || stepResult.fatalRuleMatched) {
         sawFailure = true;
         const failurePolicy = step.on_failure ?? "collect_and_fail";
-        if (failurePolicy !== "continue") {
+        if (stepResult.fatalRuleMatched || failurePolicy !== "continue") {
           sawFatalFailure = true;
         }
         if (failurePolicy === "fail") {
@@ -224,7 +230,7 @@ export class PlanExecutor {
     runId: string,
     step: PlanStep,
     failureSignals: string[]
-  ): Promise<{ step: ExecutedStepResult; events: RunEvent[] }> {
+  ): Promise<ExecutedStepOutcome> {
     const started = await this.appendEvent(runId, {
       type: "step_started",
       severity: "info",
@@ -272,7 +278,8 @@ export class PlanExecutor {
     });
 
     const events = [started, stepEvent];
-    events.push(...(await this.appendRuleMatchedEvents(runId, step, adapterResult, failureSignals)));
+    const ruleEvents = await this.appendRuleMatchedEvents(runId, step, adapterResult, failureSignals);
+    events.push(...ruleEvents);
     if (adapterResult.evidence_refs.length > 0) {
       events.push(
         await this.appendEvent(runId, {
@@ -299,7 +306,8 @@ export class PlanExecutor {
         evidence_refs: adapterResult.evidence_refs,
         output: adapterResult.output
       },
-      events
+      events,
+      fatalRuleMatched: ruleEvents.some(event => event.severity === "error")
     };
   }
 
