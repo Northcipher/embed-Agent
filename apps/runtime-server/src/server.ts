@@ -31,10 +31,10 @@ export function buildRuntimeServer(options: RuntimeServerOptions): RuntimeServer
     }
     reply
       .code(500)
-      .send(publicError("invalid_request", error instanceof Error ? error.message : "internal runtime server error"));
+      .send(publicError("internal_error", error instanceof Error ? error.message : "internal runtime server error"));
   });
   app.setNotFoundHandler((_request, reply) => {
-    reply.code(404).send(publicError("unsupported_action", "route not found"));
+    reply.code(404).send(publicError("resource_not_found", "route not found"));
   });
 
   app.post("/api/validate-artifact", async request => {

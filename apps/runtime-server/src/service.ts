@@ -22,7 +22,7 @@ import {
 } from "@artifact-validation/contracts";
 import { FileStore } from "@artifact-validation/file-store";
 import { PlanExecutor, RunManager } from "@artifact-validation/runtime-core";
-import { RuntimeHttpError, runNotFound, unsupportedAction } from "./errors.js";
+import { RuntimeHttpError, resourceNotFound, runNotFound, unsupportedAction } from "./errors.js";
 
 export type PlanFactory = (input: ValidateArtifactInput) => Plan | undefined | Promise<Plan | undefined>;
 
@@ -155,7 +155,7 @@ export class RuntimeService {
     }
     const evidenceRef = index.refs.find(item => item.ref === ref);
     if (evidenceRef === undefined) {
-      throw new RuntimeHttpError(404, "invalid_request", `evidence ref ${ref} was not found`);
+      throw resourceNotFound(`evidence ref ${ref} was not found`);
     }
     return evidenceRef;
   }
@@ -326,7 +326,9 @@ export class RuntimeService {
       } catch (error) {
         await this.failRunAfterBackgroundError(runId, error);
       }
-    })().catch(() => undefined);
+    })().catch(error => {
+      console.error("runtime background plan recovery failed", error);
+    });
   }
 
   private async failRunAfterBackgroundError(runId: string, error: unknown): Promise<void> {

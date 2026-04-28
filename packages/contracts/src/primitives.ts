@@ -20,12 +20,14 @@ export const TerminalRunStateSchema = z.enum(["completed", "failed", "cancelled"
 
 export const PublicErrorCodeSchema = z.enum([
   "invalid_request",
+  "resource_not_found",
   "target_not_found",
   "target_busy",
   "run_not_found",
   "artifact_invalid",
   "plan_rejected",
-  "unsupported_action"
+  "unsupported_action",
+  "internal_error"
 ]);
 
 export const PublicErrorResponseSchema = z

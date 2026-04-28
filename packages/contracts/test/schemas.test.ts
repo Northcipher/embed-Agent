@@ -315,6 +315,22 @@ describe("P0 contract schemas", () => {
     ).toBe("run_not_found");
 
     expect(
+      PublicErrorResponseSchema.parse({
+        status: "error",
+        error_code: "resource_not_found",
+        message: "route not found"
+      }).error_code
+    ).toBe("resource_not_found");
+
+    expect(
+      PublicErrorResponseSchema.parse({
+        status: "error",
+        error_code: "internal_error",
+        message: "internal runtime server error"
+      }).error_code
+    ).toBe("internal_error");
+
+    expect(
       InterveneRunInputSchema.parse({
         run_id: "run-001",
         action: "add_instruction",

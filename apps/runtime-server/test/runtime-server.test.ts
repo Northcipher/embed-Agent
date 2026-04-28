@@ -96,6 +96,17 @@ describe("runtime-server HTTP API", () => {
       kind: "log"
     });
 
+    const missingEvidenceRef = await server.app.inject({
+      method: "GET",
+      url: "/api/runs/run-001/evidence?ref=serial%3Amissing"
+    });
+    expect(missingEvidenceRef.statusCode).toBe(404);
+    expect(missingEvidenceRef.json()).toEqual({
+      status: "error",
+      error_code: "resource_not_found",
+      message: "evidence ref serial:missing was not found"
+    });
+
     const result = await server.app.inject({ method: "GET", url: "/api/runs/run-001/result" });
     expect(result.statusCode).toBe(200);
     expect(result.json()).toEqual({
@@ -199,7 +210,7 @@ describe("runtime-server HTTP API", () => {
     expect(notFound.statusCode).toBe(404);
     expect(notFound.json()).toEqual({
       status: "error",
-      error_code: "unsupported_action",
+      error_code: "resource_not_found",
       message: "route not found"
     });
   });

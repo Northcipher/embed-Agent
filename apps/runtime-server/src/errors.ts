@@ -24,6 +24,10 @@ export function runNotFound(runId: string): RuntimeHttpError {
   return new RuntimeHttpError(404, "run_not_found", `run ${runId} was not found`);
 }
 
+export function resourceNotFound(message: string): RuntimeHttpError {
+  return new RuntimeHttpError(404, "resource_not_found", message);
+}
+
 export function unsupportedAction(message: string): RuntimeHttpError {
   return new RuntimeHttpError(409, "unsupported_action", message);
 }
