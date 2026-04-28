@@ -265,10 +265,12 @@ export class PlanExecutor {
   ): Promise<CapabilityExecutionResult> {
     const timeoutMs = Math.max(0, this.timeoutMsForStep(step));
     let timeout: NodeJS.Timeout | undefined;
+    const adapterPromise = adapter.execute({ runId, step, store: this.store });
+    adapterPromise.catch(() => undefined);
 
     try {
       return await Promise.race([
-        adapter.execute({ runId, step, store: this.store }),
+        adapterPromise,
         new Promise<CapabilityExecutionResult>(resolve => {
           timeout = setTimeout(() => {
             resolve({

@@ -31,8 +31,10 @@ Acceptance criteria:
 - [x] Step execution writes `step_started`, `step_completed` / `step_failed` / `step_timeout`, and `evidence_collected` events.
 - [x] Failure path can execute `on_failure` collection steps and end run as failed.
 - [x] `fail` 和 `collect_and_fail` failure policy 行为不同：前者立即停，后者允许失败采集。
-- [x] `continue` failure policy 会继续后续主路径，但不会执行 `on_success` 收尾。
+- [x] `continue` failure policy 会继续后续主路径，可执行 `on_failure` 诊断，但不会执行 `on_success` 收尾。
 - [x] Executor 层有 step timeout 兜底，不完全信任 adapter 自己处理 timeout。
+- [x] Adapter timeout 后的迟到 rejection 不会变成 unhandled rejection。
+- [x] Adapter exception 会转换为 `step_failed`，不会中断 event stream。
 - [x] Duplicate step id 会被 Plan validation 拒绝。
 - [x] Paused run 不会被 `executePlan` 从头重跑。
 - [x] Successful path transitions to `collecting_evidence` then `completed`.

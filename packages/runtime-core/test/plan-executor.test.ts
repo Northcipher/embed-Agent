@@ -274,6 +274,15 @@ describe("PlanExecutor", () => {
             on_failure: "continue"
           },
           {
+            id: "step-nonfatal-diagnostics",
+            capability: "collect_logs",
+            condition: "on_failure",
+            input: {
+              items: ["dmesg"]
+            },
+            timeout_sec: 60
+          },
+          {
             id: "step-after-continue",
             capability: "check_process",
             condition: "always",
@@ -305,10 +314,11 @@ describe("PlanExecutor", () => {
       "step-serial",
       "step-adb",
       "step-smoke",
+      "step-nonfatal-diagnostics",
       "step-after-continue"
     ]);
     expect(result.step_results.find(step => step.step_id === "step-smoke")?.status).toBe("failed");
-    expect((await store.readEvidenceIndex("run-001")).refs.map(ref => ref.ref)).not.toContain("log:dmesg");
+    expect((await store.readEvidenceIndex("run-001")).refs.map(ref => ref.ref)).toContain("log:dmesg");
   });
 
   it("emits step_timeout when an adapter exceeds the executor timeout", async () => {
@@ -357,6 +367,53 @@ describe("PlanExecutor", () => {
       }
     ]);
     expect((await store.readEvents("run-001")).map(event => event.type)).toContain("step_timeout");
+  });
+
+  it("converts adapter exceptions into step_failed events", async () => {
+    await runManager.createRun({ runId: "run-001", initialState: "planning" });
+    const throwingAdapter: CapabilityAdapter = {
+      capability: "shell_exec",
+      async execute(_context: CapabilityExecutionContext) {
+        throw new Error("adapter exploded");
+      }
+    };
+    const executor = new PlanExecutor({
+      store,
+      runManager,
+      adapters: {
+        get(capability) {
+          return capability === "shell_exec" ? throwingAdapter : undefined;
+        }
+      }
+    });
+
+    const result = await executor.executePlan({
+      runId: "run-001",
+      plan: oneStepPlan({
+        id: "step-throws",
+        capability: "shell_exec",
+        condition: "always",
+        input: {
+          command: "/vendor/bin/throws",
+          expected_exit_code: 0
+        },
+        timeout_sec: 60
+      })
+    });
+
+    expect(result.accepted).toBe(true);
+    if (!result.accepted) {
+      return;
+    }
+    expect(result.run.status).toBe("failed");
+    expect(result.step_results).toMatchObject([
+      {
+        step_id: "step-throws",
+        status: "failed",
+        summary: "adapter exploded"
+      }
+    ]);
+    expect((await store.readEvents("run-001")).map(event => event.type)).toContain("step_failed");
   });
 
   it("rejects duplicate step ids before executing adapters", async () => {
