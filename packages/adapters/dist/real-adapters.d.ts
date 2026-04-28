@@ -5,6 +5,7 @@ export type AdbAdapterConfig = {
     adbPath?: string;
     runner?: CommandRunner;
     waitPollIntervalMs?: number;
+    allowShellMetacharacters?: boolean;
 };
 export type FastbootFlashConfig = {
     method: "fastboot";
@@ -33,6 +34,7 @@ export interface SerialReader {
     read(options: SerialReadOptions): Promise<{
         content: string;
         disconnected: boolean;
+        error?: string;
     }>;
 }
 export type SerialAdapterConfig = {
@@ -77,6 +79,7 @@ export declare class SerialPortReader implements SerialReader {
     read(options: SerialReadOptions): Promise<{
         content: string;
         disconnected: boolean;
+        error?: string;
     }>;
 }
 export declare class RealAdapterRegistry implements CapabilityAdapterRegistry {

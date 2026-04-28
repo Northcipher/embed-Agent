@@ -39,6 +39,12 @@ class FixedSerialReader implements SerialReader {
   }
 }
 
+class ErrorSerialReader implements SerialReader {
+  async read(): Promise<{ content: string; disconnected: boolean; error?: string }> {
+    return { content: "partial boot log\n", disconnected: true, error: "port lost" };
+  }
+}
+
 describe("real adapters", () => {
   let rootDir: string;
   let store: FileStore;
@@ -58,13 +64,13 @@ describe("real adapters", () => {
 
   it("executes adb shell through argv and writes command output evidence", async () => {
     const runner = new RecordingRunner([
-      {
+      commandResult({
         stdout: "ok\n",
         stderr: "",
         exitCode: 0,
         timedOut: false,
         durationSec: 0.2
-      }
+      })
     ]);
     const adapter = new AdbAdapter("shell_exec", {
       deviceId: "device-123",
@@ -95,13 +101,13 @@ describe("real adapters", () => {
 
   it("returns timeout status when wait_adb never sees a device state", async () => {
     const runner = new RecordingRunner([
-      {
+      commandResult({
         stdout: "offline\n",
         stderr: "",
         exitCode: 0,
         timedOut: false,
         durationSec: 0.1
-      }
+      })
     ]);
     const adapter = new AdbAdapter("wait_adb", {
       deviceId: "device-123",
@@ -122,13 +128,13 @@ describe("real adapters", () => {
 
   it("builds fastboot flash argv from adapter config and writes flash log evidence", async () => {
     const runner = new RecordingRunner([
-      {
+      commandResult({
         stdout: "flashing ok\n",
         stderr: "",
         exitCode: 0,
         timedOut: false,
         durationSec: 1.1
-      }
+      })
     ]);
     const adapter = new FlashAdapter({
       method: "fastboot",
@@ -158,13 +164,13 @@ describe("real adapters", () => {
 
   it("uses only allowlisted custom flash argv from adapter config", async () => {
     const runner = new RecordingRunner([
-      {
+      commandResult({
         stdout: "custom ok\n",
         stderr: "",
         exitCode: 0,
         timedOut: false,
         durationSec: 1
-      }
+      })
     ]);
     const adapter = new FlashAdapter({
       method: "custom_command",
@@ -191,6 +197,47 @@ describe("real adapters", () => {
     });
   });
 
+  it("rejects unsafe custom flash executable paths", async () => {
+    const adapter = new FlashAdapter({
+      method: "custom_command",
+      command: {
+        file: "../vendor-flash",
+        args: ["{artifact_ref}"]
+      },
+      runner: new RecordingRunner([])
+    });
+
+    await expect(
+      adapter.execute({
+        runId: "run-001",
+        store,
+        step: step("step-unsafe-flash", "flash", {
+          artifact_ref: "/tmp/firmware.bin",
+          artifact_type: "firmware_img"
+        })
+      })
+    ).rejects.toThrow("configured executable file");
+  });
+
+  it("rejects unresolved relative artifact paths before flashing", async () => {
+    const adapter = new FlashAdapter({
+      method: "fastboot",
+      partition: "boot",
+      runner: new RecordingRunner([])
+    });
+
+    await expect(
+      adapter.execute({
+        runId: "run-001",
+        store,
+        step: step("step-relative-artifact", "flash", {
+          artifact_ref: "../firmware.bin",
+          artifact_type: "firmware_img"
+        })
+      })
+    ).rejects.toThrow("artifact_ref");
+  });
+
   it("reads serial output through an injected reader and writes serial evidence", async () => {
     const adapter = new SerialAdapter({
       port: "/dev/ttyUSB0",
@@ -210,6 +257,47 @@ describe("real adapters", () => {
     expect(result.output.patterns_matched).toEqual(["kernel panic"]);
     expect(result.evidence_refs).toEqual(["serial:full"]);
     await expect(readFile(path.join(rootDir, "runs", "run-001", "serial.log"), "utf8")).resolves.toContain("kernel panic");
+  });
+
+  it("surfaces serial reader errors in adapter output", async () => {
+    const adapter = new SerialAdapter({
+      port: "/dev/ttyUSB0",
+      baudRate: 115200,
+      reader: new ErrorSerialReader()
+    });
+
+    const result = await adapter.execute({
+      runId: "run-001",
+      store,
+      step: step("step-serial-error", "watch_serial", {
+        duration_sec: 5,
+        patterns: []
+      })
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.summary).toBe("serial read error");
+    expect(result.output.error).toBe("port lost");
+  });
+
+  it("rejects shell metacharacters unless explicitly allowed by adapter config", async () => {
+    const runner = new RecordingRunner([]);
+    const adapter = new AdbAdapter("shell_exec", {
+      deviceId: "device-123",
+      runner
+    });
+
+    await expect(
+      adapter.execute({
+        runId: "run-001",
+        store,
+        step: step("step-dangerous-shell", "shell_exec", {
+          command: "/vendor/bin/smoke_test; rm -rf /data",
+          expected_exit_code: 0
+        })
+      })
+    ).rejects.toThrow("shell metacharacters");
+    expect(runner.invocations).toEqual([]);
   });
 
   it("rejects unsafe push destinations before running adb", async () => {
@@ -265,7 +353,28 @@ describe("real adapters", () => {
     expect(result.timedOut).toBe(true);
     expect(result.durationSec).toBeGreaterThanOrEqual(0);
   });
+
+  it("reports stdout truncation from the spawn runner", async () => {
+    const runner = new SpawnCommandRunner({ maxOutputBytes: 2 });
+
+    const result = await runner.run({
+      file: process.execPath,
+      args: ["-e", "process.stdout.write('abcdef')"],
+      timeoutSec: 1
+    });
+
+    expect(result.stdout).toBe("ab");
+    expect(result.stdoutTruncated).toBe(true);
+  });
 });
+
+function commandResult(result: Omit<CommandRunResult, "stdoutTruncated" | "stderrTruncated">): CommandRunResult {
+  return {
+    ...result,
+    stdoutTruncated: false,
+    stderrTruncated: false
+  };
+}
 
 function step(id: string, capability: PlanStep["capability"], input: Record<string, unknown>): PlanStep {
   return {

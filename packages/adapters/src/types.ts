@@ -37,6 +37,8 @@ export type CommandRunResult = {
   stderr: string;
   exitCode: number | null;
   timedOut: boolean;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
   durationSec: number;
 };
 

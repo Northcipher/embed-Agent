@@ -74,6 +74,7 @@ export class AdbAdapter {
     }
     async executeShellExec(context) {
         const commandText = requiredString(context.step.input, "command");
+        assertSafeAdbShellCommand(commandText, this.config.allowShellMetacharacters ?? false);
         const expectedExitCode = numberInput(context.step.input, "expected_exit_code", 0);
         const timeoutSec = numberInput(context.step.input, "timeout_sec", context.step.timeout_sec);
         const command = await this.runAdb(["shell", commandText], timeoutSec);
@@ -157,6 +158,7 @@ export class FlashAdapter {
         assertCapability(context.step, this.capability);
         const artifactRef = requiredString(context.step.input, "artifact_ref");
         const artifactType = requiredString(context.step.input, "artifact_type");
+        assertResolvedArtifactRef(artifactRef);
         if (this.config.artifactType !== undefined && artifactType !== this.config.artifactType) {
             throw new Error(`artifact_type ${artifactType} does not match flash config artifactType ${this.config.artifactType}`);
         }
@@ -176,7 +178,7 @@ export class FlashAdapter {
                 args: this.config.command.args.map(arg => replaceFlashPlaceholders(arg, artifactRef, artifactType)),
                 timeoutSec: context.step.timeout_sec
             };
-        assertExecutableName(invocation.file);
+        assertConfiguredExecutableFile(invocation.file);
         const command = await this.runner.run(invocation);
         const content = [
             command.stdout,
@@ -240,10 +242,11 @@ export class SerialAdapter {
             output: {
                 log_ref: ref,
                 patterns_matched: patternsMatched,
-                disconnected: readResult.disconnected
+                disconnected: readResult.disconnected,
+                error: readResult.error ?? null
             },
             evidence_refs: [ref],
-            summary: readResult.disconnected ? "serial disconnected" : "serial watch completed"
+            summary: readResult.error !== undefined ? "serial read error" : readResult.disconnected ? "serial disconnected" : "serial watch completed"
         };
     }
 }
@@ -257,8 +260,10 @@ export class SerialPortReader {
         const chunks = [];
         let disconnected = false;
         let closing = false;
-        port.on("error", () => {
+        let serialError;
+        port.on("error", error => {
             disconnected = true;
+            serialError = error instanceof Error ? error.message : String(error);
         });
         await new Promise((resolve, reject) => {
             port.open(error => {
@@ -290,10 +295,14 @@ export class SerialPortReader {
                 });
             });
         }
-        return {
+        const result = {
             content: Buffer.concat(chunks).toString("utf8"),
             disconnected
         };
+        if (serialError !== undefined) {
+            result.error = serialError;
+        }
+        return result;
     }
 }
 export class RealAdapterRegistry {
@@ -337,6 +346,8 @@ function commandOutput(command) {
         stderr: command.stderr,
         exit_code: command.exitCode,
         timed_out: command.timedOut,
+        stdout_truncated: "stdoutTruncated" in command ? command.stdoutTruncated : false,
+        stderr_truncated: "stderrTruncated" in command ? command.stderrTruncated : false,
         duration_sec: command.durationSec
     };
 }
@@ -378,9 +389,37 @@ function assertAbsoluteTargetPath(value) {
         throw new Error("dst_path must be an absolute target path");
     }
 }
-function assertExecutableName(value) {
+function assertConfiguredExecutableFile(value) {
     if (value.length === 0 || value.includes("\0")) {
         throw new Error("executable file must be non-empty");
+    }
+    if (value.includes("/")) {
+        if (!value.startsWith("/") || value.split("/").includes("..") || value.startsWith("/proc/") || value.startsWith("/dev/fd/")) {
+            throw new Error("configured executable file must be a safe absolute path or safe binary name");
+        }
+        return;
+    }
+    if (!/^[A-Za-z0-9._-]+$/.test(value)) {
+        throw new Error("configured executable file must be a safe absolute path or safe binary name");
+    }
+}
+function assertResolvedArtifactRef(value) {
+    if (value.includes("\0") || value.includes("\n") || value.includes("\r")) {
+        throw new Error("artifact_ref contains invalid control characters");
+    }
+    if (value.includes("/") && !value.startsWith("/")) {
+        throw new Error("artifact_ref must be an absolute path or safe artifact reference");
+    }
+    if (value.split("/").includes("..")) {
+        throw new Error("artifact_ref must not contain path traversal segments");
+    }
+}
+function assertSafeAdbShellCommand(value, allowShellMetacharacters) {
+    if (value.includes("\0") || value.includes("\n") || value.includes("\r")) {
+        throw new Error("shell_exec command contains invalid control characters");
+    }
+    if (!allowShellMetacharacters && /[;&|`$<>]/.test(value)) {
+        throw new Error("shell_exec command contains shell metacharacters; enable allowShellMetacharacters only for trusted target commands");
     }
 }
 function replaceFlashPlaceholders(value, artifactRef, artifactType) {

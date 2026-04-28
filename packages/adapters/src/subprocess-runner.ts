@@ -21,6 +21,8 @@ export class SpawnCommandRunner implements CommandRunner {
       const stderrChunks: Buffer[] = [];
       let stdoutBytes = 0;
       let stderrBytes = 0;
+      let stdoutTruncated = false;
+      let stderrTruncated = false;
       let timedOut = false;
       let settled = false;
       let forceKillTimeout: NodeJS.Timeout | undefined;
@@ -34,11 +36,15 @@ export class SpawnCommandRunner implements CommandRunner {
       }, Math.max(0, invocation.timeoutSec) * 1000);
 
       child.stdout.on("data", (chunk: Buffer) => {
-        stdoutBytes = appendChunk(stdoutChunks, stdoutBytes, chunk, this.maxOutputBytes);
+        const appendResult = appendChunk(stdoutChunks, stdoutBytes, chunk, this.maxOutputBytes);
+        stdoutBytes = appendResult.bytes;
+        stdoutTruncated ||= appendResult.truncated;
       });
 
       child.stderr.on("data", (chunk: Buffer) => {
-        stderrBytes = appendChunk(stderrChunks, stderrBytes, chunk, this.maxOutputBytes);
+        const appendResult = appendChunk(stderrChunks, stderrBytes, chunk, this.maxOutputBytes);
+        stderrBytes = appendResult.bytes;
+        stderrTruncated ||= appendResult.truncated;
       });
 
       child.on("error", error => {
@@ -67,6 +73,8 @@ export class SpawnCommandRunner implements CommandRunner {
           stderr: Buffer.concat(stderrChunks).toString("utf8"),
           exitCode: code,
           timedOut,
+          stdoutTruncated,
+          stderrTruncated,
           durationSec: (Date.now() - startedAt) / 1000
         });
       });
@@ -79,12 +87,15 @@ export class SpawnCommandRunner implements CommandRunner {
   }
 }
 
-function appendChunk(chunks: Buffer[], currentBytes: number, chunk: Buffer, maxBytes: number): number {
+function appendChunk(chunks: Buffer[], currentBytes: number, chunk: Buffer, maxBytes: number): { bytes: number; truncated: boolean } {
   if (currentBytes >= maxBytes) {
-    return currentBytes;
+    return { bytes: currentBytes, truncated: chunk.byteLength > 0 };
   }
   const remainingBytes = maxBytes - currentBytes;
   const nextChunk = chunk.byteLength > remainingBytes ? chunk.subarray(0, remainingBytes) : chunk;
   chunks.push(nextChunk);
-  return currentBytes + nextChunk.byteLength;
+  return {
+    bytes: currentBytes + nextChunk.byteLength,
+    truncated: chunk.byteLength > remainingBytes
+  };
 }
