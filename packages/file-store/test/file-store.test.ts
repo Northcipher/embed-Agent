@@ -91,6 +91,41 @@ describe("FileStore", () => {
     expect(events.map(event => event.seq)).toEqual([2]);
   });
 
+  it("serializes concurrent run event and status writes", async () => {
+    await store.createRun({ run_id: "run-001", status: "paused" });
+    const initialRun = await store.readRun("run-001");
+
+    await Promise.all([
+      store.appendEvent("run-001", {
+        time: "2026-04-28T10:00:01+08:00",
+        elapsed_sec: 1,
+        type: "step_completed",
+        severity: "info",
+        source: "tool_adapter",
+        step_id: "step-one",
+        summary: "step one completed"
+      }),
+      store.writeRun({
+        ...initialRun,
+        status: "cancelled"
+      }),
+      store.appendEvent("run-001", {
+        time: "2026-04-28T10:00:02+08:00",
+        elapsed_sec: 2,
+        type: "run_cancelled",
+        severity: "warning",
+        source: "run_manager",
+        summary: "run cancelled"
+      })
+    ]);
+
+    const run = await store.readRun("run-001");
+    const events = await store.readEvents("run-001");
+    expect(run.status).toBe("cancelled");
+    expect(run.last_event_seq).toBe(2);
+    expect(events.map(event => event.seq)).toEqual([1, 2]);
+  });
+
   it("filters events by type and limit", async () => {
     await store.createRun({ run_id: "run-001" });
     await store.appendEvent("run-001", {

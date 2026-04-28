@@ -54,6 +54,7 @@ export type PlanExecutorOptions = {
   adapters: CapabilityAdapterRegistry;
   now?: () => Date;
   timeoutMsForStep?: (step: PlanStep) => number;
+  controlPollMs?: number;
 };
 
 export class PlanExecutor {
@@ -67,12 +68,15 @@ export class PlanExecutor {
 
   private readonly timeoutMsForStep: (step: PlanStep) => number;
 
+  private readonly controlPollMs: number;
+
   constructor(options: PlanExecutorOptions) {
     this.store = options.store;
     this.runManager = options.runManager;
     this.adapters = options.adapters;
     this.now = options.now ?? (() => new Date());
     this.timeoutMsForStep = options.timeoutMsForStep ?? (step => step.timeout_sec * 1000);
+    this.controlPollMs = options.controlPollMs ?? 500;
   }
 
   async executePlan(input: ExecutePlanInput): Promise<PlanExecutionResult> {
@@ -93,6 +97,14 @@ export class PlanExecutor {
     let sawFatalFailure = false;
 
     for (const step of validation.plan.steps) {
+      const control = await this.waitUntilRunnable(input.runId);
+      if (!control.accepted) {
+        return control;
+      }
+      if (!control.shouldContinue) {
+        return completedWithoutOverwritingExternalState(control.run, stepResults, events);
+      }
+
       if (!shouldExecuteStep(step, sawFailure, sawFatalFailure)) {
         continue;
       }
@@ -111,6 +123,14 @@ export class PlanExecutor {
           break;
         }
       }
+    }
+
+    const control = await this.waitUntilRunnable(input.runId);
+    if (!control.accepted) {
+      return control;
+    }
+    if (!control.shouldContinue) {
+      return completedWithoutOverwritingExternalState(control.run, stepResults, events);
     }
 
     const collecting = await this.runManager.transitionRun({
@@ -143,6 +163,25 @@ export class PlanExecutor {
       events,
       evidence_refs: unique(stepResults.flatMap(step => step.evidence_refs))
     };
+  }
+
+  private async waitUntilRunnable(
+    runId: string
+  ): Promise<{ accepted: true; shouldContinue: true } | { accepted: true; shouldContinue: false; run: StoredRun } | RejectedRuntimeAction> {
+    while (true) {
+      const run = await this.store.readRun(runId);
+      if (run.status === "running") {
+        return { accepted: true, shouldContinue: true };
+      }
+      if (run.status === "paused") {
+        await sleep(this.controlPollMs);
+        continue;
+      }
+      if (isTerminalRunState(run.status) || run.status === "collecting_evidence") {
+        return { accepted: true, shouldContinue: false, run };
+      }
+      return rejected("invalid_request", `cannot continue plan while run ${runId} is ${run.status}`);
+    }
   }
 
   private async transitionToRunning(runId: string): Promise<TransitionRunResult> {
@@ -524,6 +563,26 @@ function elapsedSec(createdAt: string, now: Date): number {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function completedWithoutOverwritingExternalState(
+  run: StoredRun,
+  stepResults: ExecutedStepResult[],
+  events: RunEvent[]
+): PlanExecutionResult {
+  return {
+    accepted: true,
+    run,
+    step_results: stepResults,
+    events,
+    evidence_refs: unique(stepResults.flatMap(step => step.evidence_refs))
+  };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function rejected(error_code: PublicErrorCode, message: string): RejectedRuntimeAction {

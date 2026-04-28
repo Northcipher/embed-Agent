@@ -580,6 +580,118 @@ describe("PlanExecutor", () => {
     expect((await store.readRun("run-001")).status).toBe("paused");
     expect((await store.readEvents("run-001")).map(event => event.type)).not.toContain("step_started");
   });
+
+  it("pauses after the current step and resumes without re-running completed steps", async () => {
+    await runManager.createRun({ runId: "run-001", initialState: "planning" });
+    const calls: string[] = [];
+    let firstStepFinished!: () => void;
+    const firstStepFinishedPromise = new Promise<void>(resolve => {
+      firstStepFinished = resolve;
+    });
+    const adapter: CapabilityAdapter = {
+      capability: "shell_exec",
+      async execute(context: CapabilityExecutionContext) {
+        calls.push(context.step.id);
+        if (context.step.id === "step-one") {
+          await runManager.transitionRun({ runId: "run-001", to: "paused", reason: "human pause", source: "caller" });
+          firstStepFinished();
+        }
+        return {
+          capability: "shell_exec",
+          success: true,
+          status: "completed",
+          output: {},
+          evidence_refs: [],
+          summary: `${context.step.id} completed`
+        };
+      }
+    };
+    const executor = new PlanExecutor({
+      store,
+      runManager,
+      adapters: {
+        get(capability) {
+          return capability === "shell_exec" ? adapter : undefined;
+        }
+      },
+      controlPollMs: 1
+    });
+
+    const execution = executor.executePlan({
+      runId: "run-001",
+      plan: twoStepShellPlan()
+    });
+    await firstStepFinishedPromise;
+    await sleep(10);
+
+    expect(calls).toEqual(["step-one"]);
+    expect((await store.readRun("run-001")).status).toBe("paused");
+
+    await runManager.transitionRun({ runId: "run-001", to: "running", reason: "human resume", source: "caller" });
+    const result = await execution;
+
+    expect(result.accepted).toBe(true);
+    if (!result.accepted) {
+      return;
+    }
+    expect(calls).toEqual(["step-one", "step-two"]);
+    expect(result.step_results.map(step => step.step_id)).toEqual(["step-one", "step-two"]);
+    expect(result.run.status).toBe("completed");
+  });
+
+  it("stops before the next step when a paused run is cancelled", async () => {
+    await runManager.createRun({ runId: "run-001", initialState: "planning" });
+    const calls: string[] = [];
+    let firstStepFinished!: () => void;
+    const firstStepFinishedPromise = new Promise<void>(resolve => {
+      firstStepFinished = resolve;
+    });
+    const adapter: CapabilityAdapter = {
+      capability: "shell_exec",
+      async execute(context: CapabilityExecutionContext) {
+        calls.push(context.step.id);
+        if (context.step.id === "step-one") {
+          await runManager.transitionRun({ runId: "run-001", to: "paused", reason: "human pause", source: "caller" });
+          firstStepFinished();
+        }
+        return {
+          capability: "shell_exec",
+          success: true,
+          status: "completed",
+          output: {},
+          evidence_refs: [],
+          summary: `${context.step.id} completed`
+        };
+      }
+    };
+    const executor = new PlanExecutor({
+      store,
+      runManager,
+      adapters: {
+        get(capability) {
+          return capability === "shell_exec" ? adapter : undefined;
+        }
+      },
+      controlPollMs: 1
+    });
+
+    const execution = executor.executePlan({
+      runId: "run-001",
+      plan: twoStepShellPlan()
+    });
+    await firstStepFinishedPromise;
+    await runManager.transitionRun({ runId: "run-001", to: "cancelled", reason: "human cancel", source: "caller" });
+    const result = await execution;
+
+    expect(result.accepted).toBe(true);
+    if (!result.accepted) {
+      return;
+    }
+    expect(calls).toEqual(["step-one"]);
+    expect(result.run.status).toBe("cancelled");
+    expect(result.step_results.map(step => step.step_id)).toEqual(["step-one"]);
+    expect((await store.readEvents("run-001")).map(event => event.type)).toContain("run_cancelled");
+  });
 });
 
 function demoPlan(): Plan {
@@ -657,4 +769,44 @@ function oneStepPlan(step: Plan["steps"][number]): Plan {
       always: []
     }
   };
+}
+
+function twoStepShellPlan(): Plan {
+  return {
+    plan_id: "plan-two-shell-steps",
+    estimated_duration_sec: 120,
+    steps: [
+      {
+        id: "step-one",
+        capability: "shell_exec",
+        condition: "always",
+        input: {
+          command: "/vendor/bin/one",
+          expected_exit_code: 0
+        },
+        timeout_sec: 60
+      },
+      {
+        id: "step-two",
+        capability: "shell_exec",
+        condition: "always",
+        input: {
+          command: "/vendor/bin/two",
+          expected_exit_code: 0
+        },
+        timeout_sec: 60
+      }
+    ],
+    success_criteria: ["both steps complete"],
+    failure_signals: ["step fails"],
+    evidence_policy: {
+      always: []
+    }
+  };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => {
+    setTimeout(resolve, ms);
+  });
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, open, readFile, rename, stat, writeFile, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -55,6 +56,8 @@ export class FileStore {
   readonly rootDir: string;
 
   private readonly now: () => Date;
+
+  private readonly runMutationQueues = new Map<string, Promise<void>>();
 
   constructor(options: FileStoreOptions) {
     this.rootDir = path.resolve(options.rootDir);
@@ -118,22 +121,33 @@ export class FileStore {
   }
 
   async writeRun(run: StoredRun): Promise<StoredRun> {
-    const parsed = StoredRunSchema.parse({
-      ...run,
-      updated_at: this.isoNow()
+    return this.withRunMutation(run.run_id, async () => {
+      const current = await this.tryReadRun(run.run_id);
+      const parsed = StoredRunSchema.parse({
+        ...run,
+        last_event_seq: Math.max(run.last_event_seq, current?.last_event_seq ?? 0),
+        updated_at: this.isoNow()
+      });
+      await this.writeJsonAtomic(path.join(this.runDir(parsed.run_id), "run.json"), parsed);
+      return parsed;
     });
-    await this.writeJsonAtomic(path.join(this.runDir(parsed.run_id), "run.json"), parsed);
-    return parsed;
   }
 
   async appendEvent(runId: string, event: AppendEventInput): Promise<RunEvent> {
-    const run = await this.readRun(runId);
-    const nextSeq = run.last_event_seq + 1;
-    const parsed = RunEventSchema.parse({ ...event, run_id: runId, seq: nextSeq });
-    await appendFile(path.join(this.runDir(runId), "events.jsonl"), `${JSON.stringify(parsed)}\n`, "utf8");
-    await this.writeRun({ ...run, last_event_seq: nextSeq });
-    await this.addKeyEventFromRunEvent(parsed);
-    return parsed;
+    return this.withRunMutation(runId, async () => {
+      const run = await this.readRun(runId);
+      const nextSeq = run.last_event_seq + 1;
+      const parsed = RunEventSchema.parse({ ...event, run_id: runId, seq: nextSeq });
+      await appendFile(path.join(this.runDir(runId), "events.jsonl"), `${JSON.stringify(parsed)}\n`, "utf8");
+      const updatedRun = StoredRunSchema.parse({
+        ...run,
+        updated_at: this.isoNow(),
+        last_event_seq: nextSeq
+      });
+      await this.writeJsonAtomic(path.join(this.runDir(runId), "run.json"), updatedRun);
+      await this.addKeyEventFromRunEvent(parsed);
+      return parsed;
+    });
   }
 
   async readEvents(runId: string, options: ReadEventsOptions = {}): Promise<RunEvent[]> {
@@ -262,15 +276,43 @@ export class FileStore {
     return JSON.parse(await readFile(filePath, "utf8"));
   }
 
+  private async tryReadRun(runId: string): Promise<StoredRun | undefined> {
+    try {
+      return await this.readRun(runId);
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
   private async writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
     await this.writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
   }
 
   private async writeFileAtomic(filePath: string, content: string | Uint8Array): Promise<void> {
     await mkdir(path.dirname(filePath), { recursive: true });
-    const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`);
+    const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`);
     await writeFile(tempPath, content);
     await rename(tempPath, filePath);
+  }
+
+  private async withRunMutation<T>(runId: string, mutate: () => Promise<T>): Promise<T> {
+    const previous = this.runMutationQueues.get(runId) ?? Promise.resolve();
+    const result = previous.catch(() => undefined).then(mutate);
+    const queue = result.then(
+      () => undefined,
+      () => undefined
+    );
+    this.runMutationQueues.set(runId, queue);
+    try {
+      return await result;
+    } finally {
+      if (this.runMutationQueues.get(runId) === queue) {
+        this.runMutationQueues.delete(runId);
+      }
+    }
   }
 
   private isoNow(): string {
