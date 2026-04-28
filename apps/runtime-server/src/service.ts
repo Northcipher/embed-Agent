@@ -18,6 +18,7 @@ import {
   type RunEvent,
   type RunState,
   type RunStatusResponse,
+  type TargetProfile,
   type ValidateArtifactAcceptedResponse,
   type ValidateArtifactInput,
   type ValidateArtifactRejectedResponse
@@ -25,6 +26,7 @@ import {
 import { FileStore, type StoredRun } from "@artifact-validation/file-store";
 import { isTerminalRunState, PlanExecutor, RunManager } from "@artifact-validation/runtime-core";
 import { RuntimeHttpError, resourceNotFound, runNotFound, unsupportedAction } from "./errors.js";
+import { buildTargetProfileMap, inferTargetCapabilities } from "./target-profiles.js";
 
 export type PlanFactory = (input: ValidateArtifactInput) => Plan | undefined | Promise<Plan | undefined>;
 
@@ -113,6 +115,7 @@ export type RuntimeServiceOptions = {
   taskPlanner?: RuntimeTaskPlanner;
   replyGenerator?: RuntimeReplyGenerator;
   observer?: RuntimeObserver;
+  targetProfiles?: TargetProfile[];
   executePlansInline?: boolean;
   idFactory?: () => string;
   now?: () => Date;
@@ -137,6 +140,8 @@ export class RuntimeService {
 
   private readonly observer: RuntimeObserver | undefined;
 
+  private readonly targetProfiles: Map<string, TargetProfile> | undefined;
+
   private readonly executePlansInline: boolean;
 
   private readonly idFactory: () => string;
@@ -158,22 +163,29 @@ export class RuntimeService {
     this.taskPlanner = options.taskPlanner;
     this.replyGenerator = options.replyGenerator;
     this.observer = options.observer;
+    this.targetProfiles = buildTargetProfileMap(options.targetProfiles);
     this.executePlansInline = options.executePlansInline ?? false;
     this.idFactory = options.idFactory ?? (() => `run-${randomUUID()}`);
   }
 
   async validateArtifact(input: ValidateArtifactInput): Promise<ValidateArtifactServiceResponse> {
-    const artifactValidation = await this.validateArtifactFile(input);
+    const targetProfile = this.resolveTargetProfile(input.target);
+    if (this.targetProfiles !== undefined && targetProfile === undefined) {
+      return targetNotFound(input.target);
+    }
+
+    const artifactValidation = await this.validateArtifactFile(input, targetProfile);
     if (artifactValidation !== undefined) {
       return artifactValidation;
     }
 
     const runId = this.idFactory();
-    const targetCapabilities = this.capabilityStatuses();
+    const targetCapabilities = this.capabilityStatuses(input, targetProfile);
     const created = await this.runManager.createRun({
       runId,
       initialState: "planning",
       request: input,
+      targetProfile,
       inferredCapabilities: targetCapabilities
     });
     if (!created.accepted) {
@@ -197,7 +209,11 @@ export class RuntimeService {
     const plan = plannerResult.status === "planned" ? plannerResult.plan : undefined;
     if (plan !== undefined) {
       if (this.executePlansInline) {
-        const execution = await this.executor.executePlan({ runId, plan });
+        const execution = await this.executor.executePlan({
+          runId,
+          plan,
+          allowedCapabilities: availableCapabilityNames(targetCapabilities)
+        });
         if (!execution.accepted) {
           await this.failPlanningRun(runId, execution.message);
           await this.writeFinalReply(await this.store.readRun(runId));
@@ -213,7 +229,7 @@ export class RuntimeService {
         await this.processObserverTriggers(execution.run, execution.events);
         await this.writeFinalReply(execution.run);
       } else {
-        this.startBackgroundPlan(runId, plan);
+        this.startBackgroundPlan(runId, plan, targetCapabilities);
       }
     }
 
@@ -403,13 +419,17 @@ export class RuntimeService {
   }
 
   getTargetCapabilities(target: string): GetTargetCapabilitiesResponse {
+    const targetProfile = this.resolveTargetProfile(target);
+    if (this.targetProfiles !== undefined && targetProfile === undefined) {
+      throw new RuntimeHttpError(404, "target_not_found", `target ${target} was not found`);
+    }
     return {
       target,
       runtime_state: {
         target_id: target,
         state: "unknown"
       },
-      capabilities: this.capabilityStatuses()
+      capabilities: this.capabilityStatuses(undefined, targetProfile)
     };
   }
 
@@ -439,7 +459,10 @@ export class RuntimeService {
     };
   }
 
-  private async validateArtifactFile(input: ValidateArtifactInput): Promise<ValidateArtifactRejectedResponse | undefined> {
+  private async validateArtifactFile(
+    input: ValidateArtifactInput,
+    targetProfile: TargetProfile | undefined
+  ): Promise<ValidateArtifactRejectedResponse | undefined> {
     try {
       const artifactStat = await stat(input.artifact.path);
       if (!artifactStat.isFile()) {
@@ -458,17 +481,25 @@ export class RuntimeService {
         suggested_next: "Provide an adb_shell test_hint or configure a hand-written Plan factory."
       };
     }
+    if (targetProfile?.flash?.artifact_type !== undefined && input.artifact.type !== targetProfile.flash.artifact_type) {
+      return artifactInvalid(
+        input,
+        `artifact type ${input.artifact.type} does not match target flash artifact_type ${targetProfile.flash.artifact_type}`
+      );
+    }
     return undefined;
   }
 
-  private capabilityStatuses(): CapabilityStatus[] {
-    return P0_CAPABILITIES.map(capability => ({
-      name: capability,
-      available: this.adapters.get(capability) !== undefined,
-      requires: capabilityRequires(capability),
-      limits: capabilityLimits(capability),
-      risk: capabilityRisk(capability)
-    }));
+  private capabilityStatuses(input?: ValidateArtifactInput, targetProfile?: TargetProfile): CapabilityStatus[] {
+    return inferTargetCapabilities({
+      adapters: this.adapters,
+      targetProfile,
+      constraints: input?.constraints
+    });
+  }
+
+  private resolveTargetProfile(target: string): TargetProfile | undefined {
+    return this.targetProfiles?.get(target);
   }
 
   private async readRunOrThrow(runId: string) {
@@ -483,10 +514,14 @@ export class RuntimeService {
     return this.store.readAgentReply(runId);
   }
 
-  private startBackgroundPlan(runId: string, plan: Plan): void {
+  private startBackgroundPlan(runId: string, plan: Plan, targetCapabilities: CapabilityStatus[]): void {
     void (async () => {
       try {
-        const execution = await this.executor.executePlan({ runId, plan });
+        const execution = await this.executor.executePlan({
+          runId,
+          plan,
+          allowedCapabilities: availableCapabilityNames(targetCapabilities)
+        });
         if (execution.accepted) {
           await this.processObserverTriggers(execution.run, execution.events);
           await this.writeFinalReply(execution.run);
@@ -697,51 +732,6 @@ export class RuntimeService {
   }
 }
 
-const P0_CAPABILITIES: CapabilityName[] = [
-  "flash",
-  "push",
-  "watch_serial",
-  "wait_adb",
-  "shell_exec",
-  "check_process",
-  "collect_logs",
-  "save_snapshot"
-];
-
-function capabilityRisk(capability: CapabilityName): CapabilityStatus["risk"] {
-  return capability === "flash" || capability === "push" || capability === "shell_exec" ? "medium" : "low";
-}
-
-function capabilityRequires(capability: CapabilityName): CapabilityStatus["requires"] {
-  if (capability === "flash") {
-    return { connection: "fastboot" };
-  }
-  if (capability === "watch_serial") {
-    return { connection: "serial" };
-  }
-  if (capability === "save_snapshot") {
-    return { connection: "evidence_store" };
-  }
-  return { connection: "adb" };
-}
-
-function capabilityLimits(capability: CapabilityName): CapabilityStatus["limits"] {
-  const defaultTimeouts: Record<CapabilityName, number> = {
-    flash: 300,
-    push: 60,
-    watch_serial: 180,
-    wait_adb: 180,
-    shell_exec: 60,
-    check_process: 30,
-    collect_logs: 120,
-    save_snapshot: 30
-  };
-  return {
-    default_timeout_sec: defaultTimeouts[capability],
-    max_duration_sec: capability === "watch_serial" ? 600 : defaultTimeouts[capability]
-  };
-}
-
 function artifactInvalid(input: ValidateArtifactInput, reason: string): ValidateArtifactRejectedResponse {
   return {
     status: "artifact_invalid",
@@ -750,6 +740,20 @@ function artifactInvalid(input: ValidateArtifactInput, reason: string): Validate
     missing_info: [],
     suggested_next: "Provide a readable local artifact file path."
   };
+}
+
+function targetNotFound(target: string): ValidateArtifactRejectedResponse {
+  return {
+    status: "target_not_found",
+    target,
+    reasons: [`target ${target} was not found`],
+    missing_info: ["target profile"],
+    suggested_next: "Configure a target profile before validating artifacts for this target."
+  };
+}
+
+function availableCapabilityNames(capabilities: CapabilityStatus[]): CapabilityName[] {
+  return capabilities.filter(capability => capability.available).map(capability => capability.name);
 }
 
 function elapsedSec(createdAt: string, now: Date): number {

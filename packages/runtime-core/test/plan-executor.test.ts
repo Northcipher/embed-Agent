@@ -117,6 +117,25 @@ describe("PlanExecutor", () => {
     expect((await store.readEvents("run-001")).map(event => event.type)).toEqual(["run_created", "state_changed", "run_failed"]);
   });
 
+  it("rejects a plan using capabilities outside the target/request allowance", async () => {
+    await runManager.createRun({ runId: "run-001", initialState: "planning" });
+    const executor = new PlanExecutor({ store, runManager, adapters: new FakeAdapterRegistry() });
+
+    const result = await executor.executePlan({
+      runId: "run-001",
+      plan: demoPlan(),
+      allowedCapabilities: ["watch_serial", "wait_adb", "collect_logs", "save_snapshot"]
+    });
+
+    expect(result).toEqual({
+      accepted: false,
+      error_code: "plan_rejected",
+      message:
+        "plan plan-demo cannot execute: capability flash is not available for this target/request; capability shell_exec is not available for this target/request"
+    });
+    expect((await store.readRun("run-001")).status).toBe("failed");
+  });
+
   it("runs on_failure collection steps and fails the run after a fatal step failure", async () => {
     await runManager.createRun({ runId: "run-001", initialState: "planning" });
     const executor = new PlanExecutor({

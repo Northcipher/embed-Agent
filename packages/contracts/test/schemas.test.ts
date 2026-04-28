@@ -10,6 +10,7 @@ import {
   RunStatusResponseSchema,
   RunStateSchema,
   TaskPlannerOutputSchema,
+  TargetProfileSchema,
   ValidateArtifactInputSchema,
   ValidateArtifactRejectedResponseSchema,
   WatchRunResponseSchema
@@ -126,6 +127,49 @@ describe("P0 contract schemas", () => {
     });
 
     expect(plan.steps[0]?.capability).toBe("watch_serial");
+  });
+
+  it("accepts a target profile with connection facts and safety flags", () => {
+    const profile = TargetProfileSchema.parse({
+      target_id: "board-01",
+      connections: {
+        serial: {
+          port: "/dev/ttyUSB0",
+          baud: 115200
+        },
+        adb: {
+          device_id: "ABC123"
+        }
+      },
+      flash: {
+        method: "fastboot",
+        artifact_type: "firmware_img",
+        partition: "boot"
+      },
+      target_hints: {
+        boot_markers: ["Booting Linux", "boot completed"],
+        fail_patterns: ["kernel panic", "kernel oops"]
+      },
+      safety: {
+        allow_flash: true,
+        allow_shell_exec: true,
+        allow_power_cycle: false
+      }
+    });
+
+    expect(profile.connections.serial?.baud).toBe(115200);
+  });
+
+  it("rejects target profiles without a target id", () => {
+    expect(() =>
+      TargetProfileSchema.parse({
+        connections: {
+          adb: {
+            device_id: "ABC123"
+          }
+        }
+      })
+    ).toThrow();
   });
 
   it("accepts task planner output with validation intent and plan", () => {

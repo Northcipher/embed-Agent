@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeAdapterRegistry } from "@artifact-validation/adapters";
-import type { EventSeverity, EventSource, EventType, Plan, RunEvent, ValidateArtifactInput } from "@artifact-validation/contracts";
+import type { EventSeverity, EventSource, EventType, Plan, RunEvent, TargetProfile, ValidateArtifactInput } from "@artifact-validation/contracts";
 import {
   buildRuntimeServer,
   buildRuntimeServerWithLlmConfig,
@@ -831,6 +831,167 @@ describe("runtime-server HTTP API", () => {
     });
   });
 
+  it("returns target_not_found when configured target profiles do not include the requested target", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry(),
+      targetProfiles: [targetProfile()],
+      executePlansInline: true,
+      idFactory: () => "run-missing-target",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    const created = await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: {
+        ...validInput(artifactPath),
+        target: "missing-board"
+      }
+    });
+
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toEqual({
+      status: "target_not_found",
+      target: "missing-board",
+      reasons: ["target missing-board was not found"],
+      missing_info: ["target profile"],
+      suggested_next: "Configure a target profile before validating artifacts for this target."
+    });
+
+    const status = await server.app.inject({ method: "GET", url: "/api/runs/run-missing-target/status" });
+    expect(status.statusCode).toBe(404);
+  });
+
+  it("infers target capabilities from profile connections and safety flags", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry(),
+      targetProfiles: [
+        targetProfile({
+          connections: {
+            serial: {
+              port: "/dev/ttyUSB0",
+              baud: 115200
+            }
+          },
+          flash: undefined,
+          safety: {
+            allow_flash: false,
+            allow_shell_exec: false
+          }
+        })
+      ]
+    });
+
+    const capabilities = await server.app.inject({ method: "GET", url: "/api/targets/board-01/capabilities" });
+    expect(capabilities.statusCode).toBe(200);
+    expect(capabilityAvailability(capabilities.json().capabilities)).toMatchObject({
+      flash: false,
+      watch_serial: true,
+      wait_adb: false,
+      shell_exec: false,
+      check_process: false,
+      collect_logs: true,
+      save_snapshot: true
+    });
+
+    const missing = await server.app.inject({ method: "GET", url: "/api/targets/missing-board/capabilities" });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toMatchObject({
+      status: "error",
+      error_code: "target_not_found"
+    });
+  });
+
+  it("rejects plan steps using capabilities disabled by request constraints", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry(),
+      targetProfiles: [targetProfile()],
+      planFactory: () => demoPlan(),
+      executePlansInline: true,
+      idFactory: () => "run-capability-disabled",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    const created = await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: {
+        ...validInput(artifactPath),
+        constraints: {
+          ...validInput(artifactPath).constraints,
+          allow_shell_exec: false
+        }
+      }
+    });
+
+    expect(created.json()).toMatchObject({
+      status: "plan_rejected",
+      run_id: "run-capability-disabled"
+    });
+    expect(created.json().reasons[0]).toContain("capability shell_exec is not available for this target/request");
+  });
+
+  it("applies request capability constraints even when target profiles are not configured", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry(),
+      planFactory: () => demoPlan(),
+      executePlansInline: true,
+      idFactory: () => "run-request-constraint-only",
+      now: () => new Date("2026-04-28T02:00:00.000Z")
+    });
+
+    const input = validInput(artifactPath);
+    const created = await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: {
+        ...input,
+        constraints: {
+          ...input.constraints,
+          allow_shell_exec: false
+        }
+      }
+    });
+
+    expect(created.json()).toMatchObject({
+      status: "plan_rejected",
+      run_id: "run-request-constraint-only"
+    });
+    expect(created.json().reasons[0]).toContain("capability shell_exec is not available for this target/request");
+  });
+
+  it("returns artifact_invalid when artifact type does not match target flash profile", async () => {
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry(),
+      targetProfiles: [targetProfile()]
+    });
+
+    const created = await server.app.inject({
+      method: "POST",
+      url: "/api/validate-artifact",
+      payload: {
+        ...validInput(artifactPath),
+        artifact: {
+          path: artifactPath,
+          type: "zip"
+        }
+      }
+    });
+
+    expect(created.json()).toEqual({
+      status: "artifact_invalid",
+      target: "board-01",
+      reasons: ["artifact type zip does not match target flash artifact_type firmware_img"],
+      missing_info: [],
+      suggested_next: "Provide a readable local artifact file path."
+    });
+  });
+
   it("fails the run when executor rejects a Task Planner plan", async () => {
     server = buildRuntimeServer({
       rootDir,
@@ -1007,6 +1168,41 @@ function validInput(artifact: string): ValidateArtifactInput {
       allow_power_cycle: false
     }
   };
+}
+
+function targetProfile(overrides: Partial<TargetProfile> = {}): TargetProfile {
+  return {
+    target_id: "board-01",
+    connections: {
+      serial: {
+        port: "/dev/ttyUSB0",
+        baud: 115200
+      },
+      adb: {
+        device_id: "ABC123"
+      }
+    },
+    flash: {
+      method: "fastboot",
+      artifact_type: "firmware_img",
+      partition: "boot"
+    },
+    target_hints: {
+      boot_markers: ["Booting Linux", "boot completed"],
+      fail_patterns: ["kernel panic", "kernel oops"]
+    },
+    safety: {
+      allow_flash: true,
+      allow_reboot: true,
+      allow_shell_exec: true,
+      allow_power_cycle: false
+    },
+    ...overrides
+  };
+}
+
+function capabilityAvailability(capabilities: Array<{ name: string; available: boolean }>): Record<string, boolean> {
+  return Object.fromEntries(capabilities.map(capability => [capability.name, capability.available]));
 }
 
 function demoPlan(): Plan {

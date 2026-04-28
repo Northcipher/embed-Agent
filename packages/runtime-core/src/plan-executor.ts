@@ -15,6 +15,7 @@ import { isTerminalRunState } from "./state-machine.js";
 export type ExecutePlanInput = {
   runId: string;
   plan: Plan;
+  allowedCapabilities?: CapabilityName[];
 };
 
 export type ExecutedStepResult = {
@@ -75,7 +76,7 @@ export class PlanExecutor {
   }
 
   async executePlan(input: ExecutePlanInput): Promise<PlanExecutionResult> {
-    const validation = validatePlanForExecution(input.plan, this.adapters);
+    const validation = validatePlanForExecution(input.plan, this.adapters, input.allowedCapabilities);
     if (!validation.accepted) {
       await this.failRejectedPlanningRun(input.runId, validation.issues.join("; "));
       return rejected("plan_rejected", `plan ${input.plan.plan_id} cannot execute: ${validation.issues.join("; ")}`);
@@ -330,7 +331,11 @@ export class PlanExecutor {
   }
 }
 
-export function validatePlanForExecution(plan: Plan, adapters: CapabilityAdapterRegistry): PlanValidationResult {
+export function validatePlanForExecution(
+  plan: Plan,
+  adapters: CapabilityAdapterRegistry,
+  allowedCapabilities?: CapabilityName[]
+): PlanValidationResult {
   const parsed = PlanSchema.safeParse(plan);
   if (!parsed.success) {
     return {
@@ -342,6 +347,7 @@ export function validatePlanForExecution(plan: Plan, adapters: CapabilityAdapter
   const issues: string[] = [];
   const seenStepIds = new Set<string>();
   const missingCapabilities = new Set<CapabilityName>();
+  const allowedCapabilitySet = allowedCapabilities === undefined ? undefined : new Set(allowedCapabilities);
 
   for (const step of parsed.data.steps) {
     if (seenStepIds.has(step.id)) {
@@ -351,6 +357,9 @@ export function validatePlanForExecution(plan: Plan, adapters: CapabilityAdapter
 
     if (adapters.get(step.capability) === undefined) {
       missingCapabilities.add(step.capability);
+    }
+    if (allowedCapabilitySet !== undefined && !allowedCapabilitySet.has(step.capability)) {
+      issues.push(`capability ${step.capability} is not available for this target/request`);
     }
   }
 
