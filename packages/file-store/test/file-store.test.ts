@@ -158,4 +158,10 @@ describe("FileStore", () => {
       })
     ).rejects.toThrow("relative to the run directory");
   });
+
+  it("rejects run ids that would escape the runs directory", async () => {
+    await expect(store.createRun({ run_id: ".." })).rejects.toThrow("run_id contains unsupported characters");
+    await expect(store.createRun({ run_id: "." })).rejects.toThrow("run_id contains unsupported characters");
+    await expect(store.createRun({ run_id: "run.001" })).rejects.toThrow("run_id contains unsupported characters");
+  });
 });

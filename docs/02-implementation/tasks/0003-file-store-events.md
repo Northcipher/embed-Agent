@@ -28,6 +28,10 @@ Acceptance criteria:
 - [x] Evidence paths reject absolute paths and `..` traversal.
 - [x] Atomic JSON writes use temp file + rename.
 
+Known P0 limitations:
+- Event append is safe for the P0 single Runtime process model, but it does not implement cross-process locking.
+- If a process crashes between `events.jsonl` append and `run.json` update, recovery should rebuild `last_event_seq` from `events.jsonl` in a later recovery slice.
+
 Verification:
 - [x] `pnpm typecheck`
 - [x] `pnpm test`

@@ -233,7 +233,7 @@ export class FileStore {
 }
 
 function assertSafeId(value: string, label: string): void {
-  if (!/^[A-Za-z0-9._-]+$/.test(value)) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value)) {
     throw new Error(`${label} contains unsupported characters`);
   }
 }
