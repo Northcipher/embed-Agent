@@ -1,0 +1,61 @@
+# Artifact Validation Agent 文档入口
+
+当前正式主线已经切到：
+
+```text
+Artifact Validation Agent
+```
+
+它不是 coding agent，也不是通用设备 MCP。  
+它是一个不改代码的产物真机验证系统。
+
+## 当前必读文档
+
+1. [00-START-HERE.md](00-START-HERE.md)
+2. [01-foundation/ARTIFACT-VALIDATION-AGENT-ROLE-MODEL.md](01-foundation/ARTIFACT-VALIDATION-AGENT-ROLE-MODEL.md)
+3. [01-foundation/ARTIFACT-VALIDATION-AGENT-PRODUCT.md](01-foundation/ARTIFACT-VALIDATION-AGENT-PRODUCT.md)
+4. [01-foundation/ARTIFACT-VALIDATION-AGENT-FUNCTION-LIST.md](01-foundation/ARTIFACT-VALIDATION-AGENT-FUNCTION-LIST.md)
+5. [01-foundation/ARTIFACT-VALIDATION-AGENT-ARCHITECTURE.md](01-foundation/ARTIFACT-VALIDATION-AGENT-ARCHITECTURE.md)
+6. [01-foundation/ARTIFACT-VALIDATION-AGENT-RUNTIME-CONTRACTS.md](01-foundation/ARTIFACT-VALIDATION-AGENT-RUNTIME-CONTRACTS.md)
+7. [01-foundation/ARTIFACT-VALIDATION-AGENT-LLM-INTEGRATION.md](01-foundation/ARTIFACT-VALIDATION-AGENT-LLM-INTEGRATION.md)
+8. [01-foundation/ARTIFACT-VALIDATION-AGENT-UI-UX.md](01-foundation/ARTIFACT-VALIDATION-AGENT-UI-UX.md)
+9. [01-foundation/ARTIFACT-VALIDATION-AGENT-IMPLEMENTATION-STACK.md](01-foundation/ARTIFACT-VALIDATION-AGENT-IMPLEMENTATION-STACK.md)
+10. [01-foundation/ARTIFACT-VALIDATION-AGENT-FIRST-SLICE.md](01-foundation/ARTIFACT-VALIDATION-AGENT-FIRST-SLICE.md)
+
+## 继续参考文档
+
+这些文档仍然有价值，但不是第一阅读路径：
+
+- [01-foundation/ARTIFACT-VALIDATION-AGENT-FUNCTION-BREAKDOWN.md](01-foundation/ARTIFACT-VALIDATION-AGENT-FUNCTION-BREAKDOWN.md)：按实现边界重整功能。
+- [01-foundation/ARTIFACT-VALIDATION-AGENT-FUNCTION-ANALYSIS.md](01-foundation/ARTIFACT-VALIDATION-AGENT-FUNCTION-ANALYSIS.md)：Task Planner 的功能分析参考。
+- [01-foundation/ARTIFACT-VALIDATION-AGENT-PLANNING-MODEL.md](01-foundation/ARTIFACT-VALIDATION-AGENT-PLANNING-MODEL.md)：Task Planner 编排模型参考。
+- [01-foundation/ARTIFACT-VALIDATION-AGENT-SCENARIO-LIBRARY.md](01-foundation/ARTIFACT-VALIDATION-AGENT-SCENARIO-LIBRARY.md)：场景库参考。
+- [01-foundation/ARTIFACT-VALIDATION-AGENT-REFERENCE-IMPLEMENTATIONS.md](01-foundation/ARTIFACT-VALIDATION-AGENT-REFERENCE-IMPLEMENTATIONS.md)：GitHub 和本地 `embedclaw` 可参考实现。
+- [02-implementation/IMPLEMENTATION-WORKFLOW.md](02-implementation/IMPLEMENTATION-WORKFLOW.md)：实现协作、commit、review 和分工规则。
+
+编码前强制规则：
+
+```text
+先看 reference-repos/ 和本地 embedclaw 对应实现，再写代码。
+```
+
+## 当前一句话
+
+```text
+定时或按触发拿到 artifact，
+放到真实设备上验证，
+运行中主动观察，
+保存 evidence，
+失败时回传结果并通知。
+```
+
+## 归档文档
+
+历史探索已经移动到 [99-archive/](99-archive/)：
+
+- `EMBED-AGENT-*`
+- `EMBEDDED-RUNTIME-*`
+- `TERMINAL-TOOLS-RESEARCH.md`
+- `ARTIFACT-VALIDATION-AGENT-ARCHITECTURE-RUNTIME-FIRST.md`
+
+归档文档只用于理解历史决策，不作为当前实现依据。

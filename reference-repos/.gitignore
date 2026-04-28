@@ -1,0 +1,4 @@
+# External reference repositories are cloned here for local reading only.
+# They are intentionally not tracked by this repo.
+/github/*
+
