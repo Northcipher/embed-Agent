@@ -20,4 +20,20 @@ export interface CapabilityAdapter {
 export type CapabilityAdapterRegistry = {
     get(capability: CapabilityName): CapabilityAdapter | undefined;
 };
+export type CommandInvocation = {
+    file: string;
+    args: string[];
+    timeoutSec: number;
+    stdin?: string;
+};
+export type CommandRunResult = {
+    stdout: string;
+    stderr: string;
+    exitCode: number | null;
+    timedOut: boolean;
+    durationSec: number;
+};
+export interface CommandRunner {
+    run(invocation: CommandInvocation): Promise<CommandRunResult>;
+}
 //# sourceMappingURL=types.d.ts.map
