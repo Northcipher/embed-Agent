@@ -258,13 +258,51 @@ describe("P0 contract schemas", () => {
       status: "failed",
       summary: "boot failed after serial kernel panic",
       confidence: 0.86,
-      key_evidence: evidence.key_events,
+      key_evidence: [
+        {
+          summary: "kernel panic matched on serial",
+          evidence_refs: ["serial:last-200-lines"]
+        }
+      ],
       suggested_next: "inspect init service ordering",
       evidence_path: evidence.root_path,
       report_path: "/var/artifact-validation/runs/run-001/report.json"
     });
 
     expect(reply.key_evidence[0]?.summary).toContain("kernel panic");
+  });
+
+  it("requires seq for evidence index key events but not agent reply key evidence", () => {
+    expect(() =>
+      EvidenceIndexSchema.parse({
+        run_id: "run-001",
+        partial: true,
+        updated_at: "2026-04-28T10:01:42+08:00",
+        root_path: "/var/artifact-validation/runs/run-001",
+        refs: [],
+        key_events: [
+          {
+            summary: "kernel panic matched on serial",
+            evidence_refs: ["serial:last-200-lines"]
+          }
+        ]
+      })
+    ).toThrow();
+
+    expect(
+      AgentReplySchema.parse({
+        run_id: "run-001",
+        status: "failed",
+        summary: "boot failed after serial kernel panic",
+        key_evidence: [
+          {
+            summary: "kernel panic matched on serial",
+            evidence_refs: ["serial:last-200-lines"]
+          }
+        ],
+        evidence_path: "/var/artifact-validation/runs/run-001"
+      }).key_evidence[0]?.evidence_refs
+    ).toContain("serial:last-200-lines");
   });
 
   it("accepts public error and intervention response inputs", () => {
@@ -284,6 +322,14 @@ describe("P0 contract schemas", () => {
         reason: "human debugging hint"
       }).action
     ).toBe("add_instruction");
+
+    expect(
+      InterveneRunInputSchema.parse({
+        run_id: "run-001",
+        action: "pause",
+        reason: "human requested pause"
+      }).action
+    ).toBe("pause");
   });
 
   it("rejects add_instruction intervention without instruction text", () => {

@@ -13,9 +13,16 @@ export const EvidenceRefSchema = z
   })
   .strict();
 
+export const KeyEventSchema = z
+  .object({
+    seq: z.number().int().nonnegative(),
+    summary: z.string().min(1),
+    evidence_refs: z.array(z.string().min(1)).min(1)
+  })
+  .strict();
+
 export const KeyEvidenceSchema = z
   .object({
-    seq: z.number().int().nonnegative().optional(),
     summary: z.string().min(1),
     evidence_refs: z.array(z.string().min(1)).min(1)
   })
@@ -28,7 +35,7 @@ export const EvidenceIndexSchema = z
     updated_at: z.string().min(1),
     root_path: z.string().min(1),
     refs: z.array(EvidenceRefSchema),
-    key_events: z.array(KeyEvidenceSchema)
+    key_events: z.array(KeyEventSchema)
   })
   .strict();
 
@@ -49,6 +56,7 @@ export const AgentReplySchema = z
 
 export type EvidenceKind = z.infer<typeof EvidenceKindSchema>;
 export type EvidenceRef = z.infer<typeof EvidenceRefSchema>;
+export type KeyEvent = z.infer<typeof KeyEventSchema>;
 export type KeyEvidence = z.infer<typeof KeyEvidenceSchema>;
 export type EvidenceIndex = z.infer<typeof EvidenceIndexSchema>;
 export type AgentReplyStatus = z.infer<typeof AgentReplyStatusSchema>;

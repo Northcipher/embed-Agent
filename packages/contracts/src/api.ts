@@ -213,28 +213,60 @@ export const InterventionActionSchema = z.enum([
   "request_partial_evidence"
 ]);
 
+const InterventionBaseShape = {
+  run_id: z.string().min(1),
+  reason: z.string().min(1).optional()
+};
+
 export const AddInstructionInterventionInputSchema = z
   .object({
-    run_id: z.string().min(1),
+    ...InterventionBaseShape,
     action: z.literal("add_instruction"),
-    instruction: z.string().min(1),
-    reason: z.string().min(1).optional()
+    instruction: z.string().min(1)
   })
   .strict();
 
-export const ControlInterventionActionSchema = z.enum(["pause", "resume", "cancel", "request_partial_evidence"]);
-
-export const ControlInterventionInputSchema = z
+export const PauseInterventionInputSchema = z
   .object({
-    run_id: z.string().min(1),
-    action: ControlInterventionActionSchema,
-    reason: z.string().min(1).optional()
+    ...InterventionBaseShape,
+    action: z.literal("pause")
   })
   .strict();
+
+export const ResumeInterventionInputSchema = z
+  .object({
+    ...InterventionBaseShape,
+    action: z.literal("resume")
+  })
+  .strict();
+
+export const CancelInterventionInputSchema = z
+  .object({
+    ...InterventionBaseShape,
+    action: z.literal("cancel")
+  })
+  .strict();
+
+export const RequestPartialEvidenceInterventionInputSchema = z
+  .object({
+    ...InterventionBaseShape,
+    action: z.literal("request_partial_evidence")
+  })
+  .strict();
+
+export const ControlInterventionInputSchema = z.union([
+  PauseInterventionInputSchema,
+  ResumeInterventionInputSchema,
+  CancelInterventionInputSchema,
+  RequestPartialEvidenceInterventionInputSchema
+]);
 
 export const InterveneRunInputSchema = z.discriminatedUnion("action", [
   AddInstructionInterventionInputSchema,
-  ControlInterventionInputSchema
+  PauseInterventionInputSchema,
+  ResumeInterventionInputSchema,
+  CancelInterventionInputSchema,
+  RequestPartialEvidenceInterventionInputSchema
 ]);
 
 export const InterveneRunResponseSchema = z
@@ -305,7 +337,10 @@ export type RunResultUnavailableResponse = z.infer<typeof RunResultUnavailableRe
 export type GetRunResultResponse = z.infer<typeof GetRunResultResponseSchema>;
 export type InterventionAction = z.infer<typeof InterventionActionSchema>;
 export type AddInstructionInterventionInput = z.infer<typeof AddInstructionInterventionInputSchema>;
-export type ControlInterventionAction = z.infer<typeof ControlInterventionActionSchema>;
+export type PauseInterventionInput = z.infer<typeof PauseInterventionInputSchema>;
+export type ResumeInterventionInput = z.infer<typeof ResumeInterventionInputSchema>;
+export type CancelInterventionInput = z.infer<typeof CancelInterventionInputSchema>;
+export type RequestPartialEvidenceInterventionInput = z.infer<typeof RequestPartialEvidenceInterventionInputSchema>;
 export type ControlInterventionInput = z.infer<typeof ControlInterventionInputSchema>;
 export type InterveneRunInput = z.infer<typeof InterveneRunInputSchema>;
 export type InterveneRunResponse = z.infer<typeof InterveneRunResponseSchema>;
