@@ -358,8 +358,10 @@ export function validatePlanForExecution(
     if (adapters.get(step.capability) === undefined) {
       missingCapabilities.add(step.capability);
     }
-    if (allowedCapabilitySet !== undefined && !allowedCapabilitySet.has(step.capability)) {
+    const capabilityAllowed = allowedCapabilitySet === undefined || allowedCapabilitySet.has(step.capability);
+    if (!capabilityAllowed) {
       issues.push(`capability ${step.capability} is not available for this target/request`);
+      continue;
     }
     issues.push(...validateCapabilityStep(step));
   }
@@ -419,6 +421,8 @@ function validateCapabilityStep(step: PlanStep): string[] {
       requireNonEmptyString(step, "reason", issues);
       optionalStringArray(step, "include", issues);
       break;
+    default:
+      assertNeverCapability(step.capability);
   }
 
   return issues;
@@ -442,7 +446,7 @@ function requireNonEmptyString(step: PlanStep, key: string, issues: string[]): v
 }
 
 function requireStringArray(step: PlanStep, key: string, issues: string[]): void {
-  if (!isStringArray(step.input[key])) {
+  if (!isNonEmptyStringArray(step.input[key])) {
     issues.push(`step ${step.id} ${step.capability} input.${key} must be an array of non-empty strings`);
   }
 }
@@ -480,7 +484,15 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.length > 0 && value.every(isNonEmptyString);
+  return Array.isArray(value) && value.every(isNonEmptyString);
+}
+
+function isNonEmptyStringArray(value: unknown): value is string[] {
+  return isStringArray(value) && value.length > 0;
+}
+
+function assertNeverCapability(capability: never): never {
+  throw new Error(`Unhandled capability ${String(capability)}`);
 }
 
 function shouldExecuteStep(step: PlanStep, sawFailure: boolean, sawFatalFailure: boolean): boolean {
