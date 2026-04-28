@@ -5,8 +5,10 @@ import {
   AgentReplySchema,
   type AgentReply,
   type CapabilityName,
+  CapabilityNameSchema,
   type CapabilityStatus,
   type CancelRunResponse,
+  type CurrentStepStatus,
   type EventType,
   type GetEvidenceResponse,
   type GetRunEventsResponse,
@@ -307,9 +309,11 @@ export class RuntimeService {
     const run = await this.readRunOrThrow(runId);
     const targetId = await this.targetIdForRun(runId);
     const terminal = isTerminalRunState(run.status);
+    const currentStep = terminal ? undefined : await this.currentStepForRun(run);
     return {
       run_id: run.run_id,
       status: run.status,
+      ...(currentStep === undefined ? {} : { phase: currentStep.capability, current_step: currentStep }),
       target: {
         ...(targetId === undefined ? {} : { target_id: targetId }),
         state: terminal ? "idle" : "busy",
@@ -320,6 +324,30 @@ export class RuntimeService {
       last_event_seq: run.last_event_seq,
       evidence_path: run.evidence_path
     };
+  }
+
+  private async currentStepForRun(run: StoredRun): Promise<CurrentStepStatus | undefined> {
+    if (run.last_event_seq === 0) {
+      return undefined;
+    }
+
+    const events = await this.store.readEvents(run.run_id, {
+      afterSeq: 0,
+      limit: Math.max(1, run.last_event_seq)
+    });
+    let currentStep: CurrentStepStatus | undefined;
+
+    for (const event of events) {
+      if (event.type === "step_started") {
+        currentStep = currentStepFromStartedEvent(event);
+        continue;
+      }
+      if (isStepFinishedEvent(event.type) && event.step_id !== undefined && currentStep?.id === event.step_id) {
+        currentStep = undefined;
+      }
+    }
+
+    return currentStep;
   }
 
   async getRunEvents(runId: string, options: { afterSeq: number; limit: number; types?: EventType[] }): Promise<GetRunEventsResponse> {
@@ -810,6 +838,27 @@ function targetBusy(target: string, runId: string): ValidateArtifactRejectedResp
     missing_info: [],
     suggested_next: "Wait for the current run to finish or cancel it before starting another validation."
   };
+}
+
+function currentStepFromStartedEvent(event: RunEvent): CurrentStepStatus | undefined {
+  if (event.step_id === undefined) {
+    return undefined;
+  }
+  const capability = CapabilityNameSchema.safeParse(event.payload?.capability);
+  const timeoutSec = event.payload?.timeout_sec;
+  if (!capability.success || !Number.isInteger(timeoutSec) || typeof timeoutSec !== "number" || timeoutSec <= 0) {
+    return undefined;
+  }
+  return {
+    id: event.step_id,
+    capability: capability.data,
+    started_at: event.time,
+    timeout_sec: timeoutSec
+  };
+}
+
+function isStepFinishedEvent(type: EventType): boolean {
+  return type === "step_completed" || type === "step_failed" || type === "step_timeout";
 }
 
 function availableCapabilityNames(capabilities: CapabilityStatus[]): CapabilityName[] {

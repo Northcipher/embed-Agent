@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FakeAdapterRegistry } from "@artifact-validation/adapters";
 import type { EventSeverity, EventSource, EventType, Plan, RunEvent, TargetProfile, ValidateArtifactInput } from "@artifact-validation/contracts";
+import { FileStore } from "@artifact-validation/file-store";
 import {
   buildRuntimeServer,
   buildRuntimeServerWithLlmConfig,
@@ -122,6 +123,86 @@ describe("runtime-server HTTP API", () => {
       summary: "run completed; review event stream and evidence refs for details",
       key_evidence: []
     });
+  });
+
+  it("derives phase and current_step from the active step events in run status", async () => {
+    const now = () => new Date("2026-04-28T02:00:30.000Z");
+    server = buildRuntimeServer({
+      rootDir,
+      adapters: new FakeAdapterRegistry(),
+      now
+    });
+    const store = new FileStore({ rootDir, now });
+    await store.createRun({
+      run_id: "run-active-step",
+      status: "running",
+      request: validInput(artifactPath)
+    });
+    await store.appendEvent("run-active-step", {
+      time: "2026-04-28T02:00:10.000Z",
+      elapsed_sec: 10,
+      type: "step_started",
+      severity: "info",
+      source: "orchestrator",
+      step_id: "step-watch-serial",
+      summary: "watch serial started",
+      payload: {
+        capability: "watch_serial",
+        timeout_sec: 180
+      }
+    });
+
+    const active = await server.app.inject({ method: "GET", url: "/api/runs/run-active-step/status" });
+    expect(active.statusCode).toBe(200);
+    expect(active.json()).toMatchObject({
+      run_id: "run-active-step",
+      status: "running",
+      phase: "watch_serial",
+      current_step: {
+        id: "step-watch-serial",
+        capability: "watch_serial",
+        started_at: "2026-04-28T02:00:10.000Z",
+        timeout_sec: 180
+      }
+    });
+
+    for (const type of ["step_completed", "step_failed", "step_timeout"] as const) {
+      await store.appendEvent("run-active-step", {
+        time: "2026-04-28T02:00:20.000Z",
+        elapsed_sec: 20,
+        type,
+        severity: type === "step_completed" ? "info" : "warning",
+        source: "tool_adapter",
+        step_id: "step-watch-serial",
+        summary: `${type} clears active step`,
+        payload: {
+          capability: "watch_serial"
+        }
+      });
+      const cleared = await server.app.inject({ method: "GET", url: "/api/runs/run-active-step/status" });
+      expect(cleared.json()).not.toHaveProperty("phase");
+      expect(cleared.json()).not.toHaveProperty("current_step");
+
+      await store.appendEvent("run-active-step", {
+        time: "2026-04-28T02:00:21.000Z",
+        elapsed_sec: 21,
+        type: "step_started",
+        severity: "info",
+        source: "orchestrator",
+        step_id: "step-watch-serial",
+        summary: "watch serial restarted",
+        payload: {
+          capability: "watch_serial",
+          timeout_sec: 180
+        }
+      });
+    }
+
+    const run = await store.readRun("run-active-step");
+    await store.writeRun({ ...run, status: "completed" });
+    const terminal = await server.app.inject({ method: "GET", url: "/api/runs/run-active-step/status" });
+    expect(terminal.json()).not.toHaveProperty("phase");
+    expect(terminal.json()).not.toHaveProperty("current_step");
   });
 
   it("filters run events by event types from HTTP query", async () => {
