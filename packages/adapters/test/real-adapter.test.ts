@@ -175,7 +175,7 @@ describe("real adapters", () => {
     const adapter = new FlashAdapter({
       method: "custom_command",
       command: {
-        file: "vendor-flash",
+        file: "/usr/local/bin/vendor-flash",
         args: ["--image", "{artifact_ref}", "--type", "{artifact_type}"]
       },
       runner
@@ -192,7 +192,7 @@ describe("real adapters", () => {
     });
 
     expect(runner.invocations[0]).toMatchObject({
-      file: "vendor-flash",
+      file: "/usr/local/bin/vendor-flash",
       args: ["--image", "/tmp/firmware.bin", "--type", "firmware_img"]
     });
   });

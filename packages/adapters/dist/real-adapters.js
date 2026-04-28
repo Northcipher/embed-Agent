@@ -178,7 +178,7 @@ export class FlashAdapter {
                 args: this.config.command.args.map(arg => replaceFlashPlaceholders(arg, artifactRef, artifactType)),
                 timeoutSec: context.step.timeout_sec
             };
-        assertConfiguredExecutableFile(invocation.file);
+        assertConfiguredExecutableFile(invocation.file, { allowBareName: this.config.method === "fastboot" });
         const command = await this.runner.run(invocation);
         const content = [
             command.stdout,
@@ -389,7 +389,7 @@ function assertAbsoluteTargetPath(value) {
         throw new Error("dst_path must be an absolute target path");
     }
 }
-function assertConfiguredExecutableFile(value) {
+function assertConfiguredExecutableFile(value, options) {
     if (value.length === 0 || value.includes("\0")) {
         throw new Error("executable file must be non-empty");
     }
@@ -399,8 +399,8 @@ function assertConfiguredExecutableFile(value) {
         }
         return;
     }
-    if (!/^[A-Za-z0-9._-]+$/.test(value)) {
-        throw new Error("configured executable file must be a safe absolute path or safe binary name");
+    if (!options.allowBareName || !/^[A-Za-z0-9._-]+$/.test(value)) {
+        throw new Error("configured executable file must be a safe absolute path");
     }
 }
 function assertResolvedArtifactRef(value) {
@@ -418,7 +418,7 @@ function assertSafeAdbShellCommand(value, allowShellMetacharacters) {
     if (value.includes("\0") || value.includes("\n") || value.includes("\r")) {
         throw new Error("shell_exec command contains invalid control characters");
     }
-    if (!allowShellMetacharacters && /[;&|`$<>]/.test(value)) {
+    if (!allowShellMetacharacters && /[;&|`$<>()\\*?]/.test(value)) {
         throw new Error("shell_exec command contains shell metacharacters; enable allowShellMetacharacters only for trusted target commands");
     }
 }
