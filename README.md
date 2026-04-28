@@ -31,8 +31,8 @@ Artifact Validation Agent 拿 artifact 上真实设备验证，
 
 ## 文档入口
 
-- [docs/00-START-HERE.md](/Users/luozx/work/embed-Agent/docs/00-START-HERE.md)
-- [docs/README.md](/Users/luozx/work/embed-Agent/docs/README.md)
+- [docs/00-START-HERE.md](docs/00-START-HERE.md)
+- [docs/README.md](docs/README.md)
 
 ## 当前正式方向
 
