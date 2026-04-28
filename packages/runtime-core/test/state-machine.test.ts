@@ -76,6 +76,45 @@ describe("RunManager", () => {
     expect((await store.readEvents("run-001")).map(event => event.type)).toEqual(["run_created", "state_changed"]);
   });
 
+  it("serializes concurrent transitions against the latest persisted state", async () => {
+    await manager.createRun({ runId: "run-001", initialState: "planning" });
+    await manager.transitionRun({ runId: "run-001", to: "running", reason: "plan accepted" });
+    const originalWriteRun = store.writeRun.bind(store);
+    let pauseWriteReached!: () => void;
+    let releasePauseWrite!: () => void;
+    const pauseWriteReachedPromise = new Promise<void>(resolve => {
+      pauseWriteReached = resolve;
+    });
+    const releasePauseWritePromise = new Promise<void>(resolve => {
+      releasePauseWrite = resolve;
+    });
+    store.writeRun = async run => {
+      if (run.run_id === "run-001" && run.status === "paused") {
+        pauseWriteReached();
+        await releasePauseWritePromise;
+      }
+      return originalWriteRun(run);
+    };
+
+    const pause = manager.transitionRun({ runId: "run-001", to: "paused", reason: "human pause", source: "caller" });
+    await pauseWriteReachedPromise;
+    const cancel = manager.transitionRun({ runId: "run-001", to: "cancelled", reason: "human cancel", source: "caller" });
+    await sleep(10);
+    releasePauseWrite();
+    const [pauseResult, cancelResult] = await Promise.all([pause, cancel]);
+
+    expect(pauseResult.accepted).toBe(true);
+    expect(cancelResult.accepted).toBe(true);
+    expect((await store.readRun("run-001")).status).toBe("cancelled");
+    expect((await store.readEvents("run-001")).map(event => event.type)).toEqual([
+      "run_created",
+      "state_changed",
+      "state_changed",
+      "state_changed",
+      "run_cancelled"
+    ]);
+  });
+
   it("rejects invalid transitions without writing events", async () => {
     await manager.createRun({ runId: "run-001", initialState: "queued" });
 
@@ -127,3 +166,9 @@ describe("RunManager", () => {
     expect((await store.readRun("run-001")).status).toBe("failed");
   });
 });
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => {
+    setTimeout(resolve, ms);
+  });
+}

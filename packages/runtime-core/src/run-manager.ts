@@ -49,6 +49,8 @@ export class RunManager {
 
   private readonly now: () => Date;
 
+  private readonly transitionQueues = new Map<string, Promise<void>>();
+
   constructor(options: RunManagerOptions) {
     this.store = options.store;
     this.now = options.now ?? (() => new Date());
@@ -83,6 +85,10 @@ export class RunManager {
   }
 
   async transitionRun(input: TransitionRunInput): Promise<TransitionRunResult> {
+    return this.withRunTransition(input.runId, () => this.transitionRunSerial(input));
+  }
+
+  private async transitionRunSerial(input: TransitionRunInput): Promise<TransitionRunResult> {
     const current = await this.store.readRun(input.runId);
     if (!canTransitionRunState(current.status, input.to)) {
       return rejected("invalid_request", `cannot transition run ${input.runId} from ${current.status} to ${input.to}`);
@@ -112,6 +118,23 @@ export class RunManager {
     const updated = await this.store.writeRun({ ...runAfterEvents, status: input.to });
 
     return { accepted: true, run: updated, events };
+  }
+
+  private async withRunTransition<T>(runId: string, transition: () => Promise<T>): Promise<T> {
+    const previous = this.transitionQueues.get(runId) ?? Promise.resolve();
+    const result = previous.catch(() => undefined).then(transition);
+    const queue = result.then(
+      () => undefined,
+      () => undefined
+    );
+    this.transitionQueues.set(runId, queue);
+    try {
+      return await result;
+    } finally {
+      if (this.transitionQueues.get(runId) === queue) {
+        this.transitionQueues.delete(runId);
+      }
+    }
   }
 
   private async appendTerminalEventIfNeeded(
