@@ -660,6 +660,13 @@ describe("runtime-server HTTP API", () => {
       },
       allowedFollowUpCapabilities: ["collect_logs", "save_snapshot"]
     });
+    expect(capturedInput?.evidenceWindows).toEqual([
+      expect.objectContaining({
+        ref: "adb:step-smoke",
+        kind: "command_output",
+        text: expect.stringContaining("smoke failed")
+      })
+    ]);
   });
 
   it("writes observer_intent events without executing requested actions", async () => {

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import path from "node:path";
 import type { CapabilityAdapterRegistry } from "@artifact-validation/adapters";
 import {
   AgentReplySchema,
@@ -676,6 +677,7 @@ export class RuntimeService {
         afterSeq: Math.max(0, triggerEvent.seq - 20),
         limit: 20
       });
+      const evidenceWindows = await this.buildObserverEvidenceWindows(run, triggerEvent);
       try {
         const result = await this.observer.observe({
           runId: run.run_id,
@@ -690,7 +692,7 @@ export class RuntimeService {
           },
           triggerEvent,
           recentEvents,
-          evidenceWindows: [],
+          evidenceWindows,
           remainingDurationSec: 0,
           allowedFollowUpCapabilities: ["collect_logs", "save_snapshot"]
         });
@@ -710,6 +712,38 @@ export class RuntimeService {
         });
       }
     }
+  }
+
+  private async buildObserverEvidenceWindows(
+    run: StoredRun,
+    triggerEvent: RunEvent
+  ): Promise<Array<{ ref: string; kind: string; text: string }>> {
+    const evidenceRefs = triggerEvent.evidence_refs?.slice(0, MAX_OBSERVER_EVIDENCE_WINDOWS) ?? [];
+    if (evidenceRefs.length === 0) {
+      return [];
+    }
+    const index = await this.store.readEvidenceIndex(run.run_id);
+    const windows: Array<{ ref: string; kind: string; text: string }> = [];
+    for (const ref of evidenceRefs) {
+      const item = index.refs.find(candidate => candidate.ref === ref);
+      if (item === undefined || !item.available) {
+        continue;
+      }
+      const evidencePath = resolveRunEvidencePath(run.evidence_path, item.path);
+      if (evidencePath === undefined) {
+        continue;
+      }
+      try {
+        windows.push({
+          ref: item.ref,
+          kind: item.kind,
+          text: truncateEvidenceWindow(await readFile(evidencePath, "utf8"))
+        });
+      } catch {
+        continue;
+      }
+    }
+    return windows;
   }
 
   private async appendObserverEvent(run: StoredRun, triggerEvent: RunEvent, result: RuntimeObserverResult): Promise<void> {
@@ -887,6 +921,8 @@ export function shouldTriggerObserver(event: RunEvent): boolean {
 }
 
 const MAX_OBSERVER_TRIGGERS_PER_EXECUTION = 3;
+const MAX_OBSERVER_EVIDENCE_WINDOWS = 5;
+const MAX_OBSERVER_EVIDENCE_WINDOW_CHARS = 4000;
 
 function replyStatusFromRunState(state: RunState): AgentReply["status"] | undefined {
   if (state === "completed" || state === "failed" || state === "cancelled") {
@@ -941,6 +977,23 @@ function copyIfPresent(target: Record<string, unknown>, source: Record<string, u
   if (source[key] !== undefined) {
     target[key] = source[key];
   }
+}
+
+function resolveRunEvidencePath(runDir: string, evidencePath: string): string | undefined {
+  const resolvedRunDir = path.resolve(runDir);
+  const resolvedEvidencePath = path.resolve(path.isAbsolute(evidencePath) ? evidencePath : path.join(resolvedRunDir, evidencePath));
+  const relative = path.relative(resolvedRunDir, resolvedEvidencePath);
+  if (relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))) {
+    return resolvedEvidencePath;
+  }
+  return undefined;
+}
+
+function truncateEvidenceWindow(text: string): string {
+  if (text.length <= MAX_OBSERVER_EVIDENCE_WINDOW_CHARS) {
+    return text;
+  }
+  return text.slice(text.length - MAX_OBSERVER_EVIDENCE_WINDOW_CHARS);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
