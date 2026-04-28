@@ -1,6 +1,7 @@
 {
   "files": [],
   "references": [
+    { "path": "./apps/mcp-server" },
     { "path": "./apps/runtime-server" },
     { "path": "./packages/contracts" },
     { "path": "./packages/adapters" },
