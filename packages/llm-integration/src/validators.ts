@@ -57,15 +57,27 @@ export function validateObserverIntent(
   if (parsed.data.intent === "intermediate_observation" && parsed.data.requested_actions.length > 0) {
     return invalid("observer_intent_rejected", "intermediate_observation cannot request actions");
   }
+  if ((parsed.data.intent === "continue" || parsed.data.intent === "extend_wait") && parsed.data.requested_actions.length > 0) {
+    return invalid("observer_intent_rejected", `${parsed.data.intent} cannot request actions`);
+  }
   if (parsed.data.intent === "extend_wait" && context.remainingDurationSec <= 0) {
     return invalid("observer_intent_rejected", "extend_wait has no remaining time budget");
   }
   for (const action of parsed.data.requested_actions) {
+    if (containsConnectionParameter(action.input)) {
+      return invalid("observer_intent_rejected", `requested action ${action.capability} contains connection parameters`);
+    }
     if (!context.allowedFollowUpCapabilities.includes(action.capability)) {
       return invalid("observer_intent_rejected", `unsupported requested action ${action.capability}`);
     }
     if (parsed.data.intent === "collect_more" && action.capability !== "collect_logs" && action.capability !== "save_snapshot") {
       return invalid("observer_intent_rejected", `collect_more cannot request ${action.capability}`);
+    }
+    if (parsed.data.intent === "pause" && action.capability !== "save_snapshot") {
+      return invalid("observer_intent_rejected", `pause cannot request ${action.capability}`);
+    }
+    if (parsed.data.intent === "stop" && action.capability !== "collect_logs" && action.capability !== "save_snapshot") {
+      return invalid("observer_intent_rejected", `stop cannot request ${action.capability}`);
     }
   }
   return { status: "valid", value: parsed.data };
@@ -92,6 +104,9 @@ export function validateAgentReply(value: Record<string, unknown>, context: Repl
   }
   if (/\b(diff|patch|apply_patch|git apply)\b/i.test(parsed.data.summary) || /\b(diff|patch|apply_patch|git apply)\b/i.test(parsed.data.suggested_next ?? "")) {
     return invalid("reply_rejected", "reply must not output patch instructions");
+  }
+  if (containsDefiniteRootCauseClaim(parsed.data.summary) || containsDefiniteRootCauseClaim(parsed.data.suggested_next ?? "")) {
+    return invalid("reply_rejected", "reply must not claim a definite code root cause");
   }
   return { status: "valid", value: parsed.data };
 }
@@ -154,3 +169,7 @@ const forbiddenConnectionKeys = new Set([
   "serialport",
   "usbport"
 ]);
+
+function containsDefiniteRootCauseClaim(text: string): boolean {
+  return /\b(root cause is|definitely caused by|caused by code|fix the code at|bug is in|regression is in)\b/i.test(text) || /(?:根因是|确定是|肯定是)/.test(text);
+}

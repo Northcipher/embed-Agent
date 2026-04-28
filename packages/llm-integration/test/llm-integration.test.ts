@@ -64,6 +64,13 @@ describe("llm-integration foundation", () => {
     expect(prompt.user.length).toBeLessThanOrEqual(120);
   });
 
+  it("includes prompt-injection boundary text in default prompts", () => {
+    const definition = createDefaultPromptRegistry().getActiveByRole("observer");
+
+    expect(definition.developer).toContain("untrusted data");
+    expect(definition.system).toContain("You cannot call tools");
+  });
+
   it("extracts exactly one JSON object from model output", () => {
     expect(parseSingleJsonObject("```json\n{\"ok\":true}\n```")).toEqual({
       status: "parsed",
@@ -201,6 +208,46 @@ describe("llm-integration foundation", () => {
     });
   });
 
+  it("rejects observer actions that violate intent-specific action rules or leak connection parameters", () => {
+    expect(
+      validateObserverIntent(
+        {
+          intent: "continue",
+          reason: "continue should not act",
+          confidence: 0.8,
+          requested_actions: [{ capability: "collect_logs", input: { items: ["dmesg"] } }],
+          report_to_caller: false
+        },
+        {
+          allowedFollowUpCapabilities: ["collect_logs", "save_snapshot"],
+          remainingDurationSec: 30
+        }
+      )
+    ).toMatchObject({
+      status: "invalid",
+      reason: "continue cannot request actions"
+    });
+
+    expect(
+      validateObserverIntent(
+        {
+          intent: "pause",
+          reason: "leaked connection",
+          confidence: 0.8,
+          requested_actions: [{ capability: "save_snapshot", input: { serialPort: "/dev/ttyUSB0" } }],
+          report_to_caller: false
+        },
+        {
+          allowedFollowUpCapabilities: ["collect_logs", "save_snapshot"],
+          remainingDurationSec: 30
+        }
+      )
+    ).toMatchObject({
+      status: "invalid",
+      reason: "requested action save_snapshot contains connection parameters"
+    });
+  });
+
   it("rejects replies that cite missing evidence refs and can create a rule-based fallback", () => {
     const validation = validateAgentReply(
       {
@@ -219,6 +266,28 @@ describe("llm-integration foundation", () => {
 
     expect(validation.status).toBe("invalid");
     expect(createRuleBasedReply({ runId: "run-001", status: "failed", evidencePath: "/tmp/run-001" }).key_evidence).toEqual([]);
+  });
+
+  it("rejects replies that claim a definite code root cause", () => {
+    const validation = validateAgentReply(
+      {
+        run_id: "run-001",
+        status: "failed",
+        summary: "root cause is init service ordering",
+        key_evidence: [{ summary: "panic", evidence_refs: ["serial:last-200-lines"] }],
+        evidence_path: "/tmp/run-001"
+      },
+      {
+        runId: "run-001",
+        finalStatus: "failed",
+        evidenceRefs: ["serial:last-200-lines"]
+      }
+    );
+
+    expect(validation).toMatchObject({
+      status: "invalid",
+      reason: "reply must not claim a definite code root cause"
+    });
   });
 
   it("writes brain call audit records with run-relative refs", async () => {
