@@ -15,10 +15,10 @@
 reference-repos/github/
 ```
 
-本地 `embedclaw` 参考路径：
+本地 `embedclaw` 参考路径通过环境变量指定：
 
 ```text
-/Users/luozx/work/embedclaw/EmbedClaw/mcp-server
+EMBEDCLAW_MCP_REFERENCE=<local-embedclaw-mcp-server-path>
 ```
 
 强制规则：
@@ -302,7 +302,7 @@ Runtime HTTP API 不做业务逻辑 schema 自由发挥。
 路径：
 
 ```text
-/Users/luozx/work/embedclaw/EmbedClaw/mcp-server
+$EMBEDCLAW_MCP_REFERENCE
 ```
 
 ### 3.1 项目形态
@@ -603,13 +603,13 @@ P0 不应该借：
 
 | 要写的代码 | 必须先看 |
 |---|---|
-| MCP server / tools / resources / prompts | `reference-repos/github/modelcontextprotocol-typescript-sdk`、`reference-repos/github/modelcontextprotocol-servers`、`/Users/luozx/work/embedclaw/EmbedClaw/mcp-server` |
+| MCP server / tools / resources / prompts | `reference-repos/github/modelcontextprotocol-typescript-sdk`、`reference-repos/github/modelcontextprotocol-servers`、`$EMBEDCLAW_MCP_REFERENCE` |
 | TUI / keyboard interaction / layout | `reference-repos/github/ink` |
 | SerialAdapter | `reference-repos/github/node-serialport` |
 | LLM providers | `reference-repos/github/openai-node`、`reference-repos/github/anthropic-sdk-typescript` |
 | Runtime HTTP API / validation | `reference-repos/github/fastify` |
 | MCP protocol compatibility | `reference-repos/github/modelcontextprotocol-conformance` |
-| Error / response / cancellation / truncation | `/Users/luozx/work/embedclaw/EmbedClaw/mcp-server/embedclaw_mcp` |
+| Error / response / cancellation / truncation | `$EMBEDCLAW_MCP_REFERENCE/embedclaw_mcp` |
 
 违反这条规则的实现不进入 review。
 

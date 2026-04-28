@@ -14,7 +14,7 @@ References checked:
 - `reference-repos/github/modelcontextprotocol-typescript-sdk`
 - `reference-repos/github/modelcontextprotocol-servers`
 - `reference-repos/github/fastify`
-- `/Users/luozx/work/embedclaw/EmbedClaw/mcp-server`
+- `$EMBEDCLAW_MCP_REFERENCE`
 
 Scope:
 - root workspace config

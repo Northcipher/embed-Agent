@@ -19,7 +19,13 @@ These repositories are local read-only references for implementation work. They 
 
 | Local path | Purpose |
 |---|---|
-| `/Users/luozx/work/embedclaw/EmbedClaw/mcp-server` | Optional local reference on the primary development machine: thin dispatch, handler registry, unified response, truncation, error sanitization, cancellation patterns. |
+| `$EMBEDCLAW_MCP_REFERENCE` | Optional local EmbedClaw MCP checkout: thin dispatch, handler registry, unified response, truncation, error sanitization, cancellation patterns. |
+
+Set it locally with:
+
+```text
+export EMBEDCLAW_MCP_REFERENCE=<local-embedclaw-mcp-server-path>
+```
 
 ## Rule
 
