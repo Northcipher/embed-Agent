@@ -1,62 +1,44 @@
-# Artifact Validation Agent 文档入口
+# Embed Agent 文档入口
 
-当前正式主线已经切到：
+## 核心文档
 
-```text
-Artifact Validation Agent
+```
+01-foundation/
+  EMBED-AGENT-REQUIREMENTS.md          需求（做什么、谁用、场景、命令清单）
+  EMBED-AGENT-ARCHITECTURE.md          架构（27 Sections，完整设计）
+  EMBED-AGENT-DESIGN-INSIGHTS.md       设计洞见（为什么这么设计）
+  EMBED-AGENT-ARCHITECTURE-CHECKLIST.md 架构检查清单（24 维度，给下次用）
 ```
 
-它不是 coding agent，也不是通用设备 MCP。  
-它是一个不改代码的产物真机验证系统。
+## 详细设计
 
-## 当前必读文档
-
-1. [00-START-HERE.md](00-START-HERE.md)
-2. [01-foundation/ARTIFACT-VALIDATION-AGENT-ROLE-MODEL.md](01-foundation/ARTIFACT-VALIDATION-AGENT-ROLE-MODEL.md)
-3. [01-foundation/ARTIFACT-VALIDATION-AGENT-PRODUCT.md](01-foundation/ARTIFACT-VALIDATION-AGENT-PRODUCT.md)
-4. [01-foundation/ARTIFACT-VALIDATION-AGENT-FUNCTION-LIST.md](01-foundation/ARTIFACT-VALIDATION-AGENT-FUNCTION-LIST.md)
-5. [01-foundation/ARTIFACT-VALIDATION-AGENT-ARCHITECTURE.md](01-foundation/ARTIFACT-VALIDATION-AGENT-ARCHITECTURE.md)
-6. [01-foundation/ARTIFACT-VALIDATION-AGENT-RUNTIME-CONTRACTS.md](01-foundation/ARTIFACT-VALIDATION-AGENT-RUNTIME-CONTRACTS.md)
-7. [01-foundation/ARTIFACT-VALIDATION-AGENT-LLM-INTEGRATION.md](01-foundation/ARTIFACT-VALIDATION-AGENT-LLM-INTEGRATION.md)
-8. [01-foundation/ARTIFACT-VALIDATION-AGENT-UI-UX.md](01-foundation/ARTIFACT-VALIDATION-AGENT-UI-UX.md)
-9. [01-foundation/ARTIFACT-VALIDATION-AGENT-IMPLEMENTATION-STACK.md](01-foundation/ARTIFACT-VALIDATION-AGENT-IMPLEMENTATION-STACK.md)
-10. [01-foundation/ARTIFACT-VALIDATION-AGENT-FIRST-SLICE.md](01-foundation/ARTIFACT-VALIDATION-AGENT-FIRST-SLICE.md)
-11. [03-release/README.md](03-release/README.md)
-
-## 继续参考文档
-
-这些文档仍然有价值，但不是第一阅读路径：
-
-- [01-foundation/ARTIFACT-VALIDATION-AGENT-FUNCTION-BREAKDOWN.md](01-foundation/ARTIFACT-VALIDATION-AGENT-FUNCTION-BREAKDOWN.md)：按实现边界重整功能。
-- [01-foundation/ARTIFACT-VALIDATION-AGENT-FUNCTION-ANALYSIS.md](01-foundation/ARTIFACT-VALIDATION-AGENT-FUNCTION-ANALYSIS.md)：Task Planner 的功能分析参考。
-- [01-foundation/ARTIFACT-VALIDATION-AGENT-PLANNING-MODEL.md](01-foundation/ARTIFACT-VALIDATION-AGENT-PLANNING-MODEL.md)：Task Planner 编排模型参考。
-- [01-foundation/ARTIFACT-VALIDATION-AGENT-SCENARIO-LIBRARY.md](01-foundation/ARTIFACT-VALIDATION-AGENT-SCENARIO-LIBRARY.md)：场景库参考。
-- [01-foundation/ARTIFACT-VALIDATION-AGENT-REFERENCE-IMPLEMENTATIONS.md](01-foundation/ARTIFACT-VALIDATION-AGENT-REFERENCE-IMPLEMENTATIONS.md)：GitHub 和本地 `embedclaw` 可参考实现。
-- [02-implementation/IMPLEMENTATION-WORKFLOW.md](02-implementation/IMPLEMENTATION-WORKFLOW.md)：实现协作、commit、review 和分工规则。
-
-编码前强制规则：
-
-```text
-先看 reference-repos/ 和本地 embedclaw 对应实现，再写代码。
+```
+02-design/
+  01-runtime.md          Run Manager, Step Executor, Decision Handler,
+                          Event Bus, Task Manager, Context Assembler, HookManager
+  02-tool.md             Connection, OutputPipe, Rule Detector, Aggregator,
+                          Connection Manager, Target Manager
+  03-agent.md            Planner, Observer, Reply, Memory, Skill Registry
+  04-store.md            Event, Evidence, Run, Target, Memory, Skill Store
+  05-observation.md      六层观测, Rule Detector, Aggregator 时序/跨源/基线
+  06-hook.md             Hook 系统（8 事件点，shell 脚本扩展）
+  07-circuit-breaker.md  熔断系统（4 熔断器）
 ```
 
-## 当前一句话
+## 规划文档
 
-```text
-定时或按触发拿到 artifact，
-放到真实设备上验证，
-运行中主动观察，
-保存 evidence，
-失败时回传结果并通知。
+```
+04-planning/
+  01-interface-spec.md     接口规范（CLI签名、MCP Schema、Event Payload、Zod Schema）
+  02-coding-standards.md   编码规范（TS、错误处理、日志、测试、Git、安全）
+  03-implementation-plan.md 实现计划（依赖图、6 Phase、M1/M2/M3）
+  04-test-plan.md          测试计划（三层策略、80+单元、10集成、7系统）
+  05-feature-checklist.md  功能清单（164 项，可逐项验证）
 ```
 
-## 归档文档
+## 归档
 
-历史探索已经移动到 [99-archive/](99-archive/)：
-
-- `EMBED-AGENT-*`
-- `EMBEDDED-RUNTIME-*`
-- `TERMINAL-TOOLS-RESEARCH.md`
-- `ARTIFACT-VALIDATION-AGENT-ARCHITECTURE-RUNTIME-FIRST.md`
-
-归档文档只用于理解历史决策，不作为当前实现依据。
+```
+99-archive/              历史设计文档。理解历史决策用，不作为实现依据。
+.archive/                旧代码原型（2026-04-29-prototype）
+```

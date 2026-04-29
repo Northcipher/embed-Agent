@@ -1,15 +1,4 @@
 {
   "files": [],
-  "references": [
-    { "path": "./apps/cli" },
-    { "path": "./apps/mcp-server" },
-    { "path": "./apps/tui" },
-    { "path": "./apps/runtime-server" },
-    { "path": "./packages/contracts" },
-    { "path": "./packages/llm-integration" },
-    { "path": "./packages/runtime-client" },
-    { "path": "./packages/adapters" },
-    { "path": "./packages/file-store" },
-    { "path": "./packages/runtime-core" }
-  ]
+  "references": []
 }
