@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, open, readFile, rename, stat, writeFile, type FileHandle } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, stat, writeFile, type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import {
   AgentReplySchema,
@@ -17,6 +17,7 @@ import {
   type RunState
 } from "@artifact-validation/contracts";
 import { z } from "zod";
+import { replaceFile } from "./atomic-write.js";
 
 export const StoredRunSchema = z
   .object({
@@ -295,7 +296,7 @@ export class FileStore {
     await mkdir(path.dirname(filePath), { recursive: true });
     const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`);
     await writeFile(tempPath, content);
-    await rename(tempPath, filePath);
+    await replaceFile(tempPath, filePath);
   }
 
   private async withRunMutation<T>(runId: string, mutate: () => Promise<T>): Promise<T> {
