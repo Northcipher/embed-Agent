@@ -8,5 +8,7 @@ export interface ErrorResponse {
 }
 
 export function makeError(code: ErrorCode, message: string, details?: Record<string, unknown>): ErrorResponse {
-  return { status: "error", error_code: code, message, details };
+  const resp: ErrorResponse = { status: "error", error_code: code, message };
+  if (details !== undefined) (resp as Record<string, unknown>).details = details;
+  return resp;
 }
