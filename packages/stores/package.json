@@ -18,6 +18,7 @@
     "vitest": "^4.0.15"
   },
   "dependencies": {
-    "@embed-agent/contracts": "workspace:*"
+    "@embed-agent/contracts": "workspace:*",
+    "zod": "^4.3.6"
   }
 }

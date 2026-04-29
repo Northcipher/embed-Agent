@@ -180,6 +180,9 @@ importers:
       '@embed-agent/contracts':
         specifier: workspace:*
         version: link:../contracts
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       vitest:
         specifier: ^4.0.15
