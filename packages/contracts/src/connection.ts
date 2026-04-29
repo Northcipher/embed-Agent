@@ -12,5 +12,5 @@ export interface Connection {
   stream?(timeout: number): AsyncIterable<string>;
   push?(src: string, dst: string): Promise<void>;
   flash?(image: string, partition: string): Promise<void>;
-  onDisconnect?: (callback: () => void) => void;
+  onDisconnect?: () => void;  // Set by CM: conn.onDisconnect = () => {...}
 }

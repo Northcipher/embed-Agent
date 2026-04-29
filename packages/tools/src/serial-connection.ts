@@ -9,20 +9,12 @@ export interface SerialConfig {
 // Implementation deferred until serialport is installed.
 // Interface contract: open port → stream lines → detect disconnect.
 export class SerialConnection implements Connection {
+  onDisconnect?: (callback: () => void) => void;
   private config: SerialConfig;
-  private port: unknown = null; // SerialPort instance
-  private _onDisconnect?: () => void;
+  private port: unknown = null;
 
   constructor(config: SerialConfig) {
     this.config = config;
-  }
-
-  get onDisconnect(): (() => void) | undefined {
-    return this._onDisconnect;
-  }
-
-  set onDisconnect(cb: (() => void) | undefined) {
-    this._onDisconnect = cb;
   }
 
   async connect(): Promise<void> {
