@@ -16,5 +16,10 @@
   },
   "devDependencies": {
     "vitest": "^4.0.15"
+  },
+  "dependencies": {
+    "@embed-agent/contracts": "workspace:*",
+    "@embed-agent/stores": "workspace:*",
+    "@embed-agent/tools": "workspace:*"
   }
 }
