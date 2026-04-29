@@ -1,0 +1,20 @@
+{
+  "name": "@embed-agent/tui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --pretty false",
+    "test": "vitest run --config ../../vitest.config.ts --dir . test"
+  },
+  "devDependencies": {
+    "vitest": "^4.0.15"
+  }
+}

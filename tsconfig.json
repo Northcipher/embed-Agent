@@ -1,4 +1,15 @@
 {
   "files": [],
-  "references": []
+  "references": [
+    { "path": "./packages/contracts" },
+    { "path": "./packages/stores" },
+    { "path": "./packages/tools" },
+    { "path": "./packages/runtime" },
+    { "path": "./packages/agent" },
+    { "path": "./packages/notify" },
+    { "path": "./packages/views" },
+    { "path": "./apps/cli" },
+    { "path": "./apps/mcp-server" },
+    { "path": "./apps/tui" }
+  ]
 }

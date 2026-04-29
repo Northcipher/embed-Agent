@@ -99,6 +99,7 @@ Commit:
       refactor: extract OutputPipe from Connection adapters
 
   一个 commit 只做一件事。
+  禁止 Co-Authored-By 伪作者。禁止 --no-verify 绕过 hooks。
 
 PR:   小 PR (< 500 行)。一个可验证的行为切片一个 PR。
       跨 package 的契约变更 (新增 event、修改接口) 可以同时改多个 package，

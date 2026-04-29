@@ -1,34 +1,28 @@
-# Artifact Validation Agent Coding Rules
+# Embed Agent
 
-## Mandatory Reference Check
+## 项目文档
 
-Before writing or changing implementation code, inspect the relevant local reference code first.
+编码前先读：
+- `docs/01-foundation/EMBED-AGENT-ARCHITECTURE.md` — 架构（27 Sections）
+- `docs/02-design/` — 详细设计（7 份）
+- `docs/04-planning/02-coding-standards.md` — 编码规范
+- `docs/04-planning/05-feature-checklist.md` — 功能清单
 
-If the local EmbedClaw reference is available, set:
+## Commit 规则
 
-```text
-EMBEDCLAW_MCP_REFERENCE=<local-embedclaw-mcp-server-path>
-```
+- 禁止 `Co-Authored-By` 伪作者
+- 禁止 `--no-verify` 绕过 hooks
+- 一个 commit 只做一件事
+- 格式: `<type>: <简短描述>`
 
-Required mapping:
+## 边界规则
 
-| Area | Read first |
-|---|---|
-| MCP server / tools / resources / prompts | `reference-repos/github/modelcontextprotocol-typescript-sdk`, `reference-repos/github/modelcontextprotocol-servers`, `$EMBEDCLAW_MCP_REFERENCE` when available |
-| TUI / terminal UI | `reference-repos/github/ink` |
-| Serial adapter | `reference-repos/github/node-serialport` |
-| LLM provider adapters | `reference-repos/github/openai-node`, `reference-repos/github/anthropic-sdk-typescript` |
-| Runtime HTTP API / schema validation | `reference-repos/github/fastify` |
-| MCP conformance / protocol behavior | `reference-repos/github/modelcontextprotocol-conformance` |
-| Error shape / truncation / cancellation patterns | `$EMBEDCLAW_MCP_REFERENCE/embedclaw_mcp` when available |
-
-Implementation changes must mention which reference paths were checked in the final response.
-
-## Boundary Rules
-
-- Keep `Runtime Server` as the only owner of run state, events, evidence index, and target runtime state.
-- Keep MCP / CLI / TUI as thin adapters.
-- Do not expose `device_exec` or generic shell execution as the main product interface.
-- Do not let MCP server hold device connection state.
-- Do not let LLM providers enter `runtime-core`; use provider abstraction only.
-- Do not copy reference code verbatim unless explicitly requested; translate patterns into this project's contracts.
+- Runtime 是唯一状态 owner。MCP/CLI/TUI 是 thin adapter
+- Tool 不调 LLM。Agent 不碰设备
+- Interface 不持状态。只发 Command、只读 View
+- 不暴露 `device_exec` 作为产品接口
+- Agent 不直接读 Config。只收 ContextAssembler 组装好的 Context
+- DH 不订阅 DecisionMade。Observer Decision 走直接调用
+- Observer 不看全量日志
+- 先写 Event，再推进状态
+- Reply 是 result_ready 唯一发布者
