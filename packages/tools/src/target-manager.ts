@@ -58,8 +58,9 @@ export class TargetManager {
 
     // Try reboot
     const rebootMethod = target.recovery?.reboot_method ?? "adb";
+    if (rebootMethod === "custom_command") return false; // custom recovery not implemented
     try {
-      const conn = this.cm.getConnection(target, rebootMethod);
+      const conn = this.cm.getConnection(target, rebootMethod as TransportType);
       if (conn?.exec) {
         await conn.exec("reboot", 30);
       }
