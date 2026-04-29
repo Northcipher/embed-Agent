@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+import path from "node:path";
 import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import { Command, InvalidArgumentError } from "commander";
 import {
   EventTypeSchema,
@@ -43,6 +45,24 @@ export type CreateCliProgramOptions = {
   clientFactory?: (runtimeUrl?: string) => CliRuntimeClient;
   io?: Partial<CliIo>;
 };
+
+export function argvPathToFileHref(pathArg: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform === "win32") {
+    return windowsPathToFileHref(pathArg);
+  }
+  return pathToFileURL(path.resolve(pathArg)).href;
+}
+
+export function isDirectCliExecution(
+  importMetaUrl: string,
+  argv1: string | undefined,
+  platform: NodeJS.Platform = process.platform
+): boolean {
+  if (argv1 === undefined) {
+    return false;
+  }
+  return importMetaUrl === argvPathToFileHref(argv1, platform);
+}
 
 export function createCliProgram(options: CreateCliProgramOptions = {}): Command {
   const io = createIo(options.io);
@@ -344,11 +364,26 @@ function createIo(overrides: Partial<CliIo> = {}): CliIo {
   };
 }
 
+function windowsPathToFileHref(pathArg: string): string {
+  const resolved = path.win32.resolve(pathArg);
+
+  if (resolved.startsWith("\\\\")) {
+    const [host, ...segments] = resolved.slice(2).split("\\");
+    const url = new URL(`file://${host}/`);
+    url.pathname = `/${segments.join("/")}`;
+    return url.href;
+  }
+
+  const url = new URL("file:///");
+  url.pathname = resolved.replace(/\\/g, "/");
+  return url.href;
+}
+
 async function main(): Promise<void> {
   await createCliProgram().parseAsync(process.argv);
 }
 
-if (process.argv[1] !== undefined && import.meta.url === new URL(process.argv[1], "file:").href) {
+if (isDirectCliExecution(import.meta.url, process.argv[1])) {
   main().catch(error => {
     process.stderr.write(`artifact-validation CLI failed: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);
