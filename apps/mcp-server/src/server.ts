@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Embed Agent MCP Server — stdio transport via @modelcontextprotocol/sdk
 
-import { McpServer, StdioServerTransport } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { MCP_TOOLS } from "./index.js";
 
 async function main() {
