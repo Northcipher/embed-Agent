@@ -45,4 +45,20 @@ export class ConnectionManager {
   releaseConnection(targetId: string, transport: TransportType): void {
     this.pool.delete(`${targetId}:${transport}`);
   }
+
+  // Step-aware routing: action + capability → transport
+  getConnectionForStep(target: TargetProfile, action: string, capability: string): Connection | null {
+    switch (action) {
+      case "stream": return this.getConnection(target, "serial");
+      case "flash": return this.getConnection(target, "fastboot");
+      case "push": return this.getConnection(target, "adb") ?? this.getConnection(target, "ssh");
+      case "exec":
+        if (capability === "wait_adb") return this.getConnection(target, "adb");
+        if (capability === "collect_logs") return this.getConnection(target, "adb");
+        if (capability === "shell_exec") return this.getConnection(target, "adb") ?? this.getConnection(target, "ssh");
+        return this.getConnection(target, "adb") ?? this.getConnection(target, "ssh") ?? this.getConnection(target, "local");
+      default:
+        return this.getConnection(target, "local");
+    }
+  }
 }
