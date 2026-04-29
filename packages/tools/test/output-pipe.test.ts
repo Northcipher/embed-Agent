@@ -11,7 +11,7 @@ describe("OutputPipe", () => {
     const rd = { detect: () => {}, checkExitCode: () => {} };
     const ag = { feed: () => {} };
     const eb = { emit: (e: Record<string, unknown>) => events.push(e) };
-    return { ew, rb, events, rd, ag, eb };
+    return { evidence, ew, rb, events, rd, ag, eb };
   }
 
   it("should write evidence on feedStream", () => {
