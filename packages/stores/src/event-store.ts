@@ -96,6 +96,7 @@ export class EventStore {
   private async readLastLine(filePath: string): Promise<string | null> {
     const content = await fs.readFile(filePath, "utf-8");
     const lines = content.trim().split("\n");
-    return lines.length > 0 ? lines[lines.length - 1] : null;
+    if (lines.length === 0) return null;
+    return lines[lines.length - 1]!;
   }
 }
