@@ -18,9 +18,10 @@ export class PromptLoader {
     if (files.length === 0) {
       throw new Error(`No prompt found for role: ${role}`);
     }
-    const latest = files[files.length - 1];
+    const latest = files[files.length - 1]!;
     const content = await fs.readFile(path.join(this.promptsDir, latest), "utf-8");
-    const version = parseInt(latest.match(/v(\d+)/)?.[1] ?? "0", 10);
+    const versionMatch = latest.match(/v(\d+)/);
+    const version = parseInt(versionMatch?.[1] ?? "0", 10);
     return { role, version, system: content };
   }
 
