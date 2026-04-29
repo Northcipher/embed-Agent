@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { TargetProfileSchema, LLMConfigSchema, HookConfigSchema } from "@embed-agent/contracts";
 import type { TargetProfile } from "@embed-agent/contracts";
-import type { z } from "zod/v4";
+import type { z, ZodIssue } from "zod/v4";
 
 export class ConfigLoader {
   constructor(private configDir: string) {}
@@ -33,7 +33,7 @@ export class ConfigLoader {
     const raw = JSON.parse(content) as unknown;
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const issues = result.error.issues.map(i => `  ${i.path.join(".")}: ${i.message}`).join("\n");
+      const issues = result.error.issues.map((i: ZodIssue) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
       throw new Error(`Config validation failed for ${filePath}:\n${issues}`);
     }
     return result.data;
