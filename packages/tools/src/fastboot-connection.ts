@@ -5,8 +5,8 @@ import type { Connection, ExecResult } from "@embed-agent/contracts";
 const execAsync = promisify(cpExec);
 
 export class FastbootConnection implements Connection {
-  onDisconnect?: (callback: () => void) => void;
-  private deviceId?: string;
+  onDisconnect?: () => void;
+  private deviceId: string | undefined;
   private _connected = false;
 
   constructor(deviceId?: string) {

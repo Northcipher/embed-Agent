@@ -5,7 +5,7 @@ import type { Connection, ExecResult } from "@embed-agent/contracts";
 const execAsync = promisify(cpExec);
 
 export class AdbConnection implements Connection {
-  onDisconnect?: (callback: () => void) => void;
+  onDisconnect?: () => void;
   private deviceId: string;
   private _connected = false;
 

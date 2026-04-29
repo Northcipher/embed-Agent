@@ -9,7 +9,7 @@ export interface SerialConfig {
 // Implementation deferred until serialport is installed.
 // Interface contract: open port → stream lines → detect disconnect.
 export class SerialConnection implements Connection {
-  onDisconnect?: (callback: () => void) => void;
+  onDisconnect?: () => void;
   private config: SerialConfig;
   private port: unknown = null;
 
