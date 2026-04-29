@@ -3,3 +3,6 @@ export { StepQueue } from "./step-queue.js";
 export { StepExecutor } from "./step-executor.js";
 export { DecisionHandler } from "./decision-handler.js";
 export { RunManager } from "./run-manager.js";
+export { ContextAssembler } from "./context-assembler.js";
+export { HookManager } from "./hook-manager.js";
+export { TaskManager } from "./task-manager.js";
