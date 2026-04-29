@@ -20,7 +20,7 @@ export class ConfigLoader {
   async loadHookConfig(): Promise<z.infer<typeof HookConfigSchema>> {
     const filePath = path.join(this.configDir, "hooks.json");
     try {
-      return this.loadAndValidate(filePath, HookConfigSchema) as Promise<z.infer<typeof HookConfigSchema>>;
+      return await this.loadAndValidate(filePath, HookConfigSchema);
     } catch {
       return { hooks: [] } as z.infer<typeof HookConfigSchema>;
     }
