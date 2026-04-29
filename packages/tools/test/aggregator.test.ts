@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { Aggregator } from "../src/aggregator.js";
 
 describe("Aggregator", () => {
-  it("should track line count", () => {
+  it("should track line count", async () => {
     const events: Record<string, unknown>[] = [];
     const ag = new Aggregator("step-1", { emit: (e) => events.push(e) });
     ag.feed("line1");
