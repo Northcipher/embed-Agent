@@ -33,7 +33,8 @@ export class TaskStore {
     const tasks = await this.readAll();
     const idx = tasks.findIndex(t => t.task_id === taskId);
     if (idx >= 0) {
-      tasks[idx] = { ...tasks[idx], ...patch, updated_at: new Date().toISOString() };
+      const updated = { ...tasks[idx], ...patch, updated_at: new Date().toISOString() };
+      tasks[idx] = updated as Task;
       await this.writeAll(tasks);
     }
   }
