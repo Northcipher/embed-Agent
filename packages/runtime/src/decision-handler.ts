@@ -49,10 +49,7 @@ export class DecisionHandler {
         await this.executeDecision(decision);
         this.eventBus.emit({ type: "decision_made", source: "observer", run_id: runId, payload: decision });
       } catch {
-        // Observer failed → fallback
-        if (severity === "fatal") {
-          await this.executeStop(event);
-        }
+        // Observer failed → fallback (severity is warning/info here, fatal was handled above)
       }
     }
   }
