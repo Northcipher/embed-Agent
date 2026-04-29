@@ -69,7 +69,9 @@ export class RunManager {
 
     run.state = status as RunState;
     run.ended_at = new Date().toISOString();
-    await this.runStore.update(runId, { state: run.state, ended_at: run.ended_at, failure_reason: run.failure_reason });
+    const patch: Partial<RunRecord> = { state: run.state, ended_at: run.ended_at };
+    if (run.failure_reason !== undefined) (patch as Record<string, unknown>).failure_reason = run.failure_reason;
+    await this.runStore.update(runId, patch);
 
     this.emit(`run_${status}`, runId, summary);
   }
