@@ -1,16 +1,9 @@
 #!/usr/bin/env node
-// Embed Agent TUI — Ink-based terminal dashboard
+// Embed Agent TUI — terminal dashboard
+// Uses Ink (React terminal UI) when installed: npx ink apps/tui/src/index.tsx
 
-import { render, Box, Text } from "ink";
-import React from "react";
-
-function App() {
-  return React.createElement(Box, { flexDirection: "column", padding: 1 },
-    React.createElement(Text, { bold: true, color: "green" }, "Embed Agent"),
-    React.createElement(Box, { marginTop: 1 },
-      React.createElement(Text, {}, "Runs: 0 active  |  Targets: 0 idle  |  Cost: $0.00")
-    ),
-  );
-}
-
-render(React.createElement(App));
+console.log("Embed Agent");
+console.log("─────────────────────────────");
+console.log("Runs:     0 active");
+console.log("Targets:  0 idle");
+console.log("Cost:     $0.00");
