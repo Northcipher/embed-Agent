@@ -11,3 +11,4 @@ export { Aggregator } from "./aggregator.js";
 export { ConnectionManager } from "./connection-manager.js";
 export type { TransportType } from "./connection-manager.js";
 export { TargetManager } from "./target-manager.js";
+export { FakeConnection } from "./fake-connection.js";
