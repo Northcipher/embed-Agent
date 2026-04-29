@@ -1,41 +1,35 @@
-# Artifact Validation Agent
+# Embed Agent
 
-`Artifact Validation Agent` 是一个不改代码的真机产物验证系统。
+Automated embedded device validation. Flash firmware, watch serial output, detect issues, collect evidence.
 
-一句话：
+## Quick Start
 
-```text
-CI 或 Coding Agent 产出 artifact，
-Artifact Validation Agent 拿 artifact 上真实设备验证，
-运行中主动观察并补采集 evidence，
-最后把结果回传给人或后续 Coding Agent。
+```bash
+pnpm install
+pnpm check    # typecheck + test
+pnpm build    # compile all packages
 ```
 
-它不做：
+## Packages
 
-- 不读代码
-- 不改代码
-- 不做通用 coding agent
-- 不做更好的串口终端
-- 不做完整实验室平台
+| Package | Description |
+|---------|-------------|
+| contracts | Type definitions, Zod schemas, error codes |
+| stores | Event, Evidence, Run, Target, Memory, Skill, Task stores |
+| tools | Connections (Serial, ADB, Fastboot, Local), RuleDetector, Aggregator, OutputPipe |
+| runtime | EventBus, StepQueue, StepExecutor, DecisionHandler, RunManager, HookManager |
+| agent | Planner, Observer, ReplyGenerator, Memory, SkillRegistry, LLMCallManager |
+| notify | NotificationFilter for Slack/Email |
+| views | Run, Target, Evidence read-only projections |
 
-它只做：
+## Apps
 
-- 找到要验证的产物
-- 按请求或触发启动真机 run
-- 刷机 / 下发 / 启动观察 / 命令检查
-- 主动观察关键事件、超时、断连和长时间无输出
-- 保存日志、状态、时间线和 evidence
-- 生成 Agent Reply / validation report
-- 异常时通知
+| App | Description |
+|-----|-------------|
+| CLI | Command-line interface |
+| MCP Server | Model Context Protocol server (9 tools) |
+| TUI | Terminal dashboard |
 
-## 文档入口
+## Docs
 
-- [docs/00-START-HERE.md](docs/00-START-HERE.md)
-- [docs/README.md](docs/README.md)
-
-## 当前正式方向
-
-当前正式方向以 `Artifact Validation Agent` 文档为准。
-
-旧的 `Embed Agent / Board Run MCP / Embedded Runtime MCP` 文档保留为探索历史和调研参考，不再作为当前产品主线。
+See `docs/01-foundation/` for architecture and requirements.
