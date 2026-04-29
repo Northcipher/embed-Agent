@@ -36,13 +36,16 @@
    └─ 测试文件: 同目录 <name>.test.ts
 
 3. 本地验证
-   └─ pnpm typecheck          ← 必须通过
-   └─ pnpm test               ← 必须通过
+   └─ pnpm check              ← typecheck + test 必须通过
    └─ 手动跑一下 (如果可运行)
 
 4. Commit
    └─ feat: <简短描述>
    └─ 一个工作单元一个 commit
+
+5. Codex Review
+   └─ /codex:review
+   └─ 发现问题 → 修复 → commit → 再次 review → 直到通过
 ```
 
 ## 4. Commit 前检查清单
@@ -77,19 +80,23 @@
 □ 有新 CLI 命令吗 → 确认 CommandHandler 路由已加
 ```
 
-### 5.2 Codex Review（每个 PR 让 Codex 过一遍）
+### 5.2 Codex Review（每个功能完成后必须执行）
 
+```bash
+/codex:review
 ```
-让 Codex 读:
-  - 改动文件
-  - 对应的 02-design/ 章节
-  - 对应的 01-foundation/ 架构 Section
 
-Codex 检查:
-  - 实现和设计一致吗
-  - 有边界破坏吗
+Codex 自动检查:
+  - 实现和 02-design/ 设计一致吗
+  - 实现和 01-foundation/ 架构一致吗
+  - 有边界破坏吗（Tool 不调 LLM / Agent 不碰设备 / ...）
   - 有时序问题吗
   - 有未处理的异常路径吗
+  - 有新增 Event 吗 → EventType 已注册吗
+  - 有新增 CLI 命令吗 → CommandHandler 路由已加吗
+
+工作区干净时才执行（commit 之后）。
+如果 review 发现问题 → 修复 → commit → 再次 review → 直到通过。
 ```
 
 ### 5.3 人 Review（关键模块）
