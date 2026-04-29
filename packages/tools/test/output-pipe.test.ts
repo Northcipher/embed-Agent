@@ -15,14 +15,14 @@ describe("OutputPipe", () => {
   }
 
   it("should write evidence on feedStream", () => {
-    const { ew, rb, events, rd, ag, eb } = setup();
+    const { evidence, ew, rb, events, rd, ag, eb } = setup();
     const op = new OutputPipe(ew, rb, rd, ag, eb, "step-1");
     op.feedStream("line1\nline2\n");
     expect(evidence.length).toBeGreaterThanOrEqual(1);
   });
 
   it("should write evidence on feedExec", () => {
-    const { ew, rb, events, rd, ag, eb } = setup();
+    const { evidence, ew, rb, events, rd, ag, eb } = setup();
     rd.checkExitCode = () => {};
     const op = new OutputPipe(ew, rb, rd, ag, eb, "step-1");
     op.feedExec("ok\n", "", 0);
@@ -30,7 +30,7 @@ describe("OutputPipe", () => {
   });
 
   it("should emit observation on feedStream after 100 lines", () => {
-    const { ew, rb, events, rd, ag, eb } = setup();
+    const { evidence, ew, rb, events, rd, ag, eb } = setup();
     const op = new OutputPipe(ew, rb, rd, ag, eb, "step-1");
     const lines = Array.from({ length: 100 }, (_, i) => `line${i}`).join("\n");
     op.feedStream(lines + "\n");
@@ -39,10 +39,10 @@ describe("OutputPipe", () => {
   });
 
   it("should handle partial lines in feedStream", () => {
-    const { ew, rb, events, rd, ag, eb } = setup();
+    const { evidence, ew, rb, events, rd, ag, eb } = setup();
     const op = new OutputPipe(ew, rb, rd, ag, eb, "step-1");
     op.feedStream("partial line without newline");
-    expect(evidence.length).toBe(0); // not flushed yet
+    expect(evidence.length).toBe(0);
     op.feedStream(" rest of line\n");
     expect(evidence.length).toBeGreaterThanOrEqual(1);
   });
