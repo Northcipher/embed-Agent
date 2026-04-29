@@ -20,6 +20,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
     "@embed-agent/contracts": "workspace:*",
-    "@embed-agent/stores": "workspace:*"
+    "@embed-agent/stores": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0"
   }
 }
