@@ -18,7 +18,7 @@ describe("OutputPipe", () => {
     const { ew, rb, events, rd, ag, eb } = setup();
     const op = new OutputPipe(ew, rb, rd, ag, eb, "step-1");
     op.feedStream("line1\nline2\n");
-    expect(ew.length).toBeGreaterThanOrEqual(1);
+    expect(evidence.length).toBeGreaterThanOrEqual(1);
   });
 
   it("should write evidence on feedExec", () => {
@@ -26,7 +26,7 @@ describe("OutputPipe", () => {
     rd.checkExitCode = () => {};
     const op = new OutputPipe(ew, rb, rd, ag, eb, "step-1");
     op.feedExec("ok\n", "", 0);
-    expect(ew.length).toBeGreaterThanOrEqual(1);
+    expect(evidence.length).toBeGreaterThanOrEqual(1);
   });
 
   it("should emit observation on feedStream after 100 lines", () => {
@@ -42,8 +42,8 @@ describe("OutputPipe", () => {
     const { ew, rb, events, rd, ag, eb } = setup();
     const op = new OutputPipe(ew, rb, rd, ag, eb, "step-1");
     op.feedStream("partial line without newline");
-    expect(ew.length).toBe(0); // not flushed yet
+    expect(evidence.length).toBe(0); // not flushed yet
     op.feedStream(" rest of line\n");
-    expect(ew.length).toBeGreaterThanOrEqual(1);
+    expect(evidence.length).toBeGreaterThanOrEqual(1);
   });
 });
