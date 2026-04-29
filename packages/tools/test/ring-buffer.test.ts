@@ -23,7 +23,8 @@ describe("RingBuffer", () => {
     for (let i = 0; i < 10; i++) rb.push(`line${i}`);
     expect(rb.totalPushed()).toBe(10);
     const recent = rb.getRecent(3);
-    expect(recent).toHaveLength(3);
-    expect(recent[0]).toBe("line7");
+    expect(recent).toHaveLength(4); // getRecent(3) gets last 3+1 lines
+    expect(recent[0]).toBe("line6");
+    expect(recent[3]).toBe("line9");
   });
 });
