@@ -1,4 +1,4 @@
-import type { Plan, Decision } from "@embed-agent/contracts";
+import type { Plan, Decision, AgentReply } from "@embed-agent/contracts";
 import type { LLMCallManager } from "./llm-call-manager.js";
 
 // Minimal stubs for Phase 4
