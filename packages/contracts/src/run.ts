@@ -109,3 +109,14 @@ export interface RunStatus {
   last_event_seq: number;
   evidence_path: string;
 }
+
+// Agent Reply
+export interface AgentReply {
+  run_id: string;
+  status: "completed" | "failed" | "cancelled";
+  summary: string;
+  key_evidence: { summary: string; evidence_refs: string[] }[];
+  suggested_next: string;
+  evidence_path: string;
+  confidence: number;
+}

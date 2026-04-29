@@ -1,4 +1,4 @@
-import type { Plan, Decision, AgentReply } from "@embed-agent/contracts";
+import type { Plan, Decision } from "@embed-agent/contracts";
 import type { LLMCallManager } from "./llm-call-manager.js";
 
 // Minimal stubs for Phase 4
@@ -35,16 +35,16 @@ import type { MemoryStore } from "@embed-agent/stores";
 export class Memory {
   constructor(private store: MemoryStore) {}
   async writeWorkingMemory(runId: string, entry: Record<string, unknown>): Promise<void> {
-    await this.store.writeWorkingMemory(runId, [entry as never]);
+    await this.store.writeWorkingMemory(runId, [entry] as unknown as never[]);
   }
-  async readWorkingMemory(runId: string): Promise<Record<string, unknown>[]> {
-    return this.store.readWorkingMemory(runId) as Promise<Record<string, unknown>[]>;
+  async readWorkingMemory(runId: string): Promise<unknown[]> {
+    return this.store.readWorkingMemory(runId);
   }
-  async recallEpisodes(targetId: string, limit = 10): Promise<Record<string, unknown>[]> {
-    return this.store.listByTarget(targetId, limit) as Promise<Record<string, unknown>[]>;
+  async recallEpisodes(targetId: string, limit = 10): Promise<unknown[]> {
+    return this.store.listByTarget(targetId, limit);
   }
   async recordEpisode(episode: Record<string, unknown>): Promise<void> {
-    await this.store.writeEpisode(episode as never);
+    await this.store.writeEpisode(episode as unknown as never);
   }
 }
 
