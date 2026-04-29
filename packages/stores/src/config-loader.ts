@@ -9,22 +9,20 @@ export class ConfigLoader {
 
   async loadTargetProfile(targetId: string): Promise<TargetProfile> {
     const filePath = path.join(this.configDir, "targets", targetId, "profile.json");
-    const result = await this.loadAndValidate(filePath, TargetProfileSchema);
-    return result;
+    return this.loadAndValidate(filePath, TargetProfileSchema) as Promise<TargetProfile>;
   }
 
   async loadLLMConfig(): Promise<z.infer<typeof LLMConfigSchema>> {
     const filePath = path.join(this.configDir, "llm.json");
-    const result = await this.loadAndValidate(filePath, LLMConfigSchema);
-    return result;
+    return this.loadAndValidate(filePath, LLMConfigSchema) as Promise<z.infer<typeof LLMConfigSchema>>;
   }
 
   async loadHookConfig(): Promise<z.infer<typeof HookConfigSchema>> {
     const filePath = path.join(this.configDir, "hooks.json");
     try {
-      return await this.loadAndValidate(filePath, HookConfigSchema);
+      return this.loadAndValidate(filePath, HookConfigSchema) as Promise<z.infer<typeof HookConfigSchema>>;
     } catch {
-      return { hooks: [] };
+      return { hooks: [] } as z.infer<typeof HookConfigSchema>;
     }
   }
 
@@ -33,9 +31,12 @@ export class ConfigLoader {
     const raw = JSON.parse(content) as unknown;
     const result = schema.safeParse(raw);
     if (!result.success) {
-      const issues = result.error.issues.map((i: ZodIssue) => `  ${i.path.join(".")}: ${i.message}`).join("\n");
-      throw new Error(`Config validation failed for ${filePath}:\n${issues}`);
+      const msg = result.error.issues.map((i: ZodIssue) =>
+        `  ${i.path.map(String).join(".")}: ${i.message}`
+      ).join("\n");
+      throw new Error(`Config validation failed for ${filePath}:\n${msg}`);
     }
-    return result.data;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return result.data as any;
   }
 }
