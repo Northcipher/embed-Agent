@@ -10,8 +10,8 @@
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "build": "pnpm -r --if-present build",
-    "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm -r --if-present test",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run",
     "lint": "pnpm -r --if-present lint",
     "check": "pnpm typecheck && pnpm test",
     "runtime:dev": "pnpm --filter @artifact-validation/runtime-server dev",

@@ -1,6 +1,6 @@
 # Windows Test Runbook
 
-> Release: `v0.1.0-alpha.1`
+> Release: `v0.1.0-alpha.2`
 > Date: 2026-04-29
 > Audience: Windows 10/11 tester using PowerShell.
 
@@ -37,11 +37,11 @@ pnpm version is 10.33.0
 ```powershell
 git clone <repo-url> embed-Agent
 cd embed-Agent
-git checkout v0.1.0-alpha.1
+git checkout v0.1.0-alpha.2
 pnpm install --frozen-lockfile
 ```
 
-If you are testing before the tag is available, checkout `main` after Codex reports the release commit and tag push.
+If you already tested `v0.1.0-alpha.1`, fetch tags and move to `v0.1.0-alpha.2`; it fixes clean Windows `typecheck` and test discovery.
 
 ## 3. Run Quality Gates
 
