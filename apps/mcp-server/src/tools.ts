@@ -2,11 +2,9 @@ import {
   CancelRunInputSchema,
   CancelRunResponseSchema,
   GetEvidenceInputSchema,
-  GetEvidenceResponseSchema,
   GetRunEventsInputSchema,
   GetRunEventsResponseSchema,
   GetRunResultInputSchema,
-  GetRunResultResponseSchema,
   GetTargetCapabilitiesInputSchema,
   GetTargetCapabilitiesResponseSchema,
   InterveneRunInputSchema,
@@ -14,13 +12,17 @@ import {
   RunStatusInputSchema,
   RunStatusResponseSchema,
   ValidateArtifactInputSchema,
-  ValidateArtifactResponseSchema,
   WatchRunInputSchema,
   WatchRunResponseSchema
 } from "@artifact-validation/contracts";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { toMcpResult } from "./mcp-result.js";
+import {
+  GetEvidenceMcpOutputSchema,
+  GetRunResultMcpOutputSchema,
+  ValidateArtifactMcpOutputSchema
+} from "./output-schemas.js";
 import { RuntimeHttpClient } from "./runtime-client.js";
 
 export const MCP_TOOL_NAMES = [
@@ -102,7 +104,7 @@ export function registerArtifactValidationTools(server: McpServer, client: Runti
       title: "Validate Artifact",
       description: "Start artifact validation through the Runtime Server. Does not execute device commands in MCP.",
       inputSchema: ValidateArtifactInputSchema,
-      outputSchema: ValidateArtifactResponseSchema,
+      outputSchema: ValidateArtifactMcpOutputSchema,
       annotations: {
         destructiveHint: true,
         idempotentHint: false,
@@ -166,7 +168,7 @@ export function registerArtifactValidationTools(server: McpServer, client: Runti
       title: "Get Evidence",
       description: "Read evidence index or one evidence reference from the Runtime Evidence Store.",
       inputSchema: GetEvidenceInputSchema,
-      outputSchema: GetEvidenceResponseSchema,
+      outputSchema: GetEvidenceMcpOutputSchema,
       annotations: {
         readOnlyHint: true,
         idempotentHint: true,
@@ -182,7 +184,7 @@ export function registerArtifactValidationTools(server: McpServer, client: Runti
       title: "Get Run Result",
       description: "Read the final or unavailable run result from Runtime.",
       inputSchema: GetRunResultInputSchema,
-      outputSchema: GetRunResultResponseSchema,
+      outputSchema: GetRunResultMcpOutputSchema,
       annotations: {
         readOnlyHint: true,
         idempotentHint: true,
