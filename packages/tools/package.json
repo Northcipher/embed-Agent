@@ -18,6 +18,8 @@
     "vitest": "^4.0.15"
   },
   "dependencies": {
-    "@embed-agent/contracts": "workspace:*"
+    "@embed-agent/contracts": "workspace:*",
+    "@serialport/parser-readline": "^13.0.0",
+    "serialport": "^13.0.0"
   }
 }
