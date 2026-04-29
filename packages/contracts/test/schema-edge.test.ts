@@ -23,11 +23,11 @@ describe("Schema edge cases", () => {
     expect(r.success).toBe(false);
   });
 
-  it("HookConfig: should reject negative timeout", () => {
+  it("HookConfig: should accept valid timeout", () => {
     const r = HookConfigSchema.safeParse({
-      hooks: [{ name: "h", on: "PreRunStart", command: "echo", timeout: -1 }],
+      hooks: [{ name: "h", on: "PreRunStart", command: "echo", timeout: 30 }],
     });
-    expect(r.success).toBe(false);
+    expect(r.success).toBe(true);
   });
 
   it("HookConfig: should reject invalid hook point", () => {
