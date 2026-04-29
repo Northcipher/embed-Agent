@@ -3,6 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "artifact-validation-runtime": "./dist/cli.js",
+    "artifact-validation-runtime-server": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -11,6 +15,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --config ../../vitest.config.ts --dir . test/*.test.ts"
   },

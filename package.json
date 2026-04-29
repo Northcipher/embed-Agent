@@ -13,7 +13,9 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "lint": "pnpm -r --if-present lint",
-    "check": "pnpm typecheck && pnpm test"
+    "check": "pnpm typecheck && pnpm test",
+    "runtime:dev": "pnpm --filter @artifact-validation/runtime-server dev",
+    "runtime:start": "pnpm --filter @artifact-validation/runtime-server start"
   },
   "devDependencies": {
     "@types/node": "^25.0.3",

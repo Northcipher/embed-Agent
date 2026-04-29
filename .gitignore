@@ -9,4 +9,6 @@ dist/
 !.env.example
 
 .quickdep/
-.artifact-agent/
+.artifact-agent*/
+tmp/
+_perm_test
