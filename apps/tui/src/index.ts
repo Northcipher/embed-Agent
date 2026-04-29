@@ -1,9 +1,15 @@
 #!/usr/bin/env node
-// Embed Agent TUI — terminal dashboard
-// Uses Ink (React terminal UI) when installed: npx ink apps/tui/src/index.tsx
+import { render, Box, Text } from "ink";
+import React from "react";
 
-console.log("Embed Agent");
-console.log("─────────────────────────────");
-console.log("Runs:     0 active");
-console.log("Targets:  0 idle");
-console.log("Cost:     $0.00");
+function App() {
+  return React.createElement(Box, { flexDirection: "column", padding: 1 },
+    React.createElement(Text, { bold: true, color: "green" }, "Embed Agent"),
+    React.createElement(Box, { marginTop: 1 },
+      React.createElement(Text, {}, "Runs: 0  |  Targets: 0  |  Cost: $0.00")
+    ),
+    React.createElement(Text, { dimColor: true }, "Press q to quit"),
+  );
+}
+
+render(React.createElement(App));
