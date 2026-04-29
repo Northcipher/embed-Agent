@@ -1,1 +1,1 @@
-// @embed-agent/mcp-server
+// Embed Agent MCP Server
