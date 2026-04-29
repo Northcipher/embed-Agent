@@ -85,6 +85,9 @@ importers:
 
   packages/agent:
     dependencies:
+      '@anthropic-ai/sdk':
+        specifier: ^0.91.1
+        version: 0.91.1(zod@4.3.6)
       '@embed-agent/contracts':
         specifier: workspace:*
         version: link:../contracts
