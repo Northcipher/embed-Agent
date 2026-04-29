@@ -90,4 +90,31 @@ export class RuleDetector {
       }
     }
   }
+
+  checkTimeout(stepId: string, elapsedSec: number, timeoutSec: number): void {
+    if (elapsedSec >= timeoutSec) {
+      this.eventBus.emit({
+        type: "step_timeout",
+        rule_id: "step_timeout",
+        severity: "warning",
+        source: "rule_detector",
+        step_id: stepId,
+        summary: `Step ${stepId} timed out after ${elapsedSec}s`,
+        payload: { elapsed_sec: elapsedSec, timeout_sec: timeoutSec },
+      });
+    }
+  }
+
+  checkConnectivity(connectionState: string): void {
+    if (connectionState === "disconnected" || connectionState === "error") {
+      this.eventBus.emit({
+        type: "target_state_changed",
+        rule_id: "connectivity_lost",
+        severity: "warning",
+        source: "rule_detector",
+        summary: `Connection state: ${connectionState}`,
+        payload: { state: connectionState },
+      });
+    }
+  }
 }
