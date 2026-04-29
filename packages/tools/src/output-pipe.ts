@@ -1,8 +1,11 @@
-import type { EventBus } from "@embed-agent/contracts";
-
-// Minimal EventBus interface for OutputPipe
+// Minimal interfaces for dependency injection
 interface OutputEventEmitter {
   emit(event: Record<string, unknown>): void;
+}
+
+interface RingBufferInput {
+  push(line: string): void;
+  totalPushed(): number;
 }
 
 export class OutputPipe {
@@ -12,7 +15,7 @@ export class OutputPipe {
 
   constructor(
     private evidenceWriter: { append(data: string): void },
-    private ringBuffer: { push(line: string): void },
+    private ringBuffer: RingBufferInput,
     private ruleDetector: { detect(line: string, lineIndex: number): void; checkExitCode?(code: number): void },
     private aggregator: { feed(line: string): void; onExecComplete?(stepId: string): void },
     private eventBus: OutputEventEmitter,
