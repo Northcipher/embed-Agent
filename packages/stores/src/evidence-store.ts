@@ -103,12 +103,12 @@ export class EvidenceStore {
   }
 
   private refToFileName(ref: string): string {
-    if (ref.startsWith("serial:")) return "serial.log";
-    if (ref.startsWith("dmesg:")) return "dmesg.log";
-    if (ref.startsWith("logcat:")) return "logcat.log";
-    if (ref.startsWith("adb-")) return `${ref.split(":")[0]}.json`;
-    if (ref.startsWith("flash:")) return "flash.log";
     if (ref.includes("last") || ref.includes("window")) return `snapshots/${ref.replace(/:/g, "-")}.log`;
+    if (ref === "serial:full") return "serial.log";
+    if (ref === "dmesg:full") return "dmesg.log";
+    if (ref === "logcat:full") return "logcat.log";
+    if (ref === "flash:full") return "flash.log";
+    if (ref.startsWith("adb-")) return `${ref.split(":")[0]}.json`;
     return `${ref.replace(/:/g, "-")}.log`;
   }
 
