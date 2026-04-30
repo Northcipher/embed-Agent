@@ -218,6 +218,10 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   // 11. CommandHandler — fully wired
   const handler = new CommandHandler(rm, views);
 
+  // Recover from previous crash — stale runs + lock cleanup
+  rm.setEventReader?.({ read: (rid: string, afterSeq?: number, limit?: number) => eventStore.read(rid, afterSeq, limit) });
+  await rm.recoverOnStartup().catch((e) => log.warn(`Crash recovery failed: ${(e as Error).message}`));
+
   log.info("Bootstrap complete — Embed Agent ready");
 
   return {

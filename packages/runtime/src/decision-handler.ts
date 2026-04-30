@@ -87,7 +87,7 @@ export class DecisionHandler {
 
     this.unsub?.();
     this.unsub = this.eb.subscribe(
-      ["rule_matched", "checkpoint", "correlated", "baseline_diff", "human_note"],
+      ["rule_matched", "checkpoint", "correlated", "baseline_diff", "human_note", "target_state_changed"],
       e => { this.handleEvent(e); },
     );
   }
