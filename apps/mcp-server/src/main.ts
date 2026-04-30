@@ -1,97 +1,139 @@
-// MCP Server — thin entry point. All functionality lives in the CLI bootstrap.
+// MCP Server — thin entry point. All functionality in CLI bootstrap.
 import { bootstrap } from "@embed-agent/cli";
 import { createMcpServer, type McpTransport } from "./server.js";
 
 const { handler } = await bootstrap();
 
 const handlers = {
-  validate_artifact: async (input: Record<string, unknown>) => {
-    const context = (input.context ?? {}) as Record<string, unknown>;
-    const mcpCtx: { task: string; expected: string; concerns?: string[]; what_changed?: string; test_hint?: { kind: string; command: string; timeout_sec?: number; expected_exit_code?: number } } = {
-      task: (context.task as string) ?? "",
-      expected: (context.expected as string) ?? "",
-    };
-    if (context.concerns) mcpCtx.concerns = context.concerns as string[];
-    if (context.what_changed) mcpCtx.what_changed = context.what_changed as string;
-    if (context.test_hint) mcpCtx.test_hint = context.test_hint as { kind: string; command: string; timeout_sec?: number; expected_exit_code?: number };
+  list_targets: async () => {
+    const targets = await handler.targetList();
+    const result = targets.map(t => {
+      const caps: string[] = [];
+      if (t.serial === "connected") caps.push("serial_output");
+      if (t.adb === "online") caps.push("shell_exec", "wait_adb", "collect_logs", "push");
+      if (t.fastboot === "connected") caps.push("flash");
+      return { target_id: t.target_id, state: t.state, capabilities: caps, connections: { serial: t.serial, adb: t.adb, fastboot: t.fastboot }, current_run_id: t.current_run_id };
+    });
+    const active = result.filter(t => t.current_run_id).map(t => `${t.target_id}(${t.current_run_id})`).join(", ");
+    return { summary: `${result.length} target(s)${active ? `. Active: ${active}` : ""}`, data: { targets: result } };
+  },
 
-    const mcpInput = {
-      context: mcpCtx,
-      artifact: (input.artifact ?? {}) as { path: string; type: string },
+  get_target_capabilities: async (input: Record<string, unknown>) => {
+    const r = await handler.getTargetCapabilities((input.target as string) ?? "");
+    if ("status" in r && r.status === "error") {
+      return { summary: `Target "${input.target}" not found`, data: { target: input.target as string, state: "unknown", capabilities: [], connections: { serial: "unknown", adb: "unknown", fastboot: "unknown" } } };
+    }
+    const t = r as { target: string; runtime_state: Record<string, unknown>; capabilities: string[] };
+    return { summary: `${t.target}: ${t.runtime_state.state}, serial=${t.runtime_state.serial}, adb=${t.runtime_state.adb}`, data: { target: t.target, state: t.runtime_state.state as string, capabilities: t.capabilities, connections: { serial: t.runtime_state.serial as string, adb: t.runtime_state.adb as string, fastboot: t.runtime_state.fastboot as string }, current_run_id: t.runtime_state.current_run_id as string | undefined } };
+  },
+
+  validate_artifact: async (input: Record<string, unknown>) => {
+    const ctx: Record<string, unknown> = {
+      task: (input.expected as string) ?? "Validate device",
+      expected: (input.expected as string) ?? "",
+    };
+    if (input.concerns) ctx.concerns = input.concerns;
+    if (input.test_hint) ctx.test_hint = { kind: "adb_shell", command: input.test_hint as string };
+
+    const mcpInput: Record<string, unknown> = {
+      context: ctx as { task: string; expected: string },
+      artifact: { path: (input.artifact_path as string) ?? "", type: (input.artifact_type as string) ?? "" },
       target: (input.target as string) ?? "",
-    } as Parameters<typeof handler.validateFromMcp>[0];
-    if (input.constraints) (mcpInput as Record<string, unknown>).constraints = input.constraints;
-    return handler.validateFromMcp(mcpInput);
+    };
+    const cstr: Record<string, unknown> = {};
+    if (input.max_duration_sec != null) cstr.max_duration_sec = input.max_duration_sec;
+    if (input.allow_flash != null) cstr.allow_flash = input.allow_flash;
+    if (input.no_flash != null) cstr.no_flash = input.no_flash;
+    if (input.continuous != null) cstr.continuous = input.continuous;
+    if (Object.keys(cstr).length > 0) mcpInput.constraints = cstr;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result: any = await (handler as any).validateFromMcp(mcpInput);
+    const summary = result.status === "accepted" ? `Run ${result.run_id} started on ${input.target}` : `${result.status}: ${result.reasons?.join(", ") ?? "see details"}`;
+    return { summary, data: result };
   },
 
   get_run_status: async (input: Record<string, unknown>) => {
-    return handler.status((input.run_id as string) ?? "");
+    const s = await handler.status((input.run_id as string) ?? "");
+    if (!s) return { summary: `Run "${input.run_id}" not found`, data: { run_id: input.run_id as string, state: "unknown", elapsed_sec: 0, last_event_seq: 0, evidence_path: "" } };
+    return { summary: `${s.run_id}: ${s.state}, ${s.elapsed_sec}s elapsed${s.current_step ? `, step: ${s.current_step.id}` : ""}`, data: { run_id: s.run_id, state: s.state, current_step: s.current_step, elapsed_sec: s.elapsed_sec, last_event_seq: 0, evidence_path: "" } };
   },
 
   watch_run: async (input: Record<string, unknown>) => {
     const runId = (input.run_id as string) ?? "";
-    const waitSec = Math.min((input.wait_sec as number) ?? 5, 30); // max 30s
-    const afterSeq = (input.after_seq as number) ?? 0;
+    const waitSec = Math.min((input.wait_sec as number) ?? 5, 30);
     const deadline = Date.now() + waitSec * 1000;
-    let cursor = afterSeq;
+    let cursor = (input.after_seq as number) ?? 0;
 
     while (Date.now() < deadline) {
       const s = await handler.events(runId, cursor, 100);
       if (s.events.length > 0) {
         const status = await handler.status(runId);
-        return { run_id: runId, status: status?.state ?? "unknown", events: s.events, next_after_seq: s.next_after_seq };
+        return { summary: `${s.events.length} new events. Run is ${status?.state ?? "unknown"}`, data: { run_id: runId, state: status?.state ?? "unknown", events: s.events, next_after_seq: s.next_after_seq } };
       }
       await new Promise(r => setTimeout(r, 1000));
     }
-    // Timeout — return empty
     const status = await handler.status(runId);
-    return { run_id: runId, status: status?.state ?? "unknown", events: [], next_after_seq: afterSeq };
+    return { summary: `No new events within ${waitSec}s. Run is ${status?.state ?? "unknown"}`, data: { run_id: runId, state: status?.state ?? "unknown", events: [], next_after_seq: cursor } };
   },
 
   get_run_events: async (input: Record<string, unknown>) => {
-    return handler.events((input.run_id as string) ?? "", (input.after_seq as number) ?? 0, (input.limit as number) ?? 100, input.types as string[] | undefined);
+    const runId = (input.run_id as string) ?? "";
+    const s = await handler.events(runId, (input.after_seq as number) ?? 0, (input.limit as number) ?? 100, input.types as string[] | undefined);
+    const status = await handler.status(runId);
+    return { summary: `${s.events.length} event(s), has_more=${s.has_more}. Run is ${status?.state ?? "unknown"}`, data: { run_id: runId, state: status?.state ?? "unknown", events: s.events, next_after_seq: s.next_after_seq, has_more: s.has_more } };
   },
 
   get_evidence: async (input: Record<string, unknown>) => {
-    return handler.evidence((input.run_id as string) ?? "", input.ref as string | undefined);
+    const runId = (input.run_id as string) ?? "";
+    const ref = input.ref as string | undefined;
+    const r = await handler.evidence(runId, ref);
+    if (ref) {
+      return { summary: r.available ? `Evidence "${ref}": ${(r as { content?: string }).content?.length ?? 0} chars` : `Evidence "${ref}" not available`, data: { available: r.available, ref, content: (r as { content?: string }).content, truncated: ((r as { content?: string }).content?.length ?? 0) > 50000 } };
+    }
+    const idx = (r as { index?: { refs: unknown[] } }).index;
+    return { summary: `Evidence index: ${idx?.refs?.length ?? 0} refs available`, data: { available: r.available, index: idx } };
   },
 
   get_run_result: async (input: Record<string, unknown>) => {
-    return handler.result((input.run_id as string) ?? "");
+    const runId = (input.run_id as string) ?? "";
+    const r = await handler.result(runId);
+    const state = r.state ?? "unknown";
+    const verdict = state === "completed" ? "pass" as const : state === "failed" ? "fail" as const : state === "cancelled" ? "cancelled" as const : state === "running" ? "inconclusive" as const : "blocked" as const;
+    return {
+      summary: `${verdict.toUpperCase()}: ${r.summary ?? "no summary"}`,
+      data: {
+        run_id: runId, verdict, state, confidence: verdict === "pass" ? 0.9 : 0.5,
+        summary: r.summary ?? "", suggested_next: r.suggested_next ?? "check evidence", result_available: r.result_available,
+        checks: (r.key_evidence ?? []).map((ke: { summary: string; evidence_refs: string[] }, i: number) => ({ id: `check-${i}`, title: ke.summary, status: "fail" as const, reason: ke.summary, evidence_refs: ke.evidence_refs })),
+        key_evidence: r.key_evidence ?? [],
+      },
+    };
   },
 
   intervene_run: async (input: Record<string, unknown>) => {
     const runId = (input.run_id as string) ?? "";
     const action = (input.action as string) ?? "";
-    if (action === "pause") return handler.pause(runId, (input.reason as string) ?? "MCP");
-    if (action === "resume") return handler.resume(runId);
-    if (action === "cancel") return handler.cancel(runId, (input.reason as string) ?? "MCP");
-    if (action === "add_instruction") return handler.addInstruction(runId, (input.instruction as string) ?? "");
-    if (action === "ignore_rule") return handler.ignoreRule(runId, (input.rule_id as string) ?? "");
-    if (action === "override") return handler.override(runId, ((input.decision as string) ?? "continue") as "continue" | "stop" | "cancel", input.reason as string | undefined);
-    return { run_id: runId, accepted: false, action };
+    const reason = (input.reason as string) ?? "MCP agent intervention";
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let result: { accepted: boolean; run_id: string; action: string; reason?: string };
+    if (action === "pause") { const r = await (handler as any).pause(runId, reason); result = "status" in r ? { accepted: false, run_id: runId, action, reason: r.message ?? "failed" } : { accepted: r.accepted, run_id: runId, action }; }
+    else if (action === "resume") { const r = await (handler as any).resume(runId); result = "status" in r ? { accepted: false, run_id: runId, action, reason: r.message ?? "failed" } : { accepted: r.accepted, run_id: runId, action }; }
+    else if (action === "cancel") { const r = await (handler as any).cancel(runId, reason); result = "status" in r ? { accepted: false, run_id: runId, action, reason: r.message ?? "failed" } : { accepted: r.accepted, run_id: runId, action }; }
+    else if (action === "add_instruction") { const r = await (handler as any).addInstruction(runId, (input.instruction as string) ?? ""); result = "status" in r ? { accepted: false, run_id: runId, action, reason: r.message ?? "failed" } : { accepted: r.accepted, run_id: runId, action }; }
+    else if (action === "ignore_rule") { const r = await (handler as any).ignoreRule(runId, (input.rule_id as string) ?? ""); result = "status" in r ? { accepted: false, run_id: runId, action, reason: r.message ?? "failed" } : { accepted: r.accepted, run_id: runId, action }; }
+    else if (action === "override") { const r = await (handler as any).override(runId, ((input.decision as string) ?? "continue") as "continue" | "stop" | "cancel", reason); result = "status" in r ? { accepted: false, run_id: runId, action, reason: r.message ?? "failed" } : { accepted: r.accepted, run_id: runId, action }; }
+    else { result = { accepted: false, run_id: runId, action, reason: "Unknown action" }; }
+    return { summary: result.accepted ? `${action} accepted for ${runId}` : `${action} rejected for ${runId}: ${result.reason}`, data: result };
   },
 
   cancel_run: async (input: Record<string, unknown>) => {
     const runId = (input.run_id as string) ?? "";
-    return handler.cancel(runId, (input.reason as string) ?? "MCP");
-  },
-
-  get_target_capabilities: async (input: Record<string, unknown>) => {
-    return handler.getTargetCapabilities((input.target as string) ?? "");
-  },
-
-  list_targets: async () => {
-    const targets = await handler.targetList();
-    const result: { target_id: string; state: string; serial: string; adb: string; fastboot: string; current_run_id?: string; capabilities: string[] }[] = [];
-    for (const t of targets) {
-      const caps: string[] = [];
-      if (t.serial === "connected") caps.push("serial_output");
-      if (t.adb === "online") caps.push("shell_exec", "wait_adb", "collect_logs", "push");
-      if (t.fastboot === "connected") caps.push("flash");
-      result.push({ ...t, capabilities: caps });
-    }
-    return { targets: result, summary: `${result.length} target(s) configured` };
+    const reason = (input.reason as string) ?? "MCP agent";
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r = await (handler as any).cancel(runId, reason);
+    const accepted = "status" in r ? false : r.accepted;
+    return { summary: accepted ? `Run ${runId} cancelled` : `Failed to cancel ${runId}`, data: { run_id: runId, accepted, status: accepted ? "cancelling" : "error" } };
   },
 };
 

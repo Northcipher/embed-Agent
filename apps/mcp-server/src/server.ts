@@ -125,8 +125,12 @@ async function handleToolCall(
 }
 
 function createToolResult(value: unknown, isError = false): { content: { type: "text"; text: string }[]; isError?: boolean } {
+  // If value has summary+data shape, render both. Otherwise just serialize.
+  const text = isRecord(value) && "summary" in value && "data" in value
+    ? `${value.summary}\n\n${JSON.stringify(value.data, null, 2)}`
+    : JSON.stringify(value);
   return {
-    content: [{ type: "text", text: JSON.stringify(value) }],
+    content: [{ type: "text", text }],
     ...(isError ? { isError: true } : {}),
   };
 }

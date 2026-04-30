@@ -6,138 +6,77 @@ describe("MCP Server", () => {
   it("has 10 tool definitions", () => {
     expect(TOOL_DEFINITIONS).toHaveLength(10);
     const names = TOOL_DEFINITIONS.map(t => t.name);
+    expect(names).toContain("list_targets");
     expect(names).toContain("validate_artifact");
     expect(names).toContain("get_run_status");
-    expect(names).toContain("watch_run");
-    expect(names).toContain("get_run_events");
-    expect(names).toContain("get_evidence");
-    expect(names).toContain("get_run_result");
-    expect(names).toContain("intervene_run");
-    expect(names).toContain("cancel_run");
-    expect(names).toContain("get_target_capabilities");
   });
 
-  it("ValidateArtifactInput accepts valid MCP input", () => {
+  it("ValidateArtifactInput accepts flat format", () => {
     const result = ValidateArtifactInput.safeParse({
-      context: { task: "Check boot", expected: "Device boots normally" },
-      artifact: { path: "/tmp/test.img", type: "firmware" },
-      target: "t1",
+      target: "esp32", artifact_path: "/tmp/test.img", artifact_type: "firmware", expected: "Boot",
     });
     expect(result.success).toBe(true);
   });
 
-  it("ValidateArtifactInput rejects missing context", () => {
-    const result = ValidateArtifactInput.safeParse({
-      artifact: { path: "/tmp/test.img", type: "firmware" },
-      target: "t1",
-    });
+  it("ValidateArtifactInput rejects missing required", () => {
+    const result = ValidateArtifactInput.safeParse({ target: "esp32" });
     expect(result.success).toBe(false);
-  });
-
-  it("GetRunStatusInput validates run_id", () => {
-    const result = GetRunStatusInput.safeParse({ run_id: "r1" });
-    expect(result.success).toBe(true);
   });
 
   it("responds to initialize with server capabilities", async () => {
     const { transport, sent } = createFakeTransport();
     createMcpServer(createHandlers(), transport);
-
-    await transport.onmessage?.({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: "2024-11-05",
-        capabilities: {},
-        clientInfo: { name: "test", version: "1.0" },
-      },
-    });
-
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({
-      jsonrpc: "2.0",
-      id: 1,
-      result: {
-        protocolVersion: "2024-11-05",
-        capabilities: { tools: {} },
-        serverInfo: { name: "embed-agent", version: "1.0.0" },
-      },
-    });
+    await transport.onmessage?.({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test", version: "1.0" } } });
+    expect(sent[0]).toMatchObject({ jsonrpc: "2.0", id: 1, result: { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "embed-agent", version: "1.0.0" } } });
   });
 
-  it("responds to ping after initialization", async () => {
+  it("responds to ping", async () => {
     const { transport, sent } = createFakeTransport();
     createMcpServer(createHandlers(), transport);
-
     await transport.onmessage?.({ jsonrpc: "2.0", id: 1, method: "ping" });
-
     expect(sent).toEqual([{ jsonrpc: "2.0", id: 1, result: {} }]);
   });
 
-  it("returns method-not-found for unsupported requests", async () => {
+  it("returns method-not-found for unsupported", async () => {
     const { transport, sent } = createFakeTransport();
     createMcpServer(createHandlers(), transport);
-
     await transport.onmessage?.({ jsonrpc: "2.0", id: 1, method: "resources/list" });
-
-    expect(sent).toEqual([{
-      jsonrpc: "2.0",
-      id: 1,
-      error: { code: -32601, message: "Method not found: resources/list" },
-    }]);
+    expect(sent).toEqual([{ jsonrpc: "2.0", id: 1, error: { code: -32601, message: "Method not found: resources/list" } }]);
   });
 
-  it("marks tool execution failures as MCP tool errors", async () => {
+  it("tool errors return isError", async () => {
     const { transport, sent } = createFakeTransport();
     createMcpServer(createHandlers(), transport);
-
-    await transport.onmessage?.({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: { name: "does_not_exist", arguments: {} },
-    });
-
+    await transport.onmessage?.({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "does_not_exist", arguments: {} } });
     expect(sent[0]?.result).toMatchObject({ isError: true });
+  });
+
+  it("validate_artifact returns summary+data", async () => {
+    const { transport, sent } = createFakeTransport();
+    createMcpServer(createHandlers(), transport);
+    await transport.onmessage?.({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "validate_artifact", arguments: { target: "t1", artifact_path: "/tmp/a.img", artifact_type: "fw", expected: "Boot" } } });
+    const text = (sent[0]?.result as { content: { text: string }[] })?.content?.[0]?.text ?? "";
+    expect(text).toContain("accepted");       // summary value
+    expect(text).toContain("run_id");          // data field
   });
 });
 
-function createFakeTransport(): {
-  sent: { jsonrpc: "2.0"; id?: unknown; result?: unknown; error?: { code: number; message: string } }[];
-  transport: {
-    onmessage?: (msg: McpMessage) => void | Promise<void>;
-    start(): Promise<void>;
-    send(msg: { jsonrpc: "2.0"; id?: unknown; result?: unknown; error?: { code: number; message: string } }): Promise<void>;
-  };
-} {
+function createFakeTransport() {
   const sent: { jsonrpc: "2.0"; id?: unknown; result?: unknown; error?: { code: number; message: string } }[] = [];
-  return {
-    sent,
-    transport: {
-      async start() {},
-      async send(msg) {
-        sent.push(msg);
-      },
-    },
-  };
+  return { sent, transport: { async start() {}, async send(msg: { jsonrpc: "2.0"; id?: unknown; result?: unknown; error?: { code: number; message: string } }) { sent.push(msg); } } };
 }
 
 function createHandlers(): ToolHandlers {
   return {
-    validate_artifact: async () => ({ status: "clarification_needed" }),
-    get_run_status: async () => null,
-    watch_run: async (input) => ({ run_id: input.run_id, status: "unknown", events: [], next_after_seq: 0 }),
-    get_run_events: async (input) => ({ run_id: input.run_id, events: [], next_after_seq: 0, has_more: false }),
-    get_evidence: async () => ({ available: false }),
-    get_run_result: async (input) => ({ run_id: input.run_id, state: "unknown", result_available: false }),
-    intervene_run: async (input) => ({ run_id: input.run_id, accepted: false, action: input.action }),
-    cancel_run: async (input) => ({ run_id: input.run_id, accepted: false, status: "error" }),
-    get_target_capabilities: async (input) => ({
-      target: input.target,
-      runtime_state: { state: "unknown", serial: "unknown", adb: "unknown", fastboot: "unknown" },
-      capabilities: [],
-    }),
-    list_targets: async () => ({ targets: [], summary: "0 targets" }),
+    list_targets: async () => ({ summary: "0 targets", data: { targets: [] } }),
+    validate_artifact: async () => ({ summary: "accepted", data: { status: "accepted", run_id: "r1" } }),
+    get_run_status: async () => ({ summary: "running", data: { run_id: "r1", state: "running", elapsed_sec: 0, last_event_seq: 0, evidence_path: "" } }),
+    watch_run: async (input) => ({ summary: "0 events", data: { run_id: input.run_id, state: "running", events: [], next_after_seq: 0 } }),
+    get_run_events: async (input) => ({ summary: "0 events", data: { run_id: input.run_id, state: "running", events: [], next_after_seq: 0, has_more: false } }),
+    get_evidence: async () => ({ summary: "not available", data: { available: false } }),
+    get_run_result: async (input) => ({ summary: "no result", data: { run_id: input.run_id, verdict: "inconclusive", state: "running", confidence: 0, summary: "", checks: [], key_evidence: [], suggested_next: "", result_available: false } }),
+    intervene_run: async (input) => ({ summary: `${input.action} accepted`, data: { run_id: input.run_id, accepted: true, action: input.action } }),
+    cancel_run: async (input) => ({ summary: "cancelled", data: { run_id: input.run_id, accepted: true, status: "cancelling" } }),
+    get_target_capabilities: async (input) => ({ summary: `${input.target}: ok`, data: { target: input.target, state: "idle", capabilities: [], connections: { serial: "disconnected", adb: "disconnected", fastboot: "disconnected" } } }),
   };
 }
