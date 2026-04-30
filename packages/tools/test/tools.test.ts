@@ -73,15 +73,19 @@ describe("RuleDetector", () => {
     expect(events2).toHaveLength(0);
   });
 
-  it("emits without evidence_refs when saveWindow fails", async () => {
+  it("emits failure trail + rule_matched without evidence_refs when saveWindow fails", async () => {
     const events: Record<string, unknown>[] = [];
     const failingSaver = { saveWindow: async () => { throw new Error("disk full"); } };
     const rd = new RuleDetector(new RingBuffer(), { emit: e => events.push(e) }, failingSaver, "r1");
     rd.loadRunRules(rules, [], []);
     rd.detect("kernel panic!", 0);
     await rd.flushAllPending();
-    expect(events).toHaveLength(1);
-    expect(events[0].evidence_refs).toBeUndefined();
+    // 1 evidence failure trail + 1 rule_matched without refs
+    expect(events).toHaveLength(2);
+    const failureEvent = events.find(e => e.type === "evidence_collected");
+    expect(failureEvent).toBeDefined();
+    const ruleEvent = events.find(e => e.type === "rule_matched");
+    expect(ruleEvent?.evidence_refs).toBeUndefined();
   });
 
   it("after_lines deferred until enough lines buffered", async () => {

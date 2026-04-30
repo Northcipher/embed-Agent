@@ -42,9 +42,11 @@ export class TargetManager {
     const conn = this.cm.get(t, method as Transport);
     if (!conn?.exec) return false;
 
-    // 1. Issue reboot
-    try { await conn.exec("reboot", 30); }
-    catch { return false; }
+    // 1. Issue reboot — check exit_code since exec may not throw on failure
+    try {
+      const result = await conn.exec("reboot", 30);
+      if (result.exit_code !== 0) return false;
+    } catch { return false; }
 
     // 2. Wait for device to come back online (poll with backoff)
     const deadline = Date.now() + 120_000; // 2 min max

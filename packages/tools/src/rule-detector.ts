@@ -88,7 +88,15 @@ export class RuleDetector {
       try {
         await this.evidence.saveWindow(this.runId, p.ref, window.join("\n"));
         evidenceSaved = true;
-      } catch { /* evidence write failed — emit without ref */ }
+      } catch (e) {
+        // Evidence write failed — emit failure trail before emitting rule without refs
+        this.eb.emit({
+          type: "evidence_collected", run_id: this.runId, source: "rule_detector",
+          severity: "warning",
+          summary: `Evidence write failed for ref "${p.ref}": ${(e as Error).message}`,
+          payload: { ref: p.ref, rule_id: p.rule.id, error: (e as Error).message },
+        });
+      }
     }
 
     this.eb.emit({
