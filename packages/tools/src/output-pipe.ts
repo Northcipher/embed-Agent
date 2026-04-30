@@ -70,7 +70,7 @@ export class OutputPipe {
     await this.rd.flushAllPending();
     this.rd.checkExitCode?.(exitCode);
     this.eb.emit({ type: "observation", run_id: this.runId, source: "output_pipe", summary: "exec complete", payload: { step_id: this.stepId, exit_code: exitCode } });
-    this.ag.onExecComplete?.(this.stepId);
+    this.ag.onExecComplete?.(this.stepId, exitCode, "exec");
   }
 
   async flush(): Promise<void> { await this.rd.flushAllPending(); }
