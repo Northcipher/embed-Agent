@@ -97,10 +97,10 @@ export class RunManager {
   private stepQueues = new Map<string, StepQueue>();
 
   // Factories injected by bootstrap — avoid stubs in executeRun
-  private executorFactory?: (runId: string, targetId: string) => StepExecutor;
+  private executorFactory?: (runId: string, targetId: string) => StepExecutor | Promise<StepExecutor>;
   private dhFactory?: (runId: string) => DecisionHandler;
 
-  setExecutorFactory(fn: (runId: string, targetId: string) => StepExecutor): void { this.executorFactory = fn; }
+  setExecutorFactory(fn: (runId: string, targetId: string) => StepExecutor | Promise<StepExecutor>): void { this.executorFactory = fn; }
   setDecisionHandlerFactory(fn: (runId: string) => DecisionHandler): void { this.dhFactory = fn; }
 
   constructor(
@@ -224,7 +224,12 @@ export class RunManager {
     // 5. ContextAssembler → Planner → Plan
     let planResult: PlanCallResult;
     try {
-      const ctx = await this.contextAssembler.assemblePlannerContext(runId);
+      const taskInfo: { task: string; expected: string; concerns?: string[] } = {
+        task: `Validate ${req.artifact.type} on ${req.target}`,
+        expected: req.expected,
+      };
+      if (req.concerns) taskInfo.concerns = req.concerns;
+      const ctx = await this.contextAssembler.assemblePlannerContext(runId, taskInfo);
       planResult = await this.planner.call(ctx.staticPrompt, ctx.dynamicContext);
     } catch (e) {
       return await this.rejectRun(runId, req.target, `Plan generation failed: ${(e as Error).message}`, "plan_rejected");
@@ -290,7 +295,7 @@ export class RunManager {
       throw new Error("executeRun called before executorFactory/dhFactory were injected — call setExecutorFactory/setDecisionHandlerFactory from bootstrap");
     }
 
-    const executor = this.executorFactory(runId, targetId);
+    const executor = await this.executorFactory(runId, targetId);
     const dh = this.dhFactory(runId);
 
     // Execute steps until done

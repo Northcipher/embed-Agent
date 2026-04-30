@@ -136,8 +136,9 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   const rm = new RunManager(runStore, targetStore, tm, eventBus, hm, contextAssembler, plannerAdapter, replyAdapter, dataRoot);
 
   // Inject executor/decision-handler factories — no stubs
-  rm.setExecutorFactory((runId: string, targetId: string) => {
-    const target = { target_id: targetId, connections: {} as Record<string, unknown> };
+  rm.setExecutorFactory(async (runId: string, targetId: string) => {
+    const profile = await targetStore.get(targetId);
+    const target = profile ?? { target_id: targetId, connections: {} as Record<string, unknown> };
     return new StepExecutor(runId, target, eventBus, hm, cm);
   });
   rm.setDecisionHandlerFactory((runId: string) => {
