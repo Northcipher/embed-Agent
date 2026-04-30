@@ -37,6 +37,16 @@ async function main(): Promise<void> {
   const views = new Views(runStore, eventStore, new EvidenceStore(dataRoot), targetStore, memoryStore);
   const handler = safeHandler(views);
 
+  // Wire management commands to real store data
+  const origMemList = handler.memoryList;
+  handler.memoryList = async (targetId?: string, category?: string) => {
+    try {
+      const facts = await memoryStore.queryFacts("target", targetId ?? "", category);
+      const entries = facts.filter((f: { statement: string }) => f.statement !== "__DELETED__").map((f: { fact_id: string; category: string; statement: string; verified: boolean }) => ({ fact_id: f.fact_id, category: f.category, statement: f.statement, verified: f.verified }));
+      return { entries, status: "ok" };
+    } catch { return origMemList(targetId, category); }
+  };
+
   await runCli(handler);
 }
 

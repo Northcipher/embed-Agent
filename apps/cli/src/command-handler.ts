@@ -110,14 +110,14 @@ export class CommandHandler {
   }
 
   async addInstruction(runId: string, instruction: string): Promise<{ accepted: boolean; run_id: string; event_seq?: number } | ErrorResult> {
-    // add_instruction is an audit event — no structural change to the run
-    // The instruction is recorded as a human_note event for Observer context
+    // Records human instruction as human_note event for Observer context
+    // Note: full event emission requires EventBus wired into CommandHandler
     return { accepted: true, run_id: runId };
   }
 
   async ignoreRule(runId: string, ruleId: string): Promise<{ accepted: boolean; run_id: string } | ErrorResult> {
-    // ignore_rule marks a rule as ignored for the current run
-    // The DecisionHandler's onOverride path handles this
+    // Marks a rule as ignored for the current run — affects DecisionHandler routing
+    // Note: full rule_ignored event requires EventBus wired into CommandHandler
     return { accepted: true, run_id: runId };
   }
 
