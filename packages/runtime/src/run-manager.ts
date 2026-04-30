@@ -30,7 +30,7 @@ interface PlanCallResult {
 }
 
 interface PlannerCaller {
-  call(staticPrompt: string, dynamicContext: Record<string, unknown>): Promise<PlanCallResult>;
+  call(staticPrompt: string, dynamicContext: Record<string, unknown>, runId?: string): Promise<PlanCallResult>;
 }
 
 interface AgentReply {
@@ -230,7 +230,7 @@ export class RunManager {
       };
       if (req.concerns) taskInfo.concerns = req.concerns;
       const ctx = await this.contextAssembler.assemblePlannerContext(runId, taskInfo);
-      planResult = await this.planner.call(ctx.staticPrompt, ctx.dynamicContext);
+      planResult = await this.planner.call(ctx.staticPrompt, ctx.dynamicContext, runId);
     } catch (e) {
       return await this.rejectRun(runId, req.target, `Plan generation failed: ${(e as Error).message}`, "plan_rejected");
     }
@@ -246,9 +246,19 @@ export class RunManager {
 
     const plan = planResult.plan!;
 
-    // 6. Validate plan
+    // 6. Validate plan — safety constraints
     if (!plan.steps || plan.steps.length === 0) {
       return await this.rejectRun(runId, req.target, "Plan rejected: no steps generated", "plan_rejected");
+    }
+    const allowFlash = req.constraints?.allow_flash ?? true;
+    const allowShell = req.constraints?.allow_shell_exec ?? true;
+    for (const step of plan.steps) {
+      if (step.action === "flash" && !allowFlash) {
+        return await this.rejectRun(runId, req.target, `Plan rejected: flash step "${step.id}" blocked by allow_flash=false`, "plan_rejected");
+      }
+      if (step.capability === "shell_exec" && !allowShell) {
+        return await this.rejectRun(runId, req.target, `Plan rejected: shell_exec step "${step.id}" blocked by allow_shell_exec=false`, "plan_rejected");
+      }
     }
 
     // 7. Pre-flight — derive required transports from plan steps

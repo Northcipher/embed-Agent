@@ -11,6 +11,7 @@ interface EventStoreReader {
 
 interface TargetStoreReader {
   get(targetId: string): Promise<{ target_id: string; display_name?: string; target_hints?: Record<string, unknown>; connections: Record<string, unknown> } | null>;
+  getState?(targetId: string): Promise<{ serial: string; adb: string; state: string } | null>;
 }
 
 interface SkillReader {
@@ -20,7 +21,7 @@ interface SkillReader {
 
 interface MemoryReader {
   listByTarget(targetId: string, limit?: number): Promise<{ episode_id: string; summary: string; result: string; key_evidence: { summary: string; refs: string[] }[]; suggestions: string[]; pitfalls: string[] }[]>;
-  queryFacts(scope: string, scopeId: string, category?: string, verifiedOnly?: boolean): Promise<{ fact_id: string; category: string; statement: string; verified: boolean }[]>;
+  queryFacts(scope: string, scopeId: string, category?: string, verifiedOnly?: boolean): Promise<{ fact_id: string; category: string; statement: string; verified: boolean; extended_pattern?: string }[]>;
   readWorkingMemory(runId: string): Promise<{ key: string; summary: string; source: string }[]>;
 }
 
@@ -46,11 +47,14 @@ export interface ObserverContext {
   staticPrompt: string;
   input: {
     run?: { state: string; elapsed_sec: number; current_step_id?: string };
+    target?: { serial_state: string; adb_state: string };
     triggering_event: EventRecord;
-    recent_events: EventRecord[];
+    signals: { type: string; summary: string; severity?: string }[];
+    evidence_windows: { ref: string; text: string }[];
+    checkpoint_history: { metrics: Record<string, number>; trend: string }[];
     memory: {
       working_memory: { key: string; summary: string; source: string }[];
-      known_issues: { fact_id: string; category: string; statement: string }[];
+      known_issues: { fact_id: string; category: string; statement: string; extended_pattern?: string }[];
     };
     constraints: { remaining_sec: number; allowed_capabilities: string[] };
     circuit_breaker_active: boolean;
@@ -143,10 +147,11 @@ export class ContextAssembler {
     const run = await this.runStore.get(runId);
     const targetId = run?.target_id ?? "";
 
-    const [recentEvents, wm, facts] = await Promise.all([
+    const [recentEvents, wm, facts, ts] = await Promise.all([
       this.eventStore.read(runId, Math.max(0, triggeringEvent.seq - 100), 50),
       this.memory.readWorkingMemory(runId),
-      this.memory.queryFacts("target", targetId, undefined, true),
+      this.memory.queryFacts("target", targetId, "known_issue", true),
+      targetId ? (this.targetStore.getState?.(targetId) ?? Promise.resolve(null)) : Promise.resolve(null),
     ]);
 
     const runObj: { state: string; elapsed_sec: number; current_step_id?: string } = {
@@ -154,22 +159,29 @@ export class ContextAssembler {
     };
     if (run?.current_step_id) runObj.current_step_id = run.current_step_id;
 
-    return {
-      staticPrompt: this.observerPrompt,
-      input: {
-        run: runObj,
-        triggering_event: triggeringEvent,
-        recent_events: recentEvents,
-        memory: {
-          working_memory: wm.map(w => ({ key: w.key, summary: w.summary, source: w.source })),
-          known_issues: facts.map(f => ({
-            fact_id: f.fact_id, category: f.category, statement: f.statement,
-          })),
-        },
-        constraints: { remaining_sec: 600, allowed_capabilities: [] },
-        circuit_breaker_active: circuitBreakerActive,
-        warning_escalation: warningEscalation,
+    const inputObj: ObserverContext["input"] = {
+      run: runObj,
+      triggering_event: triggeringEvent,
+      signals: recentEvents.filter((e: EventRecord) => e.severity === "warning" || e.severity === "fatal").map((e: EventRecord) => {
+        const s: { type: string; summary: string; severity?: string } = { type: e.type, summary: e.summary };
+        if (e.severity) s.severity = e.severity;
+        return s;
+      }),
+      evidence_windows: [],
+      checkpoint_history: [],
+      memory: {
+        working_memory: wm.map((w: { key: string; summary: string; source: string }) => ({ key: w.key, summary: w.summary, source: w.source })),
+        known_issues: facts.map((f: { fact_id: string; category: string; statement: string; extended_pattern?: string }) => ({
+          fact_id: f.fact_id, category: f.category, statement: f.statement,
+          ...(f.extended_pattern ? { extended_pattern: f.extended_pattern } : {}),
+        })),
       },
+      constraints: { remaining_sec: 600, allowed_capabilities: [] },
+      circuit_breaker_active: circuitBreakerActive,
+      warning_escalation: warningEscalation,
     };
+    if (ts) inputObj.target = { serial_state: ts.serial, adb_state: ts.adb };
+
+    return { staticPrompt: this.observerPrompt, input: inputObj };
   }
 }

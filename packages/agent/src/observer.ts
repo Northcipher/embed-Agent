@@ -77,15 +77,22 @@ export class Observer {
     return decision;
   }
 
-  /** Check if the triggering event matches any known issue pattern (semantic variant). */
+  /** Check if the triggering event matches any known issue (via extended_pattern regex, or keyword fallback). */
   private matchKnownIssue(input: ObserverInput): string | null {
     const eventSummary = (input.triggering_event.summary as string) ?? "";
     const eventType = (input.triggering_event.type as string) ?? "";
     for (const issue of input.memory.known_issues) {
-      // Simple keyword match — extended_pattern would use regex
+      // Prefer extended_pattern (compiled regex) for precise matching
+      const pattern = (issue as Record<string, unknown>).extended_pattern as string | undefined;
+      if (pattern) {
+        try {
+          if (new RegExp(pattern).test(eventSummary)) return issue.statement;
+        } catch { /* invalid regex, fall through */ }
+      }
+      // Keyword fallback for known_issues without extended_pattern
       const keywords = issue.statement.toLowerCase().split(/\s+/).filter(w => w.length > 3);
       const matchCount = keywords.filter(k => eventSummary.toLowerCase().includes(k) || eventType.includes(k)).length;
-      if (matchCount >= 2) return issue.statement;
+      if (matchCount >= 3) return issue.statement;
     }
     return null;
   }
