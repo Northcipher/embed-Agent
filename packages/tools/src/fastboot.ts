@@ -1,8 +1,8 @@
-import { exec as cpExec } from "node:child_process";
+import { execFile as cpExecFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Connection, ExecResult } from "./connection.js";
 
-const execAsync = promisify(cpExec);
+const execFile = promisify(cpExecFile);
 
 export class FastbootConnection implements Connection {
   onDisconnect?: () => void;
@@ -10,20 +10,27 @@ export class FastbootConnection implements Connection {
 
   constructor(private deviceId?: string) {}
 
+  private get fastbootArgs(): string[] {
+    return this.deviceId ? ["-s", this.deviceId] : [];
+  }
+
   async connect(): Promise<void> {
     try {
-      const cmd = this.deviceId ? `fastboot -s ${this.deviceId} devices` : "fastboot devices";
-      const { stdout } = await execAsync(cmd, { timeout: 10000 });
+      const { stdout } = await execFile("fastboot", [...this.fastbootArgs, "devices"], { timeout: 10000 });
       this._connected = stdout.trim().length > 0;
-    } catch { this._connected = false; }
+      if (!this._connected) throw new Error("No fastboot devices found");
+    } catch (e) {
+      this._connected = false;
+      throw e;
+    }
   }
   async disconnect(): Promise<void> { this._connected = false; }
   state() { return this._connected ? "connected" : "disconnected"; }
 
   async exec(cmd: string, timeout: number): Promise<ExecResult> {
-    const full = this.deviceId ? `fastboot -s ${this.deviceId} ${cmd}` : `fastboot ${cmd}`;
     try {
-      const { stdout, stderr } = await execAsync(full, { timeout: timeout * 1000 });
+      const args = [...this.fastbootArgs, ...cmd.split(" ")];
+      const { stdout, stderr } = await execFile("fastboot", args, { timeout: timeout * 1000 });
       return { stdout, stderr, exit_code: 0 };
     } catch (e: unknown) {
       const err = e as { stdout?: string; stderr?: string; code?: number };
@@ -32,7 +39,6 @@ export class FastbootConnection implements Connection {
   }
 
   async flash(image: string, partition: string): Promise<void> {
-    const full = this.deviceId ? `fastboot -s ${this.deviceId} flash ${partition} ${image}` : `fastboot flash ${partition} ${image}`;
-    await execAsync(full, { timeout: 300000 });
+    await execFile("fastboot", [...this.fastbootArgs, "flash", partition, image], { timeout: 300000 });
   }
 }

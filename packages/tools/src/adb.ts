@@ -12,7 +12,9 @@ export class AdbConnection implements Connection {
 
   async connect(): Promise<void> {
     const { stdout } = await execFile("adb", ["-s", this.deviceId, "get-state"], { timeout: 10000 });
-    this._connected = stdout.trim() === "device";
+    const state = stdout.trim();
+    if (state !== "device") throw new Error(`ADB device ${this.deviceId} state is "${state}", expected "device"`);
+    this._connected = true;
   }
   async disconnect(): Promise<void> { this._connected = false; }
   state() { return this._connected ? "connected" : "disconnected"; }
