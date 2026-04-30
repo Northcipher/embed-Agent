@@ -175,7 +175,7 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
     return new DecisionHandler(
       eventBus, hm,
       { decide: async (sp: string, input: Record<string, unknown>) => observerInst.decide(sp, input as never, runId) },
-      { pause: (rid, r) => rm.pause(rid, r), cancel: (rid, r) => rm.cancel(rid, r), stopRun: (rid, r) => rm.stopRun(rid, r) },
+      { pause: (rid, r) => rm.pause(rid, r), cancel: (rid, r) => rm.cancel(rid, r), stopRun: (rid, r) => rm.stopRun(rid, r), appendStep: (rid, s) => rm.appendStep(rid, s) },
       { assembleObserverContext: async (rid: string, event: Record<string, unknown>, cbActive: boolean, warnEsc: boolean) => {
         const ctx = await contextAssembler.assembleObserverContext(rid, event as never, cbActive, warnEsc);
         return { staticPrompt: ctx.staticPrompt, input: ctx.input as Record<string, unknown> };

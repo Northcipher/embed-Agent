@@ -164,7 +164,7 @@ export class RunManager {
       if (!s.current_run_id) continue;
       const run = await this.runStore.get(s.current_run_id);
       if (!run || ["completed", "failed", "cancelled"].includes(run.state)) {
-        await this.targetState.updateState(s.target_id, { state: "idle", current_run_id: undefined });
+        await this.tm.releaseLock(s.target_id);
         cleanedLocks++;
       }
     }
@@ -276,8 +276,9 @@ export class RunManager {
     this.stepQueues.set(runId, sq);
 
     // Start async execution — don't await, let it run in background
-    this.executeRun(runId, req.target).catch((e) => {
+    this.executeRun(runId, req.target).catch(async (e) => {
       console.error(`[RunManager] Background execution failed for ${runId}:`, (e as Error).message);
+      await this.finalize(runId, req.target, "failed", `Execution error: ${(e as Error).message}`);
     });
 
     return { status: "accepted", run_id: runId };
@@ -325,7 +326,14 @@ export class RunManager {
     this.activeDecisionHandlers.delete(runId);
     this.activeExecutors.delete(runId);
 
-    // 2. OnFinalizing hook
+    // 2. State transitions: completed → collecting_evidence → finalizing; failed/cancelled → finalizing
+    if (status === "completed") {
+      await this.runStore.update(runId, { state: "collecting_evidence" });
+      await this.eb.emit({ type: "run_paused", run_id: runId, source: "run_manager", summary: "Collecting final evidence", payload: { phase: "collecting_evidence" } });
+    }
+    await this.runStore.update(runId, { state: "finalizing" });
+
+    // 3. OnFinalizing hook
     await this.hm.execute("OnFinalizing", { run_id: runId, status, reason });
 
     // 3. Reply generates result. Reply is the ONLY result_ready publisher.
@@ -364,8 +372,8 @@ export class RunManager {
     if (reply.status !== "completed") updatePatch.failure_reason = reason;
     await this.runStore.update(runId, updatePatch);
 
-    // 5. Release lock — target back to idle
-    await this.targetState.updateState(targetId, { state: "idle", current_run_id: undefined });
+    // 5. Release lock via TargetManager (cleaning → idle transition)
+    await this.tm.releaseLock(targetId);
 
     // 6. PostRunEnd hook
     await this.hm.execute("PostRunEnd", { run_id: runId, status: reply.status });
@@ -397,6 +405,12 @@ export class RunManager {
     if (!run) throw new Error(`Run not found: ${runId}`);
     this.activeExecutors.get(runId)?.interrupt();
     await this.finalize(runId, run.target_id, "cancelled", reason);
+  }
+
+  /** Append a step to the run's StepQueue (from collect_more decision). */
+  appendStep(runId: string, step: { id: string; capability: string; action: string; command?: string; timeout_sec: number }): void {
+    const sq = this.stepQueues.get(runId);
+    if (sq) sq.append(step as never);
   }
 
   /** Stop a run due to fatal signal — uses "failed" path, not "cancelled". */

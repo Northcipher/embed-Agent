@@ -14,6 +14,7 @@ interface RunController {
   pause(runId: string, reason: string): Promise<void>;
   cancel(runId: string, reason: string): Promise<void>;
   stopRun(runId: string, reason: string): Promise<void>;
+  appendStep?(runId: string, step: { id: string; capability: string; action: string; command?: string; timeout_sec: number }): void;
 }
 
 interface StepController {
@@ -60,6 +61,7 @@ export class DecisionHandler {
   private unsub: (() => void) | null = null;
   private runId = "";
   private stepExecutor: StepController | null = null;
+  private initialized = false;
 
   constructor(
     private eb: EventEmitter,
@@ -70,13 +72,18 @@ export class DecisionHandler {
     private debounceSec = 30,
   ) {}
 
-  /** Begin watching a run. Must be called before events arrive. */
+  /** Begin watching a run. CB1/CB3 persist across steps — only reset on first attach per run. */
   attach(runId: string, stepExecutor: StepController): void {
+    const isNewRun = this.runId !== runId;
     this.runId = runId;
     this.stepExecutor = stepExecutor;
-    this.overrideBreaker.reset();
-    this.warningAccum.reset();
-    this.debounceMap.clear();
+
+    if (isNewRun || !this.initialized) {
+      this.overrideBreaker.reset();
+      this.warningAccum.reset();
+      this.debounceMap.clear();
+      this.initialized = true;
+    }
 
     this.unsub?.();
     this.unsub = this.eb.subscribe(
@@ -88,6 +95,7 @@ export class DecisionHandler {
   detach(): void {
     this.unsub?.();
     this.unsub = null;
+    // Don't reset initialized — breakers persist across steps in same run
   }
 
   /** Human override — CB1 counter */
@@ -189,7 +197,8 @@ export class DecisionHandler {
     }
 
     this.eb.emit({
-      type: "decision_made", source: "observer", run_id: this.runId,
+      type: "decision_made", source: d.decision === "stop" && d.confidence === 1.0 ? "rule_reflex" : "observer",
+      run_id: this.runId,
       summary: d.reason,
       payload: { decision: d.decision, confidence: d.confidence, reasoning_trace: d.reasoning_trace },
       evidence_refs: d.evidence_refs,
@@ -207,13 +216,26 @@ export class DecisionHandler {
           this.stepExecutor?.extendTimeout(d.params.extra_wait_sec);
         }
         break;
+      case "collect_more":
+        if (d.params?.logs?.length) {
+          for (const logCmd of d.params.logs) {
+            this.runController.appendStep?.(this.runId, {
+              id: `collect_${Date.now()}`,
+              capability: "collect_logs",
+              action: "exec",
+              command: logCmd,
+              timeout_sec: 60,
+            });
+          }
+        }
+        break;
       case "suggest":
         this.eb.emit({
           type: "suggestion_generated", source: "observer", run_id: this.runId,
           summary: d.suggestion ?? d.reason, payload: { suggestion: d.suggestion },
         });
         break;
-      // continue, collect_more, observe_more_frequent, observe_again_at → no immediate action
+      // continue, observe_more_frequent, observe_again_at → no immediate action
       default:
         break;
     }
