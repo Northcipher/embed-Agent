@@ -88,7 +88,19 @@ export class MemoryStore {
   }
 
   async deleteFact(factId: string): Promise<void> {
-    await this.updateFact(factId, { verified: false } as Partial<SemanticFact>);
+    // Add a tombstone marker that queryFacts always excludes
+    await this.updateFact(factId, { verified: false, statement: "__DELETED__" } as Partial<SemanticFact>);
+  }
+
+  async queryFacts(scope: string, scopeId: string, category?: string, verifiedOnly = false): Promise<SemanticFact[]> {
+    try {
+      const lines = (await fs.readFile(path.join(this.memDir(), "semantic-facts.jsonl"), "utf-8")).trim().split("\n");
+      return lines.map(l => JSON.parse(l) as SemanticFact)
+        .filter(f => f.scope === scope && f.scope_id === scopeId)
+        .filter(f => !category || f.category === category)
+        .filter(f => !verifiedOnly || f.verified)
+        .filter(f => f.statement !== "__DELETED__"); // exclude tombstoned facts
+    } catch { return []; }
   }
 
   async writeProfile(profile: RunProfile): Promise<void> {
@@ -100,11 +112,13 @@ export class MemoryStore {
   async getLatestProfile(targetId: string): Promise<RunProfile | null> {
     const dir = path.join(this.memDir(), "run-profiles");
     try {
-      for (const f of (await fs.readdir(dir)).reverse()) {
+      const profiles: RunProfile[] = [];
+      for (const f of await fs.readdir(dir)) {
         const p = JSON.parse(await fs.readFile(path.join(dir, f), "utf-8")) as RunProfile;
-        if (p.target_id === targetId) return p;
+        if (p.target_id === targetId) profiles.push(p);
       }
-    } catch { /* no profiles */ }
-    return null;
+      profiles.sort((a, b) => b.recorded_at.localeCompare(a.recorded_at));
+      return profiles[0] ?? null;
+    } catch { return null; }
   }
 }

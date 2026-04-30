@@ -1,6 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+function validateId(id: string, label: string): void {
+  if (id.includes("..") || id.includes("/") || id.includes("\\")) {
+    throw new Error(`Invalid ${label}: "${id}" contains path characters`);
+  }
+}
+
 export type TargetState = "idle" | "preparing" | "busy" | "cleaning" | "dirty" | "recovery" | "offline";
 
 export interface TargetProfile {
@@ -33,6 +39,7 @@ export class TargetStore {
   }
 
   async add(profile: TargetProfile): Promise<void> {
+    validateId(profile.target_id, "target_id");
     await fs.mkdir(this.dir(profile.target_id), { recursive: true });
     await fs.writeFile(path.join(this.dir(profile.target_id), "profile.json"), JSON.stringify(profile, null, 2), "utf-8");
     const initState: TargetRuntimeState = {
@@ -54,7 +61,9 @@ export class TargetStore {
   }
 
   async updateState(targetId: string, patch: Partial<TargetRuntimeState>): Promise<void> {
+    validateId(targetId, "targetId");
     const current = await this.getState(targetId);
+    if (!current) throw new Error(`Target not found: ${targetId}`);
     const updated = { ...current, ...patch, target_id: targetId, updated_at: new Date().toISOString() };
     await this.writeState(targetId, updated as TargetRuntimeState);
   }
