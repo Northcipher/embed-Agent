@@ -1,102 +1,75 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { getRunDir, getEventsPath } from "./layout.js";
-import type { Event } from "@embed-agent/contracts";
 
-function eventsFile(runDir: string): string {
-  return path.join(runDir, "events.jsonl");
+export interface EventRecord {
+  seq: number;
+  run_id?: string;
+  time: string;
+  type: string;
+  source: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  severity?: string;
+  step_id?: string;
+  elapsed_sec?: number;
+  evidence_refs?: string[];
+}
+
+async function readLastSeq(filePath: string): Promise<number> {
+  try {
+    const content = await fs.readFile(filePath, "utf-8");
+    const lines = content.trim().split("\n");
+    if (lines.length === 0) return 0;
+    return (JSON.parse(lines[lines.length - 1]!) as EventRecord).seq;
+  } catch {
+    return 0;
+  }
 }
 
 export class EventStore {
-  constructor(private dataRoot: string) {}
+  constructor(private dataRoot = ".embed-agent") {}
 
-  async append(runId: string, event: Event): Promise<{ seq: number }> {
-    const runDir = getRunDir(this.dataRoot, runId);
-    await fs.mkdir(runDir, { recursive: true });
-    const file = eventsFile(runDir);
-
-    // Read last seq
-    let lastSeq = 0;
-    try {
-      const stat = await fs.stat(file);
-      if (stat.size > 0) {
-        const lastLine = await this.readLastLine(file);
-        if (lastLine) {
-          const lastEvent = JSON.parse(lastLine) as Event;
-          lastSeq = lastEvent.seq;
-        }
-      }
-    } catch {
-      // File doesn't exist yet, start at seq 0
-    }
-
-    const seq = lastSeq + 1;
-    const time = new Date().toISOString();
-    const record = JSON.stringify({ ...event, seq, time }) + "\n";
-
-    await fs.appendFile(file, record, "utf-8");
-    return { seq };
+  private runEventsPath(runId: string): string {
+    return path.join(this.dataRoot, "runs", runId, "events.jsonl");
   }
 
-  async appendGlobal(event: Event): Promise<{ seq: number }> {
-    const file = getEventsPath(this.dataRoot);
+  private globalEventsPath(): string {
+    return path.join(this.dataRoot, "events.jsonl");
+  }
+
+  async append(runId: string, event: EventRecord): Promise<{ seq: number }> {
+    const file = this.runEventsPath(runId);
     await fs.mkdir(path.dirname(file), { recursive: true });
-
-    let lastSeq = 0;
-    try {
-      const stat = await fs.stat(file);
-      if (stat.size > 0) {
-        const lastLine = await this.readLastLine(file);
-        if (lastLine) {
-          const lastEvent = JSON.parse(lastLine) as Event;
-          lastSeq = lastEvent.seq;
-        }
-      }
-    } catch {
-      // File doesn't exist, start at 0
-    }
-
-    const seq = lastSeq + 1;
-    const time = new Date().toISOString();
-    const record = JSON.stringify({ ...event, seq, time }) + "\n";
-
-    await fs.appendFile(file, record, "utf-8");
+    const seq = (await readLastSeq(file)) + 1;
+    await fs.appendFile(file, JSON.stringify({ ...event, seq, time: new Date().toISOString() }) + "\n", "utf-8");
     return { seq };
   }
 
-  async read(runId: string, afterSeq = 0, limit = 100): Promise<Event[]> {
-    const runDir = getRunDir(this.dataRoot, runId);
-    const file = eventsFile(runDir);
-    try {
-      const content = await fs.readFile(file, "utf-8");
-      const lines = content.trim().split("\n");
-      return lines
-        .map(line => JSON.parse(line) as Event)
-        .filter(e => e.seq > afterSeq)
-        .slice(0, limit);
-    } catch {
-      return [];
-    }
+  async appendGlobal(event: EventRecord): Promise<{ seq: number }> {
+    const file = this.globalEventsPath();
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const seq = (await readLastSeq(file)) + 1;
+    await fs.appendFile(file, JSON.stringify({ ...event, seq, time: new Date().toISOString() }) + "\n", "utf-8");
+    return { seq };
   }
 
-  async readGlobal(afterSeq = 0, limit = 100): Promise<Event[]> {
-    const file = getEventsPath(this.dataRoot);
+  async read(runId: string, afterSeq = 0, limit = 100): Promise<EventRecord[]> {
     try {
-      const content = await fs.readFile(file, "utf-8");
-      const lines = content.trim().split("\n");
-      return lines
-        .map(line => JSON.parse(line) as Event)
+      const content = await fs.readFile(this.runEventsPath(runId), "utf-8");
+      return content.trim().split("\n")
+        .map(l => JSON.parse(l) as EventRecord)
         .filter(e => e.seq > afterSeq)
         .slice(0, limit);
-    } catch {
-      return [];
-    }
+    } catch { return []; }
   }
 
-  private async readLastLine(filePath: string): Promise<string | null> {
-    const content = await fs.readFile(filePath, "utf-8");
-    const lines = content.trim().split("\n");
-    if (lines.length === 0) return null;
-    return lines[lines.length - 1]!;
+  async readGlobal(afterSeq = 0, limit = 100): Promise<EventRecord[]> {
+    try {
+      const content = await fs.readFile(this.globalEventsPath(), "utf-8");
+      return content.trim().split("\n")
+        .map(l => JSON.parse(l) as EventRecord)
+        .filter(e => e.seq > afterSeq)
+        .slice(0, limit);
+    } catch { return []; }
   }
 }
