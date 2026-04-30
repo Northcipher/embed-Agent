@@ -31,6 +31,8 @@ export interface PlannerContext {
     task: string;
     expected: string;
     concerns?: string[];
+    constraints?: Record<string, unknown>;
+    test_hint?: unknown;
     target_id: string;
     target_hints: Record<string, unknown>;
     connections: Record<string, unknown>;
@@ -49,7 +51,7 @@ export interface ObserverContext {
     run?: { state: string; elapsed_sec: number; current_step_id?: string };
     target?: { serial_state: string; adb_state: string };
     triggering_event: EventRecord;
-    signals: { type: string; summary: string; severity?: string }[];
+    signals: { type: string; summary: string; severity?: string; evidence_refs?: string[] }[];
     evidence_windows: { ref: string; text: string }[];
     checkpoint_history: { metrics: Record<string, number>; trend: string }[];
     memory: {
@@ -99,7 +101,7 @@ export class ContextAssembler {
     this.observerPrompt = prompts?.observer ?? OBSERVER_PROMPT;
   }
 
-  async assemblePlannerContext(runId: string, taskInfo?: { task: string; expected: string; concerns?: string[] }): Promise<PlannerContext> {
+  async assemblePlannerContext(runId: string, taskInfo?: { task: string; expected: string; concerns?: string[]; constraints?: Record<string, unknown>; test_hint?: unknown }): Promise<PlannerContext> {
     const run = await this.runStore.get(runId);
     if (!run) throw new Error(`Run not found: ${runId}`);
 
@@ -108,13 +110,15 @@ export class ContextAssembler {
     const facts = await this.memory.queryFacts("target", run.target_id);
 
     // Skill progressive loading: Tier1 (name+desc) + Tier2 (top-3 full steps)
-    const taskDesc = run.artifact.type ? `validate ${run.artifact.type}` : "validate device";
+    const taskDesc = taskInfo?.task ?? (run.artifact.type ? `validate ${run.artifact.type}` : "validate device");
     const tier1 = this.skillRegistry?.matchTop(taskDesc, 5) ?? [];
     const tier2 = this.skillRegistry?.loadMatchedSteps(taskDesc, 3) ?? [];
 
     const dc = {
       task: taskInfo?.task ?? `Validate ${run.artifact.type} on ${run.target_id}`,
       expected: taskInfo?.expected ?? "Device operates normally",
+      constraints: taskInfo?.constraints ?? {},
+      test_hint: taskInfo?.test_hint,
       target_id: run.target_id,
       target_hints: target?.target_hints ?? {},
       connections: target?.connections ?? {},
@@ -163,11 +167,12 @@ export class ContextAssembler {
       run: runObj,
       triggering_event: triggeringEvent,
       signals: recentEvents.filter((e: EventRecord) => e.severity === "warning" || e.severity === "fatal").map((e: EventRecord) => {
-        const s: { type: string; summary: string; severity?: string } = { type: e.type, summary: e.summary };
+        const s: { type: string; summary: string; severity?: string; evidence_refs?: string[] } = { type: e.type, summary: e.summary };
         if (e.severity) s.severity = e.severity;
+        if (e.evidence_refs?.length) s.evidence_refs = e.evidence_refs;
         return s;
       }),
-      evidence_windows: [],
+      evidence_windows: triggeringEvent.evidence_refs?.map((ref: string) => ({ ref, text: `[Evidence window: ${ref}]` })) ?? [],
       checkpoint_history: [],
       memory: {
         working_memory: wm.map((w: { key: string; summary: string; source: string }) => ({ key: w.key, summary: w.summary, source: w.source })),
@@ -176,7 +181,7 @@ export class ContextAssembler {
           ...(f.extended_pattern ? { extended_pattern: f.extended_pattern } : {}),
         })),
       },
-      constraints: { remaining_sec: 600, allowed_capabilities: [] },
+      constraints: { remaining_sec: Math.max(0, 600 - (run?.elapsed_sec ?? 0)), allowed_capabilities: ts ? Object.keys(ts).filter(k => k !== "state" && (ts as Record<string, unknown>)[k] === "connected" || (ts as Record<string, unknown>)[k] === "online") : [] },
       circuit_breaker_active: circuitBreakerActive,
       warning_escalation: warningEscalation,
     };

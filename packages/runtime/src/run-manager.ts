@@ -224,9 +224,11 @@ export class RunManager {
     // 5. ContextAssembler → Planner → Plan
     let planResult: PlanCallResult;
     try {
-      const taskInfo: { task: string; expected: string; concerns?: string[] } = {
+      const taskInfo: { task: string; expected: string; concerns?: string[]; constraints?: Record<string, unknown>; test_hint?: unknown } = {
         task: `Validate ${req.artifact.type} on ${req.target}`,
         expected: req.expected,
+        constraints: req.constraints as unknown as Record<string, unknown>,
+        test_hint: req.test_hint,
       };
       if (req.concerns) taskInfo.concerns = req.concerns;
       const ctx = await this.contextAssembler.assemblePlannerContext(runId, taskInfo);
@@ -272,7 +274,11 @@ export class RunManager {
     await this.eb.emit({
       type: "run_started", run_id: runId, source: "run_manager",
       summary: `Run ${runId} started on target ${req.target}`,
-      payload: { plan_id: plan.plan_id, target_id: req.target, estimated_duration_sec: plan.estimated_duration_sec },
+      payload: {
+        plan_id: plan.plan_id, target_id: req.target, estimated_duration_sec: plan.estimated_duration_sec,
+        success_criteria: plan.success_criteria, failure_signals: plan.failure_signals,
+        evidence_policy: plan.evidence_policy,
+      },
     });
 
     // Then advance state

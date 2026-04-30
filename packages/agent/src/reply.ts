@@ -67,13 +67,29 @@ Output JSON:
   "confidence": 0.0-1.0
 }`;
 
+    // Select most relevant events for LLM: last 50 + all fatal/warning/decision events
+    const importantEvents = events.filter(e => e.severity === "fatal" || e.severity === "warning" || e.type === "decision_made" || e.type === "result_ready");
+    const recentEvents = events.slice(-50);
+    const combined = new Map<string, { type: string; severity?: string; summary: string }>();
+    for (const e of [...importantEvents, ...recentEvents]) {
+      const item: { type: string; severity?: string; summary: string } = { type: e.type, summary: e.summary };
+      if (e.severity) item.severity = e.severity;
+      combined.set(`${e.type}-${e.summary}`, item);
+    }
+
+    // Extract success criteria from plan_generated event
+    const planEvent = events.find(e => e.type === "run_started");
+    const planPayload = (planEvent?.payload ?? {}) as Record<string, unknown>;
+
     const messages: LLMMessage[] = [
       { role: "system", content: staticPrompt },
       { role: "user", content: JSON.stringify({
-        events: events.slice(0, 100).map(e => ({ type: e.type, severity: e.severity, summary: e.summary })),
+        events: [...combined.values()],
         fatal_count: events.filter(e => e.severity === "fatal").length,
         failure_events: events.filter(e => FAILURE_TYPES.has(e.type)).map(e => e.type),
         key_events: evidence.key_events,
+        success_criteria: planPayload.success_criteria ?? [],
+        failure_signals: planPayload.failure_signals ?? [],
       }, null, 2) },
     ];
 
