@@ -136,4 +136,17 @@ export class CommandHandler {
       return { status: "error", error_code: "run_not_found", message: (e as Error).message, details: { run_id: runId } };
     }
   }
+
+  // --- Task / Memory / Skill / Hook Management ---
+
+  async taskList() { return { tasks: [] as { name: string; skill: string }[], status: "ok" }; }
+  async taskShow(_name: string) { return { status: "error", error_code: "unsupported_action", message: "Not yet implemented" } as const; }
+  async memoryList(_targetId?: string, _category?: string) { return { entries: [] as { fact_id: string; category: string; statement: string }[], status: "ok" }; }
+  async memoryAdd(_targetId: string, _category: string, _statement: string) { return { status: "error", error_code: "unsupported_action", message: "Requires Memory wiring" } as const; }
+  async memoryConfirm(_factId: string) { return { status: "error", error_code: "unsupported_action", message: "Requires Memory wiring" } as const; }
+  async memoryDelete(_factId: string) { return { status: "error", error_code: "unsupported_action", message: "Requires Memory wiring" } as const; }
+  async skillList() { return { skills: [] as { name: string; description: string }[], status: "ok" }; }
+  async skillShow(_name: string) { return { status: "error", error_code: "unsupported_action", message: "Not yet implemented" } as const; }
+  async hookList() { return { hooks: [] as { name: string; on: string }[], status: "ok" }; }
+  async hookShow(_name: string) { return { status: "error", error_code: "unsupported_action", message: "Not yet implemented" } as const; }
 }

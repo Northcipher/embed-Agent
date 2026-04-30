@@ -157,6 +157,54 @@ export async function runCli(handler: CommandHandler, argv: string[] = process.a
         break;
       }
 
+      case "task": {
+        if (args["list"] !== undefined) {
+          print(await handler.taskList(), format);
+        } else if (args["show"]) {
+          print(await handler.taskShow(args["show"] as string), format);
+        } else {
+          print({ status: "error", error_code: "invalid_request", message: "Usage: embedagent task --list | --show <name>" }, format);
+        }
+        break;
+      }
+
+      case "memory": {
+        if (args["add"]) {
+          print(await handler.memoryAdd(args["target"] as string, args["category"] as string, args["add"] as string), format);
+        } else if (args["ls"] !== undefined || args["list"] !== undefined) {
+          print(await handler.memoryList(args["target"] as string, args["category"] as string), format);
+        } else if (args["confirm"]) {
+          print(await handler.memoryConfirm(args["confirm"] as string), format);
+        } else if (args["delete"]) {
+          print(await handler.memoryDelete(args["delete"] as string), format);
+        } else {
+          print({ status: "error", error_code: "invalid_request", message: "Usage: embedagent memory --add <statement> --target <id> --category <cat> | --ls [--target <id>] | --confirm <id> | --delete <id>" }, format);
+        }
+        break;
+      }
+
+      case "skill": {
+        if (args["list"] !== undefined) {
+          print(await handler.skillList(), format);
+        } else if (args["show"]) {
+          print(await handler.skillShow(args["show"] as string), format);
+        } else {
+          print({ status: "error", error_code: "invalid_request", message: "Usage: embedagent skill --list | --show <name>" }, format);
+        }
+        break;
+      }
+
+      case "hook": {
+        if (args["list"] !== undefined) {
+          print(await handler.hookList(), format);
+        } else if (args["show"]) {
+          print(await handler.hookShow(args["show"] as string), format);
+        } else {
+          print({ status: "error", error_code: "invalid_request", message: "Usage: embedagent hook --list | --show <name>" }, format);
+        }
+        break;
+      }
+
       default:
         print(`Usage: embedagent <command> [options]
 
@@ -174,6 +222,10 @@ Commands:
   targets
   target       --show <id>
   history      --target <id> [--limit <n>]
+  task         --list | --show <name>
+  memory       --add <statement> --target <id> --category <cat> | --ls [--target <id>] [--category <cat>] | --confirm <id> | --delete <id>
+  skill        --list | --show <name>
+  hook         --list | --show <name>
 
 Options: --json   Output as JSON`, format);
         break;
