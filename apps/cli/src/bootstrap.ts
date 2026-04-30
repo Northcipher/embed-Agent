@@ -4,7 +4,7 @@ import { ConnectionManager, TargetManager, OutputPipe, RingBuffer, RuleDetector,
 import { LLMCallManager, MockProvider, AnthropicProvider, Planner, Observer, ReplyGenerator, Memory, SkillRegistry } from "@embed-agent/agent";
 import { NotificationFilter, LogChannel } from "@embed-agent/notify";
 import { Views } from "@embed-agent/views";
-import { SystemConfigSchema, LLMConfigSchema, HookConfigSchema } from "@embed-agent/contracts";
+import { SystemConfigSchema, LLMConfigSchema, HookConfigSchema, TargetProfileSchema } from "@embed-agent/contracts";
 import { CommandHandler } from "./command-handler.js";
 import { runCli } from "./cli.js";
 
@@ -33,6 +33,12 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   });
   errors.push(...llmErrors);
 
+  // Load target profiles
+  const { configs: targetConfigs, errors: targetErrors } = await loader.loadAll({
+    "targets.yml": { schema: TargetProfileSchema, required: false },
+  });
+  errors.push(...targetErrors);
+
   if (errors.length > 0) {
     logger.error("Config validation failed", { errors });
     for (const e of errors) process.stderr.write(`  ${e.file}: ${e.message}\n`);
@@ -47,6 +53,12 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   const eventStore = new EventStore(dataRoot);
   const runStore = new RunStore(dataRoot, log);
   const targetStore = new TargetStore(dataRoot);
+  // Register targets from config
+  const targetList = (targetConfigs["targets"] as Record<string, unknown>[] | undefined) ?? [];
+  for (const t of targetList) {
+    await targetStore.add(t as never).catch((e) => log.warn(`Failed to add target: ${(e as Error).message}`));
+  }
+
   const memoryStore = new MemoryStore(dataRoot);
   // 3. Create EventBus + wire persistence
   const eventBus = new EventBus();
