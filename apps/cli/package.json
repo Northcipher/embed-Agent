@@ -16,5 +16,8 @@
   },
   "devDependencies": {
     "vitest": "^4.0.15"
+  },
+  "dependencies": {
+    "@embed-agent/runtime": "workspace:*"
   }
 }
