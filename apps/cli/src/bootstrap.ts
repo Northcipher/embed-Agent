@@ -1,11 +1,14 @@
-import { ConfigLoader, Logger, PromptLoader, EventStore, EvidenceStore, RunStore, TargetStore, MemoryStore } from "@embed-agent/stores";
+import { ConfigLoader, Logger, PromptLoader, EventStore, EvidenceStore, RunStore, TargetStore, MemoryStore, SkillStore } from "@embed-agent/stores";
 import { EventBus, ContextAssembler, RunManager, HookManager, StepExecutor, DecisionHandler } from "@embed-agent/runtime";
-import { ConnectionManager, TargetManager } from "@embed-agent/tools";
-import { LLMCallManager, MockProvider, AnthropicProvider, Planner, Observer, ReplyGenerator, Memory } from "@embed-agent/agent";
+import { ConnectionManager, TargetManager, OutputPipe, RingBuffer, RuleDetector, Aggregator } from "@embed-agent/tools";
+import { LLMCallManager, MockProvider, AnthropicProvider, Planner, Observer, ReplyGenerator, Memory, SkillRegistry } from "@embed-agent/agent";
+import { NotificationFilter, LogChannel } from "@embed-agent/notify";
 import { Views } from "@embed-agent/views";
 import { SystemConfigSchema, LLMConfigSchema } from "@embed-agent/contracts";
 import { CommandHandler } from "./command-handler.js";
 import { runCli } from "./cli.js";
+import fs from "node:fs/promises";
+import path from "node:path";
 
 interface BootstrapResult {
   handler: CommandHandler;
@@ -114,8 +117,6 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   const hm = new HookManager([], { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } });
 
   // Create SkillRegistry + load skills
-  const { SkillStore } = await import("@embed-agent/stores");
-  const { SkillRegistry } = await import("@embed-agent/agent");
   const skillStore = new SkillStore(dataRoot);
   const skillRegistry = new SkillRegistry(skillStore);
   await skillRegistry.loadAll().catch(() => {});
@@ -135,11 +136,40 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
 
   const rm = new RunManager(runStore, targetStore, tm, eventBus, hm, contextAssembler, plannerAdapter, replyAdapter, dataRoot);
 
-  // Inject executor/decision-handler factories — no stubs
+  // Inject executor/decision-handler factories — fully wired
   rm.setExecutorFactory(async (runId: string, targetId: string) => {
     const profile = await targetStore.get(targetId);
     const target = profile ?? { target_id: targetId, connections: {} as Record<string, unknown> };
-    return new StepExecutor(runId, target, eventBus, hm, cm);
+
+    // Per-step OutputPipe factory: creates RuleDetector + Aggregator + RingBuffer pipeline
+    const pipeFactory = (stepId: string) => {
+      const rb = new RingBuffer(500);
+      // EvidenceStore adapter: RuleDetector expects saveWindow, EvidenceStore provides write
+      const evidenceSaver = { saveWindow: (rid: string, ref: string, data: string) => evidenceStore.write(rid, ref, data).then(() => {}) };
+      const rd = new RuleDetector(rb, eventBus, evidenceSaver, runId);
+      // Load system rules from config
+      const sysRules = (systemConfig?.runtime as Record<string, unknown>)?.rule_policy as Record<string, unknown>;
+      const fatalPatterns = (sysRules?.fatal_patterns as string[]) ?? [];
+      const warnPatterns = (sysRules?.warning_patterns as string[]) ?? [];
+      rd.loadRunRules(
+        fatalPatterns.map(p => ({ id: p.slice(0, 20), kind: "pattern" as const, pattern: new RegExp(p), severity: "fatal" as const, source: "system" as const, debounce_sec: 30 })),
+        warnPatterns.map(p => ({ id: p.slice(0, 20), kind: "pattern" as const, pattern: new RegExp(p), severity: "warning" as const, source: "system" as const, debounce_sec: 30 })),
+        [],
+      );
+
+      const ag = new Aggregator(eventBus);
+      // Boot markers loaded from target profile on first step (see connection setup)
+
+      // EvidenceWriter: appends to step evidence file
+      const evFile = path.join(dataRoot, "runs", runId, `${stepId}.log`);
+      const ew = { append: (d: string) => { fs.appendFile(evFile, d).catch(() => {}); } };
+
+      const pipe = new OutputPipe(ew, rb, rd, ag, eventBus, stepId);
+      pipe.setRunId(runId);
+      return pipe;
+    };
+
+    return new StepExecutor(runId, target, eventBus, hm, cm, pipeFactory);
   });
   rm.setDecisionHandlerFactory((runId: string) => {
     return new DecisionHandler(
@@ -156,7 +186,15 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   // 9. Views
   const views = new Views(runStore, eventStore, evidenceStore, targetStore, memoryStore);
 
-  // 10. CommandHandler — fully wired
+  // 10. NotificationFilter — subscribe to EventBus for result/target/suggestion events
+  const notifyChannel = new LogChannel();
+  const notifyFilter = new NotificationFilter(
+    { subscribe: (ts, h) => eventBus.subscribe(ts, h), emit: async (e) => { await eventBus.emit(e); } },
+    { slack: notifyChannel, log: notifyChannel },
+  );
+  notifyFilter.start();
+
+  // 11. CommandHandler — fully wired
   const handler = new CommandHandler(rm, views);
 
   log.info("Bootstrap complete — Embed Agent ready");

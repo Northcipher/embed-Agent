@@ -23,6 +23,7 @@
     "@embed-agent/views": "workspace:*",
     "@embed-agent/agent": "workspace:*",
     "@embed-agent/contracts": "workspace:*",
+    "@embed-agent/notify": "workspace:*",
     "@embed-agent/tools": "workspace:*"
   },
   "bin": {
