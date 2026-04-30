@@ -13,3 +13,4 @@ dist/
 tmp/
 _perm_test
 .claude/ralph-loop.local.md
+.embed-agent/
