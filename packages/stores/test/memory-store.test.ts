@@ -36,4 +36,14 @@ describe("MemoryStore", () => {
     const latest = await s.getLatestProfile("t1");
     expect(latest!.run_id).toBe("r2");
   });
+
+  it("rejects path traversal in runId for working memory", async () => {
+    await expect(s.writeWorkingMemory("../escape", [])).rejects.toThrow("path characters");
+    await expect(s.readWorkingMemory("../escape")).rejects.toThrow("path characters");
+  });
+
+  it("rejects path traversal in profile run_id", async () => {
+    const p: RunProfile = { run_id: "../escape", target_id: "t1", artifact: { path: "", type: "" }, result: "completed", stage_durations: [], final_metrics: {}, output_summary: { total_lines: 0, peak_lines_per_sec: 0, silence_count: 0, rule_hits: {} }, recorded_at: new Date().toISOString() };
+    await expect(s.writeProfile(p)).rejects.toThrow("path characters");
+  });
 });

@@ -39,4 +39,10 @@ describe("RunStore", () => {
   it("get returns null for unknown", async () => {
     expect(await s.get("x")).toBeNull();
   });
+
+  it("rejects path traversal in runId", async () => {
+    await expect(s.create(r("../escape", "planning"))).rejects.toThrow("path characters");
+    await expect(s.get("../escape")).rejects.toThrow("path characters");
+    await expect(s.update("../escape", { state: "running" })).rejects.toThrow("path characters");
+  });
 });

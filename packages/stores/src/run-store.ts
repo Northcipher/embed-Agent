@@ -2,6 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { writeAtomic } from "./atomic.js";
 
+function validateId(id: string, label: string): void {
+  if (id.includes("..") || id.includes("/") || id.includes("\\")) {
+    throw new Error(`Invalid ${label}: "${id}" contains path characters`);
+  }
+}
+
 export type RunState = "planning" | "running" | "paused" | "collecting_evidence" | "finalizing" | "completed" | "failed" | "cancelled";
 
 export interface RunRecord {
@@ -25,6 +31,7 @@ export class RunStore {
   constructor(private dataRoot = ".embed-agent") {}
 
   private runFile(runId: string): string {
+    validateId(runId, "runId");
     return path.join(this.dataRoot, "runs", runId, "run.json");
   }
 

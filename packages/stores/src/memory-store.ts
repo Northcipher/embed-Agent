@@ -2,6 +2,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { writeAtomic } from "./atomic.js";
 
+function validateId(id: string, label: string): void {
+  if (id.includes("..") || id.includes("/") || id.includes("\\")) {
+    throw new Error(`Invalid ${label}: "${id}" contains path characters`);
+  }
+}
+
 export interface WorkingMemoryEntry {
   key: string; summary: string;
   source: "observer" | "planner" | "human"; at: string;
@@ -39,11 +45,13 @@ export class MemoryStore {
   private memDir() { return path.join(this.dataRoot, "memory"); }
 
   async writeWorkingMemory(runId: string, entries: WorkingMemoryEntry[]): Promise<void> {
+    validateId(runId, "runId");
     const dir = path.join(this.memDir(), "working-memory");
     await writeAtomic(path.join(dir, `${runId}.json`), JSON.stringify(entries));
   }
 
   async readWorkingMemory(runId: string): Promise<WorkingMemoryEntry[]> {
+    validateId(runId, "runId");
     try { return JSON.parse(await fs.readFile(path.join(this.memDir(), "working-memory", `${runId}.json`), "utf-8")) as WorkingMemoryEntry[]; }
     catch { return []; }
   }
@@ -93,6 +101,7 @@ export class MemoryStore {
   }
 
   async writeProfile(profile: RunProfile): Promise<void> {
+    validateId(profile.run_id, "runId");
     const dir = path.join(this.memDir(), "run-profiles");
     await writeAtomic(path.join(dir, `${profile.run_id}.json`), JSON.stringify(profile));
   }
