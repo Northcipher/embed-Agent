@@ -2,10 +2,18 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 
 const LEVEL_ORDER: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
 
-const SENSITIVE_KEYS = new Set(["api_key", "token", "password", "secret", "authorization", "webhook_url"]);
+const SENSITIVE_PATTERNS = [
+  /api[_-]?key/i, /token/i, /password/i, /secret/i, /authorization/i,
+  /webhook[_-]?url/i, /access[_-]?token/i, /credential/i, /private[_-]?key/i,
+  /api[_-]?secret/i, /slack[_-]?webhook/i, /smtp[_-]?pass/i,
+];
+
+function isSensitiveKey(key: string): boolean {
+  return SENSITIVE_PATTERNS.some(p => p.test(key));
+}
 
 function maskValue(key: string, value: unknown): unknown {
-  if (SENSITIVE_KEYS.has(key.toLowerCase()) && typeof value === "string" && value.length > 0) {
+  if (isSensitiveKey(key) && typeof value === "string" && value.length > 0) {
     return value.slice(0, 4) + "***";
   }
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {

@@ -50,7 +50,10 @@ export class ConfigLoader {
       const y = await getYamlParser();
       parsed = y.parse(raw);
     } catch (e) {
-      return { loaded: false, errors: [{ file: filePath, message: `YAML parse error: ${(e as Error).message}` }] };
+      // Extract line number from YAML parse error if available
+      const err = e as { linePos?: { line: number; col: number }[]; message: string };
+      const lineInfo = err.linePos?.[0] ? ` (line ${err.linePos[0].line})` : "";
+      return { loaded: false, errors: [{ file: filePath, message: `YAML parse error${lineInfo}: ${err.message}` }] };
     }
 
     // 3. Validate with Zod
