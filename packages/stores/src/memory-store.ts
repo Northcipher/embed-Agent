@@ -22,8 +22,8 @@ export interface Episode {
 }
 
 export interface SemanticFact {
-  fact_id: string; scope: string; scope_id: string;
-  category: string; statement: string;
+  fact_id: string; scope: "global" | "target" | "workspace"; scope_id: string;
+  category: "known_issue" | "threshold" | "test_entry" | "connection" | "workflow"; statement: string;
   source: "auto" | "human_confirmed";
   evidence_refs: string[]; extended_pattern?: string;
   verified: boolean; created_at: string;

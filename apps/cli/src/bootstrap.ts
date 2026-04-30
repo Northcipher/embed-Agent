@@ -108,7 +108,7 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   const contextAssembler = new ContextAssembler(runStore, eventStore, targetStore, memoryStore, skillRegistry, prompts);
 
   // Adapters: bridge Agent types to RunManager's DI interfaces
-  const plannerAdapter = { call: async (sp: string, dc: Record<string, unknown>) => planner.call(sp, dc as never) };
+  const plannerAdapter = { call: async (sp: string, dc: Record<string, unknown>, runId?: string) => planner.call(sp, dc as never, runId) };
   const replyAdapter = {
     generate: (rid: string) => reply.generate(rid),
     generateMinimal: (rid: string, reason: string) => reply.generateMinimal(rid, reason),

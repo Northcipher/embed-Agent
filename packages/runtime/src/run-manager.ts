@@ -52,6 +52,9 @@ interface ReplyCaller {
 
 interface TargetManagerIO {
   isBusy(state: { state: string } | null): boolean;
+  acquireLock(targetId: string, runId: string): Promise<boolean>;
+  releaseLock(targetId: string): Promise<void>;
+  transitionState(targetId: string, to: string): Promise<void>;
   preflight(targetId: string, transports: string[], artifactPath: string): Promise<{ all_passed: boolean; checks: { check: string; passed: boolean; error?: string }[]; failure_type?: string }>;
   recover(targetId: string): Promise<boolean>;
 }
@@ -77,6 +80,7 @@ export interface ValidateRequest {
 
 interface EventEmitter {
   emit(e: Record<string, unknown>): Promise<void>;
+  subscribe?: (types: string[], handler: (e: Record<string, unknown>) => void) => () => void;
 }
 
 // --- Helper ---
@@ -181,14 +185,14 @@ export class RunManager {
       return { status: "invalid_request", reasons: ["artifact.path, target, and expected are required"] };
     }
 
-    // 2. Check Target.busy
-    const ts = await this.targetState.getState(req.target);
-    if (this.tm.isBusy(ts)) {
-      return { status: "target_busy", reasons: [`Target ${req.target} is in state ${ts?.state ?? "unknown"}`] };
+    // 2. Acquire target lock (atomic check-busy + set preparing via TargetManager)
+    const runId = generateId();
+    const locked = await this.tm.acquireLock(req.target, runId);
+    if (!locked) {
+      return { status: "target_busy", reasons: [`Target ${req.target} is busy`] };
     }
 
-    // 3. Create Run + acquire lock (set target to preparing)
-    const runId = generateId();
+    // 3. Create Run record
     const run: RunRecord = {
       run_id: runId,
       session_id: `session-${Date.now()}`,
@@ -201,7 +205,6 @@ export class RunManager {
       created_at: new Date().toISOString(),
     };
     await this.runStore.create(run);
-    await this.targetState.updateState(req.target, { state: "preparing", current_run_id: runId });
 
     // 4. PreRunStart hook
     const hookResult = await this.hm.execute("PreRunStart", {
@@ -220,8 +223,9 @@ export class RunManager {
       return await this.rejectRun(runId, req.target, `Plan generation failed: ${(e as Error).message}`, "plan_rejected");
     }
 
-    // Handle clarification_needed from Planner
+    // Handle clarification_needed from Planner — release lock, finalize as failed
     if (planResult.status === "clarification_needed") {
+      await this.finalize(runId, req.target, "failed", `Clarification needed: ${planResult.missing_info?.join(", ") ?? "unknown"}`);
       return {
         status: "clarification_needed", run_id: runId,
         reasons: planResult.missing_info ?? ["Planner needs more information"],
@@ -252,14 +256,53 @@ export class RunManager {
     // Then advance state
     await Promise.all([
       this.runStore.update(runId, { state: "running", started_at: new Date().toISOString() }),
-      this.targetState.updateState(req.target, { state: "busy" }),
+      this.tm.transitionState(req.target, "busy"),
     ]);
 
     const sq = new StepQueue();
     sq.load(plan.steps);
     this.stepQueues.set(runId, sq);
 
+    // Start async execution — don't await, let it run in background
+    this.executeRun(runId, req.target).catch(() => {});
+
     return { status: "accepted", run_id: runId };
+  }
+
+  /**
+   * Execute all steps in a run. Creates StepExecutor + DecisionHandler and drives the loop.
+   * Call after createRun or for manual execution. Returns when run reaches terminal state.
+   */
+  async executeRun(runId: string, targetId: string): Promise<void> {
+    const sq = this.stepQueues.get(runId);
+    if (!sq) return;
+
+    // Import StepExecutor and DecisionHandler lazily to avoid circular deps
+    const { StepExecutor } = await import("./step-executor.js");
+    const { DecisionHandler } = await import("./decision-handler.js");
+
+    // Get or create the target profile for ConnectionManager
+    const target = { target_id: targetId, connections: {} as Record<string, unknown> };
+
+    // Create per-run executor (needs ConnectionManager, OutputPipe, etc. from tool layer)
+    // These are injected by the bootstrap — for now use basic wiring
+    const executor = new StepExecutor(
+      runId, target, this.eb, this.hm,
+      { getForStep: () => null }, // Will be set by caller
+    );
+
+    const dh = new DecisionHandler(
+      this.eb as never, this.hm,
+      { decide: async () => ({ decision: "continue", reason: "no Observer configured", confidence: 0.5, reasoning_trace: "", evidence_refs: [] }) },
+      { pause: (rid, r) => this.pause(rid, r), cancel: (rid, r) => this.cancel(rid, r), stopRun: (rid, r) => this.stopRun(rid, r) },
+      { assembleObserverContext: async () => ({ staticPrompt: "", input: { memory: { working_memory: [], known_issues: [] }, constraints: { remaining_sec: 600, allowed_capabilities: [] }, circuit_breaker_active: false, warning_escalation: false, triggering_event: {}, recent_events: [] } }) },
+    );
+
+    // Execute steps until done
+    let hasMore = true;
+    while (hasMore) {
+      hasMore = await this.runNextStep(runId, executor, dh);
+    }
   }
 
   private async rejectRun(
@@ -310,7 +353,7 @@ export class RunManager {
 
     // 4. RM emits audit event FIRST, then updates state.
     const auditType = `run_${reply.status}`;
-    this.eb.emit({
+    await this.eb.emit({
       type: auditType, run_id: runId, source: "run_manager",
       summary: reply.summary,
       payload: { status: reply.status, key_evidence: reply.key_evidence, evidence_path: reply.evidence_path, suggested_next: reply.suggested_next },
@@ -339,7 +382,7 @@ export class RunManager {
     if (!sq) throw new Error(`Run not active: ${runId}`);
     sq.pause();
     this.activeExecutors.get(runId)?.interrupt();
-    this.eb.emit({ type: "run_paused", run_id: runId, source: "run_manager", summary: reason, payload: {} });
+    await this.eb.emit({ type: "run_paused", run_id: runId, source: "run_manager", summary: reason, payload: {} });
     await this.runStore.update(runId, { state: "paused" });
   }
 
@@ -347,7 +390,7 @@ export class RunManager {
     const sq = this.stepQueues.get(runId);
     if (!sq) throw new Error(`Run not active: ${runId}`);
     sq.resume();
-    this.eb.emit({ type: "run_resumed", run_id: runId, source: "run_manager", summary: "Run resumed", payload: {} });
+    await this.eb.emit({ type: "run_resumed", run_id: runId, source: "run_manager", summary: "Run resumed", payload: {} });
     await this.runStore.update(runId, { state: "running" });
   }
 

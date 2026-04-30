@@ -42,13 +42,23 @@ export class TargetManager {
     const conn = this.cm.get(t, method as Transport);
     if (!conn?.exec) return false;
 
-    // 1. Issue reboot — check exit_code since exec may not throw on failure
+    // 1. Reflash stable artifact if configured (before reboot)
+    if (t.recovery?.stable_artifact && conn.flash) {
+      try {
+        const [image, partition] = t.recovery.stable_artifact.split(":");
+        if (image && partition) {
+          await conn.flash(image, partition);
+        }
+      } catch { /* flash failed — continue with reboot */ }
+    }
+
+    // 2. Issue reboot — check exit_code since exec may not throw on failure
     try {
       const result = await conn.exec("reboot", 30);
       if (result.exit_code !== 0) return false;
     } catch { return false; }
 
-    // 2. Wait for device to come back online (poll with backoff)
+    // 3. Wait for device to come back online (poll with backoff)
     const deadline = Date.now() + 120_000; // 2 min max
     let delay = 3000;
     while (Date.now() < deadline) {

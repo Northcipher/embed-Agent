@@ -106,7 +106,7 @@ export class LLMCircuitBreaker {
     return false;
   }
 
-  isDegraded(): boolean { return this.degraded && !this.probing; }
+  isDegraded(): boolean { return this.degraded; }
 
   reset(): void {
     this.failures = 0;

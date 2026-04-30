@@ -1,11 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { EventType } from "@embed-agent/contracts";
 
 // --- Types ---
 
 /** Fields the caller provides when appending an event. seq and time are assigned by the store. */
 export interface AppendEvent {
-  type: string;
+  type: EventType | string;
   source: string;
   summary: string;
   payload: Record<string, unknown>;

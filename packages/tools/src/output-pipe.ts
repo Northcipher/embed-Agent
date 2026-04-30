@@ -12,6 +12,7 @@ export class OutputPipe {
   private silenceTimer: ReturnType<typeof setTimeout> | null = null;
   private silenceAt = 0;
   private conn?: ConnectionState;
+  private runId?: string;
 
   constructor(
     private ew: EvidenceWriter,
@@ -22,6 +23,9 @@ export class OutputPipe {
     private stepId: string,
     private silenceMs = 60000,
   ) {}
+
+  /** Set the run ID for observation event attribution. */
+  setRunId(runId: string): void { this.runId = runId; }
 
   /** Set the connection for silence detection — only fires when connected. */
   setConnection(conn: ConnectionState): void { this.conn = conn; }
@@ -41,7 +45,14 @@ export class OutputPipe {
     }
 
     this.batch += lines.length;
-    if (this.batch >= 100) { this.eb.emit({ type: "observation", lines: this.batch }); this.batch = 0; }
+    if (this.batch >= 100) {
+      this.eb.emit({
+        type: "observation", run_id: this.runId, source: "output_pipe",
+        summary: `${this.batch} lines processed`,
+        payload: { lines: this.batch, step_id: this.stepId },
+      });
+      this.batch = 0;
+    }
 
     if (lines.length > 0) this.resetSilence();
   }
@@ -58,7 +69,7 @@ export class OutputPipe {
     }
     await this.rd.flushAllPending();
     this.rd.checkExitCode?.(exitCode);
-    this.eb.emit({ type: "observation" });
+    this.eb.emit({ type: "observation", run_id: this.runId, source: "output_pipe", summary: "exec complete", payload: { step_id: this.stepId, exit_code: exitCode } });
     this.ag.onExecComplete?.(this.stepId);
   }
 

@@ -179,10 +179,10 @@ describe("HookManager", () => {
     expect(result.stderr).toBeDefined();
   });
 
-  it("returns empty result for non-matching hooks", async () => {
+  it("returns proceed for non-matching hooks", async () => {
     const hm = new HookManager([]);
     const result = await hm.execute("PreRunStart", { run_id: "r1" });
-    expect(result).toEqual({});
+    expect(result.decision).toBe("proceed");
   });
 
   it("filters hooks by match", async () => {
@@ -191,8 +191,8 @@ describe("HookManager", () => {
       match: { capability: "flash" },
       command: "./test.sh", timeout: 10,
     }]);
-    // Non-matching capability — hook should not run (and command doesn't exist, so if it ran it would throw)
+    // Non-matching capability — hook should not run, returns default proceed
     const result = await hm.execute("PreStepExecute", { run_id: "r1", capability: "shell_exec" });
-    expect(result).toEqual({});
+    expect(result.decision).toBe("proceed");
   });
 });

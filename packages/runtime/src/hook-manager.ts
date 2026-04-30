@@ -76,7 +76,7 @@ export class HookManager {
       }
     }
 
-    return {};
+    return { decision: "proceed" };
   }
 
   private matches(match: Record<string, string> | undefined, ctx: Record<string, unknown>): boolean {
