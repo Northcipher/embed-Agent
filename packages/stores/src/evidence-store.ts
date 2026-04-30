@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { writeAtomic } from "./atomic.js";
+import { validateId } from "./validate.js";
 
 // --- Types ---
 
@@ -29,12 +30,6 @@ export interface EvidenceIndex {
 }
 
 // --- Validation ---
-
-function validateId(id: string, label: string): void {
-  if (id.includes("..") || id.includes("/") || id.includes("\\")) {
-    throw new Error(`Invalid ${label}: "${id}" contains path characters`);
-  }
-}
 
 function validateRef(ref: string): void {
   if (ref.includes("..") || ref.includes("/") || ref.includes("\\")) {

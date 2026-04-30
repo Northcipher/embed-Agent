@@ -1,12 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { writeAtomic } from "./atomic.js";
-
-function validateId(id: string, label: string): void {
-  if (id.includes("..") || id.includes("/") || id.includes("\\")) {
-    throw new Error(`Invalid ${label}: "${id}" contains path characters`);
-  }
-}
+import { validateId } from "./validate.js";
 
 export interface WorkingMemoryEntry {
   key: string; summary: string;
@@ -40,9 +35,19 @@ export interface RunProfile {
 }
 
 export class MemoryStore {
+  /** Lock for updateFact read-modify-write serialization. */
+  private factsLock: Promise<void> = Promise.resolve();
+
   constructor(private dataRoot = ".embed-agent") {}
 
   private memDir() { return path.join(this.dataRoot, "memory"); }
+
+  private serializedFacts(fn: () => Promise<void>): Promise<void> {
+    const prev = this.factsLock;
+    const next = prev.then(fn, fn);
+    this.factsLock = next;
+    return next;
+  }
 
   async writeWorkingMemory(runId: string, entries: WorkingMemoryEntry[]): Promise<void> {
     validateId(runId, "runId");
@@ -75,14 +80,16 @@ export class MemoryStore {
 
   async updateFact(factId: string, patch: Partial<SemanticFact>): Promise<void> {
     const file = path.join(this.memDir(), "semantic-facts.jsonl");
-    try {
-      const lines = (await fs.readFile(file, "utf-8")).trim().split("\n");
-      const updated = lines.map(l => {
-        const f = JSON.parse(l) as SemanticFact;
-        return f.fact_id === factId ? JSON.stringify({ ...f, ...patch }) : l;
-      });
-      await writeAtomic(file, updated.join("\n") + "\n");
-    } catch { /* no facts yet */ }
+    await this.serializedFacts(async () => {
+      try {
+        const lines = (await fs.readFile(file, "utf-8")).trim().split("\n");
+        const updated = lines.map(l => {
+          const f = JSON.parse(l) as SemanticFact;
+          return f.fact_id === factId ? JSON.stringify({ ...f, ...patch }) : l;
+        });
+        await writeAtomic(file, updated.join("\n") + "\n");
+      } catch { /* no facts yet */ }
+    });
   }
 
   async queryFacts(scope: string, scopeId: string, category?: string, verifiedOnly = false): Promise<SemanticFact[]> {

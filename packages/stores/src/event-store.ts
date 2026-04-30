@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { EventType } from "@embed-agent/contracts";
+import { validateId } from "./validate.js";
 
 // --- Types ---
 
@@ -21,14 +22,6 @@ export interface AppendEvent {
 export interface EventRecord extends AppendEvent {
   seq: number;
   time: string;
-}
-
-// --- Validation ---
-
-function validateId(id: string, label: string): void {
-  if (id.includes("..") || id.includes("/") || id.includes("\\")) {
-    throw new Error(`Invalid ${label}: "${id}" contains path characters`);
-  }
 }
 
 // --- Seq reading ---

@@ -1,12 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { writeAtomic } from "./atomic.js";
-
-function validateId(id: string, label: string): void {
-  if (id.includes("..") || id.includes("/") || id.includes("\\")) {
-    throw new Error(`Invalid ${label}: "${id}" contains path characters`);
-  }
-}
+import { validateId } from "./validate.js";
 
 export type TargetState = "idle" | "preparing" | "busy" | "cleaning" | "dirty" | "recovery" | "offline";
 

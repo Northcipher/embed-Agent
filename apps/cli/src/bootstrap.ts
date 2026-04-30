@@ -61,11 +61,15 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
     log.warn("No ANTHROPIC_API_KEY set — using MockProvider for LLM calls");
   }
 
-  const llm = new LLMCallManager(llmProvider, {
-    planner: { model: "claude-sonnet-4-6", timeout: 120 },
-    observer: { model: "claude-haiku-4-5", timeout: 60 },
-    reply: { model: "claude-haiku-4-5", timeout: 60 },
-  });
+  // Read model names from system config, fall back to defaults
+  const llmConfig = (configs["system"] as Record<string, unknown>);
+  const models = {
+    planner: { model: (llmConfig?.models as Record<string, string>)?.planner ?? "claude-sonnet-4-6", timeout: 120 },
+    observer: { model: (llmConfig?.models as Record<string, string>)?.observer ?? "claude-haiku-4-5", timeout: 60 },
+    reply: { model: (llmConfig?.models as Record<string, string>)?.reply ?? "claude-haiku-4-5", timeout: 60 },
+  };
+
+  const llm = new LLMCallManager(llmProvider, models);
 
   // 5. Load prompts
   const promptLoader = new PromptLoader(`${dataRoot}/prompts`);
