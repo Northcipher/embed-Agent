@@ -1,6 +1,6 @@
 // CLI entry point — creates stores and Views for query commands.
 // Full RunManager/Agent wiring is in bootstrap.ts for production use.
-import { EventStore, EvidenceStore, RunStore, TargetStore, MemoryStore, Logger } from "@embed-agent/stores";
+import { EventStore, EvidenceStore, RunStore, TargetStore, MemoryStore, SkillStore, TaskStore, Logger } from "@embed-agent/stores";
 import { Views } from "@embed-agent/views";
 import { CommandHandler } from "./command-handler.js";
 import { runCli } from "./cli.js";
@@ -32,19 +32,33 @@ async function main(): Promise<void> {
   const runStore = new RunStore(dataRoot, log);
   const targetStore = new TargetStore(dataRoot);
   const memoryStore = new MemoryStore(dataRoot);
+  const skillStore = new SkillStore(dataRoot);
+  const taskStore = new TaskStore(dataRoot);
   const eventStore = new EventStore(dataRoot);
+
+  await skillStore.loadAll().catch(() => {});
 
   const views = new Views(runStore, eventStore, new EvidenceStore(dataRoot), targetStore, memoryStore);
   const handler = safeHandler(views);
 
-  // Wire management commands to real store data
-  const origMemList = handler.memoryList;
+  // Wire management commands to real stores
+  handler.skillList = async () => {
+    const skills = skillStore.list().map(s => ({ name: s.name, description: s.description, category: s.category }));
+    return { skills, status: "ok" };
+  };
+  handler.taskList = async () => {
+    const tasks = await taskStore.list();
+    return { tasks: tasks.map(t => ({ name: t.name, skill: t.skill, enabled: t.enabled })), status: "ok" };
+  };
+  handler.hookList = async () => {
+    return { hooks: [] as { name: string; on: string }[], status: "ok" };
+  };
   handler.memoryList = async (targetId?: string, category?: string) => {
     try {
       const facts = await memoryStore.queryFacts("target", targetId ?? "", category);
       const entries = facts.filter((f: { statement: string }) => f.statement !== "__DELETED__").map((f: { fact_id: string; category: string; statement: string; verified: boolean }) => ({ fact_id: f.fact_id, category: f.category, statement: f.statement, verified: f.verified }));
       return { entries, status: "ok" };
-    } catch { return origMemList(targetId, category); }
+    } catch { return { entries: [] as { fact_id: string; category: string; statement: string; verified: boolean }[], status: "ok" }; }
   };
 
   await runCli(handler);

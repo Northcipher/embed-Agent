@@ -185,7 +185,8 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
         },
       };
 
-      const pipe = new OutputPipe(ew, rb, rd, ag, eventBus, stepId);
+      const silenceMs = ((sysRules?.silence_timeout_sec as number) ?? 60) * 1000;
+      const pipe = new OutputPipe(ew, rb, rd, ag, eventBus, stepId, silenceMs);
       pipe.setRunId(runId);
       return pipe;
     };
