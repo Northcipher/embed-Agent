@@ -62,6 +62,7 @@ export class HookManager {
   async execute(point: HookPoint, ctx: Record<string, unknown>): Promise<HookResult> {
     const matching = this.hooks.filter(h => h.on === point && this.matches(h.match, ctx));
 
+    let lastResult: HookResult = { decision: "proceed" };
     for (const hook of matching) {
       const startTime = Date.now();
       let result: HookResult;
@@ -71,27 +72,28 @@ export class HookManager {
         result = { stderr: "Hook execution threw" };
       }
 
-      // Always emit hook_executed audit event
-      this.eb?.emit({
+      // Always emit hook_executed audit event with run_id for attribution
+      const ev: Record<string, unknown> = {
         type: "hook_executed",
         source: "hook_manager",
         summary: `Hook "${hook.name}" on ${point}: ${result.decision ?? "proceed"}`,
         payload: {
-          hook_name: hook.name,
-          point,
-          decision: result.decision,
-          stdout: result.stdout,
-          stderr: result.stderr,
-          duration_ms: Date.now() - startTime,
+          hook_name: hook.name, point, decision: result.decision,
+          stdout: result.stdout, stderr: result.stderr, duration_ms: Date.now() - startTime,
         },
-      });
+      };
+      if (ctx.run_id) ev.run_id = ctx.run_id as string;
+      this.eb?.emit(ev);
 
-      if (canReturnDecision(point)) {
-        return result; // first matching hook's result for decision points
+      lastResult = result;
+
+      // Short-circuit only on non-proceed for decision points
+      if (canReturnDecision(point) && result.decision && result.decision !== "proceed") {
+        return result;
       }
     }
 
-    return { decision: "proceed" };
+    return lastResult;
   }
 
   private matches(match: Record<string, string> | undefined, ctx: Record<string, unknown>): boolean {
@@ -103,11 +105,19 @@ export class HookManager {
   }
 
   private async runHook(hook: HookConfig, ctx: Record<string, unknown>): Promise<HookResult> {
-    // Security: validate command is a script path, not inline shell
-    const scriptPath = await this.validateCommand(hook.command);
+    // Parse command: extract script path, interpolate {{variables}} into args
+    const tokens = hook.command.split(/\s+/);
+    const scriptPath = tokens[0] ?? hook.command;
+    await this.validateCommand(scriptPath);
 
-    // Interpolate {{variables}} from ctx
-    const args = [JSON.stringify(ctx)];
+    // Interpolate {{variables}} from ctx, build args array
+    const args: string[] = [];
+    for (let i = 1; i < tokens.length; i++) {
+      const token = tokens[i]!;
+      args.push(token.replace(/\{\{(\w+)\}\}/g, (_, key: string) => String(ctx[key] ?? `{{${key}}}`)));
+    }
+    // Also pass full ctx as JSON for scripts that need structured input
+    args.push(JSON.stringify(ctx));
 
     try {
       const { stdout, stderr } = await execFileP(scriptPath, args, {
@@ -119,6 +129,10 @@ export class HookManager {
       if (canReturnDecision(hook.on) && output) {
         try {
           const parsed = JSON.parse(output) as HookResult;
+          // Validate decision against ALLOWED_DECISIONS for this hook point
+          if (parsed.decision && !(ALLOWED_DECISIONS[hook.on] ?? []).includes(parsed.decision)) {
+            return { stdout, stderr, decision: "proceed" };
+          }
           return { stdout, stderr, ...parsed };
         } catch {
           return { stdout, stderr };
@@ -128,7 +142,6 @@ export class HookManager {
       return { stdout, stderr };
     } catch (e) {
       const err = e as { code?: string; stderr?: string };
-      // Proceed on failure — never throw
       const msg = err.code === "ENOENT"
         ? `Hook script not found: ${hook.command}`
         : (err.stderr ?? `Hook failed: ${(e as Error).message}`);
@@ -137,26 +150,17 @@ export class HookManager {
   }
 
   /**
-   * Validate hook command: must be a script file path.
-   * Reject inline shell (pipes, redirects, command separators, backticks).
-   * Scripts with arguments (e.g., "./script.sh --flag") are allowed.
+   * Validate hook script path: must start with ./ or /, must exist and be readable.
+   * Template variables ({{var}}) in the command are handled by runHook, not rejected here.
    */
-  private async validateCommand(command: string): Promise<string> {
-    // Extract the script path (first token that looks like a path)
-    const match = command.match(/^(\.\/\S+|\/\S+)/);
-    const scriptPath = match?.[1];
-    if (!scriptPath) {
-      throw new Error(`Hook command must start with a file path, got: ${command}`);
+  private async validateCommand(scriptPath: string): Promise<void> {
+    if (!/^\.?\/|^\//.test(scriptPath)) {
+      throw new Error(`Hook script must be a file path, got: ${scriptPath}`);
     }
-
-    // Reject shell metacharacters in the remainder of the command
-    const remainder = command.slice(scriptPath.length);
-    if (/[;&|`$(){}]/.test(remainder)) {
-      throw new Error(`Hook command contains shell metacharacters: ${command}`);
+    // Reject shell metacharacters in the script path itself
+    if (/[;&|`$(){}\\]/.test(scriptPath)) {
+      throw new Error(`Hook script path contains shell metacharacters: ${scriptPath}`);
     }
-
-    // Verify the script file exists and is readable
     await fs.access(scriptPath, fs.constants.R_OK);
-    return scriptPath;
   }
 }

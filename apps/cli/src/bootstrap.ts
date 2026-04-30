@@ -4,7 +4,7 @@ import { ConnectionManager, TargetManager, OutputPipe, RingBuffer, RuleDetector,
 import { LLMCallManager, MockProvider, AnthropicProvider, Planner, Observer, ReplyGenerator, Memory, SkillRegistry } from "@embed-agent/agent";
 import { NotificationFilter, LogChannel } from "@embed-agent/notify";
 import { Views } from "@embed-agent/views";
-import { SystemConfigSchema, LLMConfigSchema } from "@embed-agent/contracts";
+import { SystemConfigSchema, LLMConfigSchema, HookConfigSchema } from "@embed-agent/contracts";
 import { CommandHandler } from "./command-handler.js";
 import { runCli } from "./cli.js";
 
@@ -113,8 +113,13 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   );
   const tm = new TargetManager(cm, targetStore);
 
-  // 8. Runtime layer
-  const hm = new HookManager([], { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } });
+  // 8. Runtime layer — load hooks config
+  const { configs: hookConfigs } = await loader.loadAll({
+    "hooks.yml": { schema: HookConfigSchema, required: false },
+  });
+  const hooksConfig = hookConfigs["hooks"] as { hooks: { name: string; on: string; command: string; timeout: number }[] } | undefined;
+  const hooks = (hooksConfig?.hooks ?? []) as never[];
+  const hm = new HookManager(hooks as never, { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } });
 
   // Create SkillRegistry + load skills
   const skillStore = new SkillStore(dataRoot);
