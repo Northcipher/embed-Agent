@@ -14,7 +14,7 @@ export const ValidateArtifactInput = z.object({
   allow_shell_exec: z.boolean().optional(),
   no_flash: z.boolean().optional(),
   continuous: z.boolean().optional(),
-  test_hint: z.string().optional(),
+  test_hint: z.object({ kind: z.enum(["serial","adb_shell","fastboot","custom"]), command: z.string().optional(), pattern: z.string().optional() }).optional(),
   concerns: z.array(z.string()).optional(),
 });
 

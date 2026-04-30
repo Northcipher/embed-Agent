@@ -33,7 +33,14 @@ const handlers = {
       expected: (input.expected as string) ?? "",
     };
     if (input.concerns) ctx.concerns = input.concerns;
-    if (input.test_hint) ctx.test_hint = { kind: "adb_shell", command: input.test_hint as string };
+    if (input.success_criteria) ctx.success_criteria = input.success_criteria;
+    if (input.failure_criteria) ctx.failure_criteria = input.failure_criteria;
+
+    // Structured test_hint: { kind, command?, pattern? }
+    const hint = input.test_hint as Record<string, unknown> | undefined;
+    if (hint?.command) {
+      ctx.test_hint = { kind: (hint.kind as string) ?? "adb_shell", command: hint.command as string };
+    }
 
     const mcpInput: Record<string, unknown> = {
       context: ctx as { task: string; expected: string },
@@ -43,6 +50,7 @@ const handlers = {
     const cstr: Record<string, unknown> = {};
     if (input.max_duration_sec != null) cstr.max_duration_sec = input.max_duration_sec;
     if (input.allow_flash != null) cstr.allow_flash = input.allow_flash;
+    if (input.allow_shell_exec != null) cstr.allow_shell_exec = input.allow_shell_exec;
     if (input.no_flash != null) cstr.no_flash = input.no_flash;
     if (input.continuous != null) cstr.continuous = input.continuous;
     if (Object.keys(cstr).length > 0) mcpInput.constraints = cstr;
