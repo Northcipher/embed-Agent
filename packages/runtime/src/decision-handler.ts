@@ -101,7 +101,7 @@ export class DecisionHandler {
   /** Human override — CB1 counter */
   onOverride(): void {
     this.overrideBreaker.onOverride();
-    this.eb.emit({ type: "decision_overridden", source: "decision_handler", summary: "Human override" });
+    this.eb.emit({ type: "decision_overridden", run_id: this.runId, source: "decision_handler", summary: "Human override" });
   }
 
   private async handleEvent(event: Record<string, unknown>): Promise<void> {
@@ -109,7 +109,8 @@ export class DecisionHandler {
     if (event.run_id !== this.runId) return;
 
     const severity = (event.severity as string) ?? "info";
-    const ruleId = (event.rule_id as string) ?? (event.type as string);
+    // Derive specific trigger key: rule_id preferred, then type+entity for non-rule events
+    const ruleId = (event.rule_id as string) ?? `${event.type}-${(event.payload as Record<string, unknown>)?.stage ?? (event.payload as Record<string, unknown>)?.sources ?? (event.payload as Record<string, unknown>)?.metric ?? ""}`;
 
     // fatal → stop (failed path, not cancelled). Bypasses CB1/CB3.
     if (severity === "fatal") {

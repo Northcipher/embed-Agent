@@ -33,7 +33,7 @@ export class StepRetryBreaker {
   shouldRetry(failureType: string, maxSame = 3): boolean {
     if (this.consecutive?.type === failureType) {
       this.consecutive.count++;
-      return this.consecutive.count <= maxSame;
+      return this.consecutive.count < maxSame;
     }
     this.consecutive = { type: failureType, count: 1 };
     return true;

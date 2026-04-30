@@ -6,6 +6,7 @@ interface RunManagerLike {
   resume(runId: string): Promise<void>;
   cancel(runId: string, reason: string): Promise<void>;
   stopRun?(runId: string, reason: string): Promise<void>;
+  onOverride?(runId: string): void;
 }
 
 interface ViewsLike {
@@ -126,8 +127,10 @@ export class CommandHandler {
         await (this.rm.stopRun?.(runId, reason ?? "manual override") ?? this.rm.cancel(runId, reason ?? "manual override"));
       } else if (decision === "cancel") {
         await this.rm.cancel(runId, reason ?? "manual override");
+      } else {
+        // "continue" → CB1 counter: record override, downgrade future auto-stop to suggest
+        this.rm.onOverride?.(runId);
       }
-      // "continue" is a no-op — the run continues
       return { accepted: true, run_id: runId, action: decision };
     } catch (e) {
       return { status: "error", error_code: "run_not_found", message: (e as Error).message, details: { run_id: runId } };

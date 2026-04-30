@@ -423,6 +423,11 @@ export class RunManager {
     if (sq) sq.append(step as never);
   }
 
+  /** Record a human override on the active DecisionHandler (CB1 counter). */
+  onOverride(runId: string): void {
+    this.activeDecisionHandlers.get(runId)?.onOverride();
+  }
+
   /** Stop a run due to fatal signal — uses "failed" path, not "cancelled". */
   async stopRun(runId: string, reason: string): Promise<void> {
     const run = await this.runStore.get(runId);

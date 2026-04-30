@@ -73,12 +73,11 @@ describe("StepQueue", () => {
 // --- CB2: StepRetryBreaker ---
 
 describe("StepRetryBreaker", () => {
-  it("allows retries up to maxSame", () => {
+  it("trips CB2 on 3rd consecutive same failure", () => {
     const breaker = new StepRetryBreaker();
-    expect(breaker.shouldRetry("timeout")).toBe(true);
-    expect(breaker.shouldRetry("timeout")).toBe(true);
-    expect(breaker.shouldRetry("timeout")).toBe(true);
-    expect(breaker.shouldRetry("timeout")).toBe(false); // 4th same type → CB2 trips
+    expect(breaker.shouldRetry("timeout")).toBe(true);  // 1st
+    expect(breaker.shouldRetry("timeout")).toBe(true);  // 2nd
+    expect(breaker.shouldRetry("timeout")).toBe(false); // 3rd — CB2 trips
   });
 
   it("reset clears consecutive counter", () => {
@@ -89,13 +88,12 @@ describe("StepRetryBreaker", () => {
     expect(breaker.shouldRetry("timeout")).toBe(true);
   });
 
-  it("different failure types don't accumulate", () => {
+  it("different failure types reset counter", () => {
     const breaker = new StepRetryBreaker();
     expect(breaker.shouldRetry("timeout")).toBe(true);
-    expect(breaker.shouldRetry("connection_lost")).toBe(true); // different type resets
-    expect(breaker.shouldRetry("connection_lost")).toBe(true);
-    expect(breaker.shouldRetry("connection_lost")).toBe(true);
-    expect(breaker.shouldRetry("connection_lost")).toBe(false);
+    expect(breaker.shouldRetry("connection_lost")).toBe(true); // different type, count=1
+    expect(breaker.shouldRetry("connection_lost")).toBe(true); // count=2
+    expect(breaker.shouldRetry("connection_lost")).toBe(false); // count=3, trips
   });
 });
 
