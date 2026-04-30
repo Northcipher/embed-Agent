@@ -29,8 +29,22 @@ export interface HookResult {
   stderr?: string;
 }
 
-// Hook points that allow returning a decision
-const DECISION_POINTS: HookPoint[] = ["PreRunStart", "PreStepExecute", "OnStopDecision"];
+// Per-HookPoint allowed decisions (06-hook.md Section 4)
+const ALLOWED_DECISIONS: Record<HookPoint, string[]> = {
+  PreRunStart: ["block"],
+  PostRunEnd: [],
+  PreStepExecute: ["block", "retry"],
+  PostStepComplete: [],
+  PostStepFailed: [],
+  OnStopDecision: ["block"],
+  OnFinalizing: [],
+  RuntimeStart: [],
+};
+
+/** Check if a HookPoint can return a decision (non-empty allowed list). */
+function canReturnDecision(point: HookPoint): boolean {
+  return (ALLOWED_DECISIONS[point] ?? []).length > 0;
+}
 
 interface AuditEmitter {
   emit(e: Record<string, unknown>): Promise<void>;
@@ -72,7 +86,7 @@ export class HookManager {
         },
       });
 
-      if (DECISION_POINTS.includes(point)) {
+      if (canReturnDecision(point)) {
         return result; // first matching hook's result for decision points
       }
     }
@@ -102,7 +116,7 @@ export class HookManager {
       });
 
       const output = stdout.trim();
-      if (DECISION_POINTS.includes(hook.on) && output) {
+      if (canReturnDecision(hook.on) && output) {
         try {
           const parsed = JSON.parse(output) as HookResult;
           return { stdout, stderr, ...parsed };

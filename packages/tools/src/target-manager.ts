@@ -5,6 +5,7 @@ interface TargetStore {
   get(id: string): Promise<{ target_id: string; connections: Record<string, unknown>; recovery?: { reboot_method?: string; stable_artifact?: string } } | null>;
   getState(id: string): Promise<{ state: string; current_run_id?: string } | null>;
   updateState(id: string, p: Record<string, unknown>): Promise<void>;
+  listAll?(): Promise<{ target_id: string; connections: Record<string, unknown> }[]>;
 }
 
 interface PreflightCheck { check: string; passed: boolean; error?: string; }
@@ -96,5 +97,19 @@ export class TargetManager {
   /** Transition target to a specific state. */
   async transitionState(targetId: string, to: string): Promise<void> {
     await this.store.updateState(targetId, { state: to });
+  }
+
+  /** Reconnect all known targets — used during startup recovery. */
+  async reconnectAll(): Promise<void> {
+    const profiles = await this.store.listAll?.() ?? [];
+    for (const p of profiles) {
+      const transports = Object.keys(p.connections ?? {}) as Transport[];
+      for (const t of transports) {
+        const conn = this.cm.get(p, t);
+        if (conn) {
+          try { await conn.connect(); } catch { /* best effort */ }
+        }
+      }
+    }
   }
 }

@@ -3,6 +3,7 @@ import { LocalConnection, type SecurityPolicy } from "./local.js";
 import { SerialConnection } from "./serial.js";
 import { AdbConnection } from "./adb.js";
 import { FastbootConnection } from "./fastboot.js";
+import { SshConnection } from "./ssh.js";
 
 export type Transport = "serial" | "adb" | "fastboot" | "ssh" | "local";
 
@@ -46,6 +47,11 @@ export class ConnectionManager {
       case "fastboot": {
         const f = target.connections.fastboot as { device_id: string } | undefined;
         if (f) conn = new FastbootConnection(f.device_id);
+        break;
+      }
+      case "ssh": {
+        const s = target.connections.ssh as { host: string; port?: number; username?: string } | undefined;
+        if (s) conn = new SshConnection(s.host, s.port, s.username);
         break;
       }
     }

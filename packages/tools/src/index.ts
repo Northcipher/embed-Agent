@@ -4,6 +4,7 @@ export { SerialConnection } from "./serial.js";
 export type { SerialConfig } from "./serial.js";
 export { AdbConnection } from "./adb.js";
 export { FastbootConnection } from "./fastboot.js";
+export { SshConnection } from "./ssh.js";
 export { FakeConnection } from "./fake.js";
 export { OutputPipe } from "./output-pipe.js";
 export { RingBuffer } from "./ring-buffer.js";

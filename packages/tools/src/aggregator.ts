@@ -146,6 +146,15 @@ export class Aggregator {
     return "stable";
   }
 
+  /** Finalize aggregation at run end — emit summary and close stage tracking. */
+  onRunEnd(): void {
+    this.eb.emit({
+      type: "observation", source: "aggregator",
+      summary: `Run ended after ${this.elapsed}s in stage "${this.stage}"`,
+      payload: { final_stage: this.stage, total_elapsed: this.elapsed, stage_order: this.stageOrder },
+    });
+  }
+
   getStage(): string { return this.stage; }
   getElapsed(): number { return this.elapsed; }
   getStageOrder(): string[] { return [...this.stageOrder]; }

@@ -166,4 +166,10 @@ export class Views {
   async history(targetId: string, limit = 10): Promise<{ episode_id: string; result: string; summary: string }[]> {
     return this.memoryStore.listByTarget(targetId, limit);
   }
+
+  /** Rebuild all read projections — used during startup recovery. */
+  async rebuild(): Promise<void> {
+    // Preload target states and non-terminal runs to warm caches
+    await Promise.all([this.targets(), this.runStore.listNonTerminal()]);
+  }
 }
