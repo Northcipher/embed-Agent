@@ -141,13 +141,18 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
     const profile = await targetStore.get(targetId);
     const target = profile ?? { target_id: targetId, connections: {} as Record<string, unknown> };
 
-    // Per-step OutputPipe factory: creates RuleDetector + Aggregator + RingBuffer pipeline
+    // Per-run Aggregator — shared across all steps, accumulates stage/pattern/baseline state
+    const ag = new Aggregator(eventBus);
+    ag.setRunId(runId);
+
+    // Per-step OutputPipe factory: creates RuleDetector + RingBuffer per step, shares Aggregator
     const pipeFactory = (stepId: string) => {
       const rb = new RingBuffer(500);
-      // EvidenceStore adapter: RuleDetector expects saveWindow, EvidenceStore provides write
       const evidenceSaver = { saveWindow: (rid: string, ref: string, data: string) => evidenceStore.write(rid, ref, data).then(() => {}) };
       const rd = new RuleDetector(rb, eventBus, evidenceSaver, runId);
-      // Load system rules from config
+      rd.setStepId?.(stepId);
+
+      // Load rules from config
       const sysRules = (systemConfig?.runtime as Record<string, unknown>)?.rule_policy as Record<string, unknown>;
       const fatalPatterns = (sysRules?.fatal_patterns as string[]) ?? [];
       const warnPatterns = (sysRules?.warning_patterns as string[]) ?? [];
@@ -157,9 +162,6 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
         [],
       );
 
-      const ag = new Aggregator(eventBus);
-
-      // EvidenceWriter: routes through EvidenceStore for indexing + evidence_collected events
       const ew = {
         append: (d: string) => {
           evidenceStore.write(runId, `step-${stepId}:full`, d).catch(() => {});

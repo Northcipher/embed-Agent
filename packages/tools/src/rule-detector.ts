@@ -41,6 +41,11 @@ export class RuleDetector {
     this.system = sys; this.target = tgt; this.known = knw;
   }
 
+  private currentStepId?: string;
+
+  /** Set the current step ID for step-level attribution on rule_matched events. */
+  setStepId(stepId: string): void { this.currentStepId = stepId; }
+
   loadStepPatterns(patterns: string[]): void {
     this.step = patterns.map(p => ({
       id: `step_${p.slice(0, 20)}`, kind: "pattern" as const,
@@ -101,7 +106,7 @@ export class RuleDetector {
 
     this.eb.emit({
       type: "rule_matched", run_id: this.runId, rule_id: p.rule.id, severity: p.rule.severity,
-      source: "rule_detector", step_id: undefined,
+      source: "rule_detector", step_id: this.currentStepId,
       summary: `Rule ${p.rule.id} matched`,
       payload: { pattern: p.rule.pattern?.source },
       ...(evidenceSaved ? { evidence_refs: [p.ref] } : {}),

@@ -98,6 +98,7 @@ export class ConnectionManager {
 
       this.eb!.emit({
         type: "target_state_changed",
+        run_id: runtimeState?.current_run_id,
         source: "connection_manager",
         summary: `${transport} disconnected for target ${targetId}`,
         payload: {

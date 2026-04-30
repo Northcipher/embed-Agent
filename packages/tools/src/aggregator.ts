@@ -12,14 +12,22 @@ export class Aggregator {
   private elapsed = 0;
   private markers: { text: string; stage: string }[] = [];
   // Pattern detection state
-  private recentCounts: number[] = []; // last N checkpoint line counts
+  private recentCounts: number[] = [];
   private prevCount = 0;
   private stageOrder: string[] = [];
   // Cross-source state
   private execResults: { stepId: string; exitCode: number; source: string }[] = [];
   private baseline: Baseline | null = null;
+  private runId?: string;
 
   constructor(private eb: Emitter, private interval = 300) {}
+
+  setRunId(runId: string): void { this.runId = runId; }
+
+  private emit(e: Record<string, unknown>): void {
+    if (this.runId) e.run_id = this.runId;
+    this.eb.emit(e);
+  }
 
   setMarkers(m: { text: string; stage: string }[]): void { this.markers = m; }
 
@@ -34,7 +42,7 @@ export class Aggregator {
         const prev = this.stage;
         this.stage = m.stage;
         this.stageOrder.push(m.stage);
-        this.eb.emit({
+        this.emit({
           type: "stage_transition", source: "aggregator",
           summary: `Stage: ${prev} → ${m.stage}`,
           payload: { from: prev, to: m.stage, elapsed: this.elapsed },
@@ -53,7 +61,7 @@ export class Aggregator {
       const prev = this.execResults[this.execResults.length - 2]!;
       // Different sources finishing near same time with different exit codes → correlation signal
       if (last.source !== prev.source) {
-        this.eb.emit({
+        this.emit({
           type: "correlated", source: "aggregator",
           summary: `Cross-source: ${prev.source}(${prev.exitCode}) + ${last.source}(${last.exitCode})`,
           payload: {
@@ -86,7 +94,7 @@ export class Aggregator {
         stage_order: [...this.stageOrder],
       },
     };
-    this.eb.emit(cp);
+    this.emit(cp);
 
     // Baseline comparison
     if (this.baseline) {
@@ -94,7 +102,7 @@ export class Aggregator {
         ? Math.abs(linesPerSec - this.baseline.avg_lines_per_sec) / this.baseline.avg_lines_per_sec
         : 0;
       if (deviation > 0.5) {
-        this.eb.emit({
+        this.emit({
           type: "baseline_diff", source: "aggregator", severity: "warning",
           summary: `Lines/sec deviation: ${Math.round(deviation * 100)}% from baseline (${this.baseline.avg_lines_per_sec})`,
           payload: {
@@ -106,7 +114,7 @@ export class Aggregator {
       if (this.stageOrder.length > 0 && this.baseline.typical_stage_order.length > 0) {
         const match = this.stageOrder.every((s, i) => s === this.baseline!.typical_stage_order[i]);
         if (!match && this.stageOrder.length >= this.baseline.typical_stage_order.length) {
-          this.eb.emit({
+          this.emit({
             type: "baseline_diff", source: "aggregator", severity: "warning",
             summary: "Stage order diverges from baseline",
             payload: { current_order: this.stageOrder, baseline_order: this.baseline.typical_stage_order },
@@ -148,7 +156,7 @@ export class Aggregator {
 
   /** Finalize aggregation at run end — emit summary and close stage tracking. */
   onRunEnd(): void {
-    this.eb.emit({
+    this.emit({
       type: "observation", source: "aggregator",
       summary: `Run ended after ${this.elapsed}s in stage "${this.stage}"`,
       payload: { final_stage: this.stage, total_elapsed: this.elapsed, stage_order: this.stageOrder },
