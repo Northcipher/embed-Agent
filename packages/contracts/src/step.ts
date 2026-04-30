@@ -1,4 +1,4 @@
-export type StepAction = "exec" | "stream" | "push" | "flash";
+export type StepAction = "exec" | "stream" | "push" | "flash" | "wait";
 
 export type StepCondition = "always" | "on_failure" | "on_success";
 export type StepOnFailure = "stop" | "continue" | "collect_and_stop";
@@ -12,7 +12,7 @@ export interface ObserveConfig {
 
 export interface RetryPolicy {
   max_retries: number;
-  intervals: number[]; // seconds
+  intervals_sec: number[];
 }
 
 export interface Step {
@@ -24,7 +24,7 @@ export interface Step {
   partition?: string;
   src?: string;
   dst?: string;
-  timeout: number;
+  timeout_sec: number;
   condition: StepCondition;
   on_failure: StepOnFailure;
   observe?: ObserveConfig;

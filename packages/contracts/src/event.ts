@@ -57,6 +57,65 @@ export type EventSeverity = "fatal" | "warning" | "info";
 
 export type DecisionSource = "rule" | "observer" | "human" | "fallback";
 
+// --- Typed Event Payloads ---
+
+export interface ResultReadyPayload {
+  status: "completed" | "failed" | "cancelled";
+  summary: string;
+  suggested_next: string;
+  evidence_path: string;
+  key_evidence: { summary: string; evidence_refs: string[] }[];
+  confidence: number;
+}
+
+export interface RuleMatchedPayload {
+  pattern: string;
+  rule_id: string;
+}
+
+export interface DecisionMadePayload {
+  decision: string;
+  confidence: number;
+  reasoning_trace: string;
+}
+
+export interface TargetStateChangedPayload {
+  target_id: string;
+  state: string;
+  transport?: string;
+}
+
+export interface StepStartedPayload {
+  capability: string;
+  action: string;
+}
+
+export interface StepFailedPayload {
+  failure_type?: string;
+}
+
+export interface CheckpointPayload {
+  metrics: Record<string, number>;
+  trend?: string;
+}
+
+export interface ObservationPayload {
+  lines?: number;
+}
+
+export type EventPayload =
+  | ResultReadyPayload
+  | RuleMatchedPayload
+  | DecisionMadePayload
+  | TargetStateChangedPayload
+  | StepStartedPayload
+  | StepFailedPayload
+  | CheckpointPayload
+  | ObservationPayload
+  | Record<string, unknown>;
+
+// --- Event ---
+
 export interface Event {
   seq: number;
   run_id?: string;
@@ -67,6 +126,6 @@ export interface Event {
   source: string;
   step_id?: string;
   summary: string;
-  payload: Record<string, unknown>;
+  payload: EventPayload;
   evidence_refs?: string[];
 }

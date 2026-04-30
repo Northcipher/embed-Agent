@@ -10,5 +10,4 @@ export * from "./hook.js";
 export * from "./error.js";
 export * from "./task.js";
 export * from "./schemas.js";
-export { makeError } from "./error-response.js";
-export type { ErrorResponse } from "./error-response.js";
+export { makeError, type ErrorResponse } from "./error-response.js";

@@ -12,10 +12,3 @@ export const ERROR_CODES = [
 ] as const;
 
 export type ErrorCode = typeof ERROR_CODES[number];
-
-export interface ErrorResponse {
-  status: "error";
-  error_code: ErrorCode;
-  message: string;
-  details?: Record<string, unknown>;
-}

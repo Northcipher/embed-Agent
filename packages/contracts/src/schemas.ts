@@ -61,6 +61,73 @@ export const LLMConfigSchema = z.object({
   }),
 });
 
+// System Config Schema
+export const SystemConfigSchema = z.object({
+  runtime: z.object({
+    retry: z.object({
+      max_retries: z.number(),
+      intervals_sec: z.number().array(),
+      retryable: z.string().array(),
+    }),
+    rule_policy: z.object({
+      fatal_patterns: z.string().array(),
+      warning_patterns: z.string().array(),
+      silence_timeout_sec: z.number(),
+    }),
+    ring_buffer: z.object({
+      max_lines: z.number(),
+      default_before: z.number(),
+      default_after: z.number(),
+    }),
+    step_executor: z.object({
+      max_timeout_sec: z.number(),
+      default_timeout_sec: z.number(),
+    }),
+  }),
+  storage: z.object({
+    data_root: z.string(),
+    max_evidence_bytes: z.number(),
+    cleanup: z.object({
+      keep_completed_days: z.number(),
+      keep_failed_days: z.number(),
+      max_episodes_per_target: z.number(),
+    }),
+  }),
+  notifications: z.object({
+    enabled: z.boolean(),
+    channels: z.object({
+      slack: z.object({ webhook_url_env: z.string() }).optional(),
+      email: z.object({ smtp_host: z.string(), smtp_port: z.number() }).optional(),
+    }).optional(),
+    throttle: z.object({
+      run_result_sec: z.number(),
+      target_offline_sec: z.number(),
+      memory_suggestion_sec: z.number(),
+    }),
+  }),
+  security: z.object({
+    allowed_shell_commands: z.string().array(),
+    max_command_length: z.number(),
+    block_unsafe_patterns: z.boolean(),
+  }),
+  observer: z.object({
+    debounce_sec: z.number(),
+    max_concurrent_per_run: z.number(),
+    default_checkpoint_interval_sec: z.number(),
+    circuit_breaker: z.object({
+      max_failures: z.number(),
+      probe_after_sec: z.number(),
+    }),
+    warning_escalation: z.object({
+      threshold: z.number(),
+      window_sec: z.number(),
+    }),
+  }),
+});
+
+// System config type
+export type SystemConfig = z.infer<typeof SystemConfigSchema>;
+
 // Hook Config Schema
 export const HookPointEnum = z.enum([
   "PreRunStart", "PostRunEnd",
