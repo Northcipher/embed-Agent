@@ -19,7 +19,8 @@
   },
   "dependencies": {
     "@embed-agent/runtime": "workspace:*",
-    "@embed-agent/stores": "workspace:*"
+    "@embed-agent/stores": "workspace:*",
+    "@embed-agent/views": "workspace:*"
   },
   "bin": {
     "va": "./dist/main.js"

@@ -48,10 +48,15 @@ export function createMcpServer(handlers: ToolHandlers, transport: McpTransport)
           result: { content: [{ type: "text", text: JSON.stringify(result) }] },
         });
       } catch (e) {
+        // Return structured error as tool result, not JSON-RPC error
+        const errMsg = (e as Error).message;
+        const errorResult = errMsg.includes("Zod")
+          ? { status: "error", error_code: "invalid_request", message: errMsg }
+          : { status: "error", error_code: "internal_error", message: errMsg };
         await transport.send({
           jsonrpc: "2.0",
           id: msg.id,
-          error: { code: -32000, message: (e as Error).message },
+          result: { content: [{ type: "text", text: JSON.stringify(errorResult) }] },
         });
       }
     }

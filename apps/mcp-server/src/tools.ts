@@ -231,31 +231,38 @@ export const TOOL_DEFINITIONS = [
 
 export interface ToolHandlers {
   validate_artifact(input: z.infer<typeof ValidateArtifactInput>): Promise<{
-    status: string; run_id?: string; reasons?: string[]; failed_checks?: { check: string; error: string }[];
+    status: string; run_id?: string; state?: string; reasons?: string[];
+    failed_checks?: { check: string; error: string }[];
+    missing_info?: string[]; suggested_next?: string;
   }>;
   get_run_status(input: z.infer<typeof GetRunStatusInput>): Promise<{
-    run_id: string; state: string; current_step?: { id: string }; elapsed_sec: number; evidence_path?: string;
+    run_id: string; state: string; current_step?: { id: string; capability: string; started_at: string; timeout_sec: number };
+    target?: { target_id: string; state: string; serial: string; adb: string };
+    elapsed_sec: number; last_event_seq: number; evidence_path: string;
   } | null>;
   watch_run(input: z.infer<typeof WatchRunInput>): Promise<{
-    run_id: string; events: { seq: number; type: string; severity?: string; summary: string; time: string }[]; next_after_seq: number;
+    run_id: string; status: string; events: { seq: number; type: string; severity?: string; summary: string; time: string }[];
+    next_after_seq: number;
   }>;
   get_run_events(input: z.infer<typeof GetRunEventsInput>): Promise<{
-    run_id: string; events: { seq: number; type: string; severity?: string; summary: string; time: string }[]; next_after_seq: number; has_more: boolean;
+    run_id: string; events: { seq: number; type: string; severity?: string; summary: string; time: string }[];
+    next_after_seq: number; has_more: boolean;
   }>;
   get_evidence(input: z.infer<typeof GetEvidenceInput>): Promise<{
     available: boolean; index?: { refs: { ref: string; kind: string }[] }; content?: string;
   }>;
   get_run_result(input: z.infer<typeof GetRunResultInput>): Promise<{
-    run_id: string; state: string; result_available: boolean; summary?: string; suggested_next?: string; evidence_path?: string;
-    key_evidence?: { summary: string; evidence_refs: string[] }[];
+    run_id: string; state: string; result_available: boolean; summary?: string; suggested_next?: string;
+    evidence_path?: string; key_evidence?: { summary: string; evidence_refs: string[] }[];
   }>;
   intervene_run(input: z.infer<typeof InterveneRunInput>): Promise<{
-    run_id: string; accepted: boolean; action: string;
+    run_id: string; accepted: boolean; action: string; event_seq?: number;
   }>;
   cancel_run(input: z.infer<typeof CancelRunInput>): Promise<{
     run_id: string; accepted: boolean; status: string;
   }>;
   get_target_capabilities(input: z.infer<typeof GetTargetCapabilitiesInput>): Promise<{
-    target: string; state: string; current_run_id?: string;
+    target: string; runtime_state: { state: string; serial: string; adb: string; fastboot: string; current_run_id?: string };
+    capabilities: string[];
   }>;
 }
