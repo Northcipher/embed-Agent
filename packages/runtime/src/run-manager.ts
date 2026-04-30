@@ -174,13 +174,14 @@ export class RunManager {
       return await this.rejectRun(runId, req.target, "Pre-flight failed", "target_not_ready", pf.checks.map(c => ({ check: c.check, error: c.error ?? "failed" })));
     }
 
-    // 8. Emit RunStarted → update state (running + target busy) → load steps
-    this.eb.emit({
+    // 8. Emit RunStarted FIRST (await — event must land before state advances)
+    await this.eb.emit({
       type: "run_started", run_id: runId, source: "run_manager",
       summary: `Run ${runId} started on target ${req.target}`,
       payload: { plan_id: plan.plan_id, target_id: req.target, estimated_duration_sec: plan.estimated_duration_sec },
     });
 
+    // Then advance state
     await Promise.all([
       this.runStore.update(runId, { state: "running", started_at: new Date().toISOString() }),
       this.targetState.updateState(req.target, { state: "busy" }),

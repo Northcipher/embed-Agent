@@ -1,5 +1,5 @@
 import type { Connection } from "./connection.js";
-import { LocalConnection } from "./local.js";
+import { LocalConnection, type SecurityPolicy } from "./local.js";
 import { SerialConnection } from "./serial.js";
 import { AdbConnection } from "./adb.js";
 import { FastbootConnection } from "./fastboot.js";
@@ -18,10 +18,12 @@ export class ConnectionManager {
   private pool = new Map<string, Connection>();
   private eb: Emitter | undefined;
   private targetState: TargetStateReader | undefined;
+  private securityPolicy: Partial<SecurityPolicy> | undefined;
 
-  constructor(eb?: Emitter, targetState?: TargetStateReader) {
+  constructor(eb?: Emitter, targetState?: TargetStateReader, securityPolicy?: Partial<SecurityPolicy>) {
     this.eb = eb;
     this.targetState = targetState;
+    this.securityPolicy = securityPolicy;
   }
 
   get(target: { target_id: string; connections: Record<string, unknown> }, transport: Transport): Connection | null {
@@ -30,7 +32,7 @@ export class ConnectionManager {
 
     let conn: Connection | null = null;
     switch (transport) {
-      case "local": conn = new LocalConnection(); break;
+      case "local": conn = new LocalConnection(this.securityPolicy); break;
       case "serial": {
         const s = target.connections.serial as { port: string; baud: number } | undefined;
         if (s) conn = new SerialConnection({ port: s.port, baudRate: s.baud });

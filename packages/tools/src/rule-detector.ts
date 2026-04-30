@@ -100,7 +100,7 @@ export class RuleDetector {
     }
 
     this.eb.emit({
-      type: "rule_matched", rule_id: p.rule.id, severity: p.rule.severity,
+      type: "rule_matched", run_id: this.runId, rule_id: p.rule.id, severity: p.rule.severity,
       source: "rule_detector", step_id: undefined,
       summary: `Rule ${p.rule.id} matched`,
       payload: { pattern: p.rule.pattern?.source },
