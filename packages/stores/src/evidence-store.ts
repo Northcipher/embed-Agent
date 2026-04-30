@@ -1,5 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { writeAtomic } from "./atomic.js";
+
+// --- Types ---
 
 export interface EvidenceRef {
   ref: string;
@@ -24,10 +27,44 @@ export interface EvidenceIndex {
   key_events: KeyEvent[];
 }
 
+// --- Validation ---
+
+function validateId(id: string, label: string): void {
+  if (id.includes("..") || id.includes("/") || id.includes("\\")) {
+    throw new Error(`Invalid ${label}: "${id}" contains path characters`);
+  }
+}
+
+function validateRef(ref: string): void {
+  if (ref.includes("..") || ref.includes("/") || ref.includes("\\")) {
+    throw new Error(`Invalid evidence ref: "${ref}" contains path characters`);
+  }
+  if (ref.length === 0 || ref.length > 256) {
+    throw new Error(`Invalid evidence ref: length must be 1-256, got ${ref.length}`);
+  }
+}
+
+// --- Event emitter interface ---
+
+interface Emitter {
+  emit(e: Record<string, unknown>): void;
+}
+
+// --- Evidence Store ---
+
 export class EvidenceStore {
-  constructor(private dataRoot = ".embed-agent") {}
+  private dataRoot: string;
+  /** Per-run mutex for index read-modify-write serialization. */
+  private indexLocks = new Map<string, Promise<void>>();
+  private eb: Emitter | undefined;
+
+  constructor(dataRoot = ".embed-agent", eb?: Emitter) {
+    this.dataRoot = path.resolve(dataRoot);
+    this.eb = eb;
+  }
 
   private runDir(runId: string): string {
+    validateId(runId, "runId");
     return path.join(this.dataRoot, "runs", runId);
   }
 
@@ -35,25 +72,52 @@ export class EvidenceStore {
     return path.join(this.runDir(runId), "evidence-index.json");
   }
 
+  /** Serialize index mutations per run to prevent lost updates under concurrency. */
+  private serializedIndex(runId: string, fn: () => Promise<void>): Promise<void> {
+    const prev = this.indexLocks.get(runId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    this.indexLocks.set(runId, next);
+    return next;
+  }
+
+  // --- Write ---
+
   async write(runId: string, ref: string, data: string | Buffer): Promise<{ filePath: string; bytes: number }> {
+    validateId(runId, "runId");
+    validateRef(ref);
+
     const dir = this.runDir(runId);
     await fs.mkdir(path.join(dir, "snapshots"), { recursive: true });
 
     const fileName = this.refToFile(ref);
     const filePath = path.join(dir, fileName);
-    const tmpPath = filePath + ".tmp";
-
     const content = typeof data === "string" ? Buffer.from(data) : data;
+
+    // Atomic write for the evidence file itself
+    const tmpPath = filePath + ".tmp";
     await fs.writeFile(tmpPath, content);
     await fs.rename(tmpPath, filePath);
 
     const refObj: EvidenceRef = { ref, kind: this.refKind(ref), path: fileName, available: true, bytes: content.length };
     await this.addRef(runId, refObj);
 
+    // Emit audit event
+    this.eb?.emit({
+      type: "evidence_collected",
+      run_id: runId,
+      source: "evidence_store",
+      summary: `Evidence ${ref} written (${content.length} bytes)`,
+      payload: { ref, bytes: content.length, kind: refObj.kind },
+    });
+
     return { filePath, bytes: content.length };
   }
 
+  // --- Read ---
+
   async read(runId: string, ref: string): Promise<{ filePath: string; size: number; available: boolean }> {
+    validateId(runId, "runId");
+    validateRef(ref);
     const filePath = path.join(this.runDir(runId), this.refToFile(ref));
     try {
       const stat = await fs.stat(filePath);
@@ -63,39 +127,52 @@ export class EvidenceStore {
     }
   }
 
+  // --- Index ---
+
   async getIndex(runId: string): Promise<EvidenceIndex> {
+    validateId(runId, "runId");
     try {
       return JSON.parse(await fs.readFile(this.indexPath(runId), "utf-8")) as EvidenceIndex;
-    } catch {
-      return {
-        run_id: runId, partial: true,
-        updated_at: new Date().toISOString(),
-        root_path: this.runDir(runId), refs: [], key_events: [],
-      };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+        return {
+          run_id: runId, partial: true,
+          updated_at: new Date().toISOString(),
+          root_path: this.runDir(runId), refs: [], key_events: [],
+        };
+      }
+      // Parse/permission error — surface it, don't silently rebuild
+      throw new Error(`Corrupted evidence index for run ${runId}: ${(e as Error).message}`);
     }
   }
 
   async updateKeyEvents(runId: string, keyEvent: KeyEvent): Promise<void> {
-    const idx = await this.getIndex(runId);
-    idx.key_events.push(keyEvent);
-    idx.updated_at = new Date().toISOString();
-    await this.writeIndex(runId, idx);
+    validateId(runId, "runId");
+    await this.serializedIndex(runId, async () => {
+      const idx = await this.getIndex(runId);
+      idx.key_events.push(keyEvent);
+      idx.updated_at = new Date().toISOString();
+      await this.writeIndex(runId, idx);
+    });
   }
 
+  // --- Private ---
+
   private async addRef(runId: string, ref: EvidenceRef): Promise<void> {
-    const idx = await this.getIndex(runId);
-    const existing = idx.refs.findIndex(r => r.ref === ref.ref);
-    if (existing >= 0) idx.refs[existing] = ref;
-    else idx.refs.push(ref);
-    idx.updated_at = new Date().toISOString();
-    await this.writeIndex(runId, idx);
+    await this.serializedIndex(runId, async () => {
+      const idx = await this.getIndex(runId);
+      const existing = idx.refs.findIndex(r => r.ref === ref.ref);
+      if (existing >= 0) idx.refs[existing] = ref;
+      else idx.refs.push(ref);
+      idx.updated_at = new Date().toISOString();
+      await this.writeIndex(runId, idx);
+    });
   }
 
   private async writeIndex(runId: string, idx: EvidenceIndex): Promise<void> {
     const filePath = this.indexPath(runId);
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath + ".tmp", JSON.stringify(idx, null, 2), "utf-8");
-    await fs.rename(filePath + ".tmp", filePath);
+    // Uses writeAtomic which has unique temp paths — safe under concurrency
+    await writeAtomic(filePath, JSON.stringify(idx, null, 2));
   }
 
   private refToFile(ref: string): string {
