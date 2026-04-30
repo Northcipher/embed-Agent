@@ -12,6 +12,7 @@ interface OutputPipeLike {
   feedStream(chunk: string): Promise<void>;
   feedExec(stdout: string, stderr: string, exitCode: number): Promise<void>;
   flush(): Promise<void>;
+  setConnection?(conn: { state(): string }): void;
 }
 
 export interface RetryConfig {
@@ -176,6 +177,7 @@ export class StepExecutor {
     conn: Connection,
   ): Promise<{ success: boolean; error?: string; failureType?: string }> {
     const pipe = this.pipeFactory?.(step.id) ?? null;
+    if (pipe) pipe.setConnection?.(conn);
     const timeout = step.timeout_sec + this._timeoutExtension;
 
     try {

@@ -20,11 +20,15 @@ export class ConnectionManager {
   private eb: Emitter | undefined;
   private targetState: TargetStateReader | undefined;
   private securityPolicy: Partial<SecurityPolicy> | undefined;
+  private shellAllowed: Set<string> | undefined;
 
   constructor(eb?: Emitter, targetState?: TargetStateReader, securityPolicy?: Partial<SecurityPolicy>) {
     this.eb = eb;
     this.targetState = targetState;
     this.securityPolicy = securityPolicy;
+    if (securityPolicy?.allowed_commands?.length) {
+      this.shellAllowed = new Set(securityPolicy.allowed_commands);
+    }
   }
 
   get(target: { target_id: string; connections: Record<string, unknown> }, transport: Transport): Connection | null {
@@ -68,7 +72,11 @@ export class ConnectionManager {
     if (action === "flash") return this.get(target, "fastboot");
     if (action === "push") return this.get(target, "adb") ?? this.get(target, "ssh");
     if (capability === "wait_adb" || capability === "collect_logs") return this.get(target, "adb");
-    if (capability === "shell_exec") return this.get(target, "adb") ?? this.get(target, "ssh");
+    if (capability === "shell_exec") {
+      // Require whitelist — reject if none configured
+      if (!this.shellAllowed || this.shellAllowed.size === 0) return null;
+      return this.get(target, "adb") ?? this.get(target, "ssh");
+    }
     return this.get(target, "adb") ?? this.get(target, "ssh") ?? this.get(target, "local");
   }
 

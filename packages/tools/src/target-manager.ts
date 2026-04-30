@@ -40,35 +40,56 @@ export class TargetManager {
     const method = t.recovery?.reboot_method ?? "adb";
     if (method === "custom_command") return false;
 
-    const conn = this.cm.get(t, method as Transport);
-    if (!conn?.exec) return false;
-
-    // 1. Reflash stable artifact if configured (before reboot)
-    if (t.recovery?.stable_artifact && conn.flash) {
-      try {
-        const [image, partition] = t.recovery.stable_artifact.split(":");
-        if (image && partition) {
-          await conn.flash(image, partition);
-        }
-      } catch { /* flash failed — continue with reboot */ }
+    // 1. Reflash stable artifact via fastboot (independent of reboot method)
+    if (t.recovery?.stable_artifact) {
+      const fbConn = this.cm.get(t, "fastboot");
+      if (fbConn?.flash) {
+        try {
+          const [image, partition] = t.recovery.stable_artifact.split(":");
+          if (image && partition) await fbConn.flash(image, partition);
+        } catch { /* flash failed — continue */ }
+      }
     }
 
-    // 2. Issue reboot — check exit_code since exec may not throw on failure
+    // 2. Reboot via configured method
+    const rebootConn = this.cm.get(t, method as Transport);
+    if (!rebootConn?.exec) return false;
     try {
-      const result = await conn.exec("reboot", 30);
+      const result = await rebootConn.exec("reboot", 30);
       if (result.exit_code !== 0) return false;
     } catch { return false; }
 
-    // 3. Wait for device to come back online (poll with backoff)
-    const deadline = Date.now() + 120_000; // 2 min max
+    // 3. Wait for device — verify via ADB, then Serial
+    const deadline = Date.now() + 120_000;
     let delay = 3000;
+
+    // Poll ADB first (primary verification)
+    const adbConn = this.cm.get(t, "adb");
+    if (adbConn) {
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, delay));
+        delay = Math.min(delay * 1.5, 15_000);
+        try {
+          await adbConn.connect();
+          if (adbConn.state() === "connected") {
+            // Also try serial verification
+            const serialConn = this.cm.get(t, "serial");
+            if (serialConn) {
+              try { await serialConn.connect(); } catch { /* best effort */ }
+            }
+            return true;
+          }
+        } catch { /* still booting */ }
+      }
+    }
+
+    // Fallback: poll the reboot transport if ADB not available
     while (Date.now() < deadline) {
       await new Promise(r => setTimeout(r, delay));
       delay = Math.min(delay * 1.5, 15_000);
       try {
-        await conn.connect();
-        const state = conn.state();
-        if (state === "connected") return true;
+        await rebootConn.connect();
+        if (rebootConn.state() === "connected") return true;
       } catch { /* still booting */ }
     }
 

@@ -106,10 +106,12 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
     { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } }, dataRoot,
   );
 
-  // 7. Tool layer
+  // 7. Tool layer — pass security policy from system config
+  const secCfg = systemConfig?.security as Record<string, unknown> | undefined;
   const cm = new ConnectionManager(
     { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } },
     targetStore,
+    { allowed_commands: (secCfg?.allowed_shell_commands as string[]) ?? [] },
   );
   const tm = new TargetManager(cm, targetStore);
 
