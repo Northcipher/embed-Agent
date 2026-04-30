@@ -10,12 +10,18 @@ interface Emitter {
   emit(e: Record<string, unknown>): void;
 }
 
+interface TargetStateReader {
+  getState(targetId: string): Promise<{ state: string; serial: string; adb: string; fastboot: string; current_run_id?: string } | null>;
+}
+
 export class ConnectionManager {
   private pool = new Map<string, Connection>();
   private eb: Emitter | undefined;
+  private targetState: TargetStateReader | undefined;
 
-  constructor(eb?: Emitter) {
+  constructor(eb?: Emitter, targetState?: TargetStateReader) {
     this.eb = eb;
+    this.targetState = targetState;
   }
 
   get(target: { target_id: string; connections: Record<string, unknown> }, transport: Transport): Connection | null {
@@ -61,13 +67,32 @@ export class ConnectionManager {
   private wireDisconnect(targetId: string, transport: Transport, conn: Connection): void {
     if (!this.eb) return;
     const prev = conn.onDisconnect;
-    conn.onDisconnect = () => {
+    conn.onDisconnect = async () => {
       prev?.();
+      // Look up full runtime state for complete TargetStateChanged payload
+      let runtimeState: { serial: string; adb: string; fastboot: string; current_run_id?: string } | undefined;
+      try { runtimeState = await this.targetState?.getState(targetId) ?? undefined; } catch { /* best effort */ }
+
+      // Update the disconnected transport in the state
+      if (runtimeState) {
+        if (transport === "serial") runtimeState.serial = "disconnected";
+        if (transport === "adb") runtimeState.adb = "offline";
+        if (transport === "fastboot") runtimeState.fastboot = "disconnected";
+      }
+
       this.eb!.emit({
         type: "target_state_changed",
         source: "connection_manager",
         summary: `${transport} disconnected for target ${targetId}`,
-        payload: { target_id: targetId, transport, state: "disconnected" },
+        payload: {
+          target_id: targetId,
+          transport,
+          state: "disconnected",
+          serial: runtimeState?.serial ?? "unknown",
+          adb: runtimeState?.adb ?? "unknown",
+          fastboot: runtimeState?.fastboot ?? "unknown",
+          current_run_id: runtimeState?.current_run_id,
+        },
       });
       // Remove from pool so next get() reconnects
       this.pool.delete(`${targetId}:${transport}`);

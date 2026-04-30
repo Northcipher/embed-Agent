@@ -67,4 +67,24 @@ export class TargetManager {
   isBusy(state: { state: string } | null): boolean {
     return state != null && !["idle", "offline"].includes(state.state);
   }
+
+  /** Acquire a target lock — transitions state to preparing with the given run_id. */
+  async acquireLock(targetId: string, runId: string): Promise<boolean> {
+    const s = await this.store.getState(targetId);
+    if (this.isBusy(s)) return false;
+    await this.store.updateState(targetId, { state: "preparing", current_run_id: runId });
+    return true;
+  }
+
+  /** Release a target lock — transitions to cleaning then idle. */
+  async releaseLock(targetId: string): Promise<void> {
+    await this.store.updateState(targetId, { state: "cleaning" });
+    // Small delay for cleanup, then idle
+    await this.store.updateState(targetId, { state: "idle", current_run_id: undefined });
+  }
+
+  /** Transition target to a specific state. */
+  async transitionState(targetId: string, to: string): Promise<void> {
+    await this.store.updateState(targetId, { state: to });
+  }
 }

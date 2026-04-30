@@ -111,20 +111,35 @@ export class RuleDetector {
   checkExitCode(exitCode: number): void {
     for (const r of this.active) {
       if (r.kind === "exit_code" && r.expected_exit_code !== undefined && exitCode !== r.expected_exit_code) {
-        this.eb.emit({ type: "rule_matched", rule_id: r.id, severity: r.severity, source: "rule_detector", summary: `Exit code ${exitCode} != ${r.expected_exit_code}`, payload: { exit_code: exitCode } });
+        this.eb.emit({ type: "rule_matched", run_id: this.runId, rule_id: r.id, severity: r.severity, source: "rule_detector", summary: `Exit code ${exitCode} != ${r.expected_exit_code}`, payload: { exit_code: exitCode } });
       }
     }
   }
 
   checkTimeout(stepId: string, elapsed: number, timeout: number): void {
     if (elapsed >= timeout) {
-      this.eb.emit({ type: "step_timeout", rule_id: "step_timeout", severity: "warning", source: "rule_detector", step_id: stepId, summary: `Step ${stepId} timed out`, payload: { elapsed_sec: elapsed, timeout_sec: timeout } });
+      this.eb.emit({ type: "step_timeout", run_id: this.runId, rule_id: "step_timeout", severity: "warning", source: "rule_detector", step_id: stepId, summary: `Step ${stepId} timed out`, payload: { elapsed_sec: elapsed, timeout_sec: timeout } });
     }
   }
 
   checkConnectivity(state: string): void {
     if (state === "disconnected" || state === "error") {
-      this.eb.emit({ type: "target_state_changed", rule_id: "connectivity", severity: "warning", source: "rule_detector", summary: `Connection: ${state}`, payload: { state } });
+      this.eb.emit({ type: "target_state_changed", run_id: this.runId, rule_id: "connectivity", severity: "warning", source: "rule_detector", summary: `Connection: ${state}`, payload: { state } });
     }
+  }
+
+  /**
+   * Check for line silence. Only fires when the connection is still connected.
+   * Route through RuleDetector so silence uses the rule/capture/severity system.
+   */
+  checkSilence(connected: boolean, silenceMs: number): void {
+    if (!connected) return; // Don't fire silence when disconnected
+    if (silenceMs < 1000) return; // Minimum 1 second
+    this.eb.emit({
+      type: "rule_matched", run_id: this.runId, rule_id: "serial_silence",
+      severity: "warning", source: "rule_detector",
+      summary: `Serial silence detected (${Math.round(silenceMs / 1000)}s)`,
+      payload: { silence_ms: silenceMs },
+    });
   }
 }
