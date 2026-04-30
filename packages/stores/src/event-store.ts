@@ -117,4 +117,28 @@ export class EventStore {
         .slice(0, limit);
     } catch { return []; }
   }
+
+  /**
+   * Subscribe this EventStore to an EventBus for automatic persistence.
+   * Events with run_id → runs/{run_id}/events.jsonl + RunStore lastEventSeq update.
+   * Events without run_id → global events.jsonl.
+   */
+  subscribeToBus(
+    bus: { subscribe(types: string[], handler: (e: Record<string, unknown>) => void): () => void },
+    runStore?: { updateLastEventSeq(runId: string, seq: number): Promise<void> },
+  ): () => void {
+    return bus.subscribe(["*"], async (event) => {
+      try {
+        const entry = event as unknown as AppendEvent;
+        if (event.run_id) {
+          const { seq } = await this.append(event.run_id as string, entry);
+          if (runStore) {
+            await runStore.updateLastEventSeq(event.run_id as string, seq).catch(() => {});
+          }
+        } else {
+          await this.appendGlobal(entry);
+        }
+      } catch { /* persistence failure shouldn't crash */ }
+    });
+  }
 }

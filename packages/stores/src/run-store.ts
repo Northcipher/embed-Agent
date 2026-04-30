@@ -28,11 +28,25 @@ export interface RunRecord {
 }
 
 export class RunStore {
-  constructor(private dataRoot = ".embed-agent") {}
+  private dataRoot: string;
+  /** Per-run mutex for read-modify-write serialization. */
+  private locks = new Map<string, Promise<void>>();
+
+  constructor(dataRoot = ".embed-agent") {
+    this.dataRoot = dataRoot;
+  }
 
   private runFile(runId: string): string {
     validateId(runId, "runId");
     return path.join(this.dataRoot, "runs", runId, "run.json");
+  }
+
+  /** Serialize mutations per run to prevent lost updates under concurrency. */
+  private serialized(runId: string, fn: () => Promise<void>): Promise<void> {
+    const prev = this.locks.get(runId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    this.locks.set(runId, next);
+    return next;
   }
 
   async create(run: RunRecord): Promise<void> {
@@ -40,13 +54,19 @@ export class RunStore {
   }
 
   async update(runId: string, patch: Partial<RunRecord>): Promise<void> {
-    const current = await this.get(runId);
-    if (!current) throw new Error(`Run not found: ${runId}`);
-    await writeAtomic(this.runFile(runId), JSON.stringify({ ...current, ...patch }, null, 2));
+    await this.serialized(runId, async () => {
+      const current = await this.get(runId);
+      if (!current) throw new Error(`Run not found: ${runId}`);
+      await writeAtomic(this.runFile(runId), JSON.stringify({ ...current, ...patch }, null, 2));
+    });
   }
 
   async updateLastEventSeq(runId: string, seq: number): Promise<void> {
-    await this.update(runId, { last_event_seq: seq } as Partial<RunRecord>);
+    await this.serialized(runId, async () => {
+      const current = await this.get(runId);
+      if (!current) throw new Error(`Run not found: ${runId}`);
+      await writeAtomic(this.runFile(runId), JSON.stringify({ ...current, last_event_seq: seq }, null, 2));
+    });
   }
 
   async get(runId: string): Promise<RunRecord | null> {

@@ -33,11 +33,25 @@ export interface TargetRuntimeState {
 }
 
 export class TargetStore {
-  constructor(private dataRoot = ".embed-agent") {}
+  private dataRoot: string;
+  /** Per-target mutex for read-modify-write serialization. */
+  private locks = new Map<string, Promise<void>>();
+
+  constructor(dataRoot = ".embed-agent") {
+    this.dataRoot = dataRoot;
+  }
 
   private dir(targetId: string): string {
     validateId(targetId, "targetId");
     return path.join(this.dataRoot, "targets", targetId);
+  }
+
+  /** Serialize mutations per target to prevent lost updates under concurrency. */
+  private serialized(targetId: string, fn: () => Promise<void>): Promise<void> {
+    const prev = this.locks.get(targetId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    this.locks.set(targetId, next);
+    return next;
   }
 
   async add(profile: TargetProfile): Promise<void> {
@@ -61,10 +75,12 @@ export class TargetStore {
   }
 
   async updateState(targetId: string, patch: Partial<TargetRuntimeState>): Promise<void> {
-    const current = await this.getState(targetId);
-    if (!current) throw new Error(`Target not found: ${targetId}`);
-    const updated = { ...current, ...patch, target_id: targetId, updated_at: new Date().toISOString() };
-    await this.writeState(targetId, updated as TargetRuntimeState);
+    await this.serialized(targetId, async () => {
+      const current = await this.getState(targetId);
+      if (!current) throw new Error(`Target not found: ${targetId}`);
+      const updated = { ...current, ...patch, target_id: targetId, updated_at: new Date().toISOString() };
+      await this.writeState(targetId, updated as TargetRuntimeState);
+    });
   }
 
   async listAll(): Promise<TargetProfile[]> {

@@ -10,6 +10,7 @@ export interface EvidenceRef {
   path: string;
   available: boolean;
   bytes?: number;
+  important?: boolean;
 }
 
 export interface KeyEvent {
@@ -52,15 +53,29 @@ interface Emitter {
 
 // --- Evidence Store ---
 
+export interface RetentionConfig {
+  success_days: number;
+  failure_days: number;
+  max_episodes_per_target: number;
+}
+
+const DEFAULT_RETENTION: RetentionConfig = {
+  success_days: 30,
+  failure_days: 90,
+  max_episodes_per_target: 100,
+};
+
 export class EvidenceStore {
   private dataRoot: string;
   /** Per-run mutex for index read-modify-write serialization. */
   private indexLocks = new Map<string, Promise<void>>();
   private eb: Emitter | undefined;
+  private retention: RetentionConfig;
 
-  constructor(dataRoot = ".embed-agent", eb?: Emitter) {
+  constructor(dataRoot = ".embed-agent", eb?: Emitter, retention?: Partial<RetentionConfig>) {
     this.dataRoot = path.resolve(dataRoot);
     this.eb = eb;
+    this.retention = { ...DEFAULT_RETENTION, ...retention };
   }
 
   private runDir(runId: string): string {
@@ -93,8 +108,8 @@ export class EvidenceStore {
     const filePath = path.join(dir, fileName);
     const content = typeof data === "string" ? Buffer.from(data) : data;
 
-    // Atomic write for the evidence file itself
-    const tmpPath = filePath + ".tmp";
+    // Atomic write with unique temp name (same pattern as writeAtomic, handles Buffer)
+    const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
     await fs.writeFile(tmpPath, content);
     await fs.rename(tmpPath, filePath);
 
@@ -154,6 +169,42 @@ export class EvidenceStore {
       idx.updated_at = new Date().toISOString();
       await this.writeIndex(runId, idx);
     });
+  }
+
+  // --- Retention / Cleanup ---
+
+  /** Clean up evidence older than the configured retention policy. Important evidence is preserved. */
+  async cleanup(retention?: Partial<RetentionConfig>): Promise<{ removed_runs: number; removed_bytes: number }> {
+    const cfg = { ...this.retention, ...retention };
+    let removedRuns = 0;
+    let removedBytes = 0;
+
+    const runsDir = path.join(this.dataRoot, "runs");
+    let entries: string[];
+    try { entries = await fs.readdir(runsDir); } catch { return { removed_runs: 0, removed_bytes: 0 }; }
+
+    const now = Date.now();
+    for (const entry of entries) {
+      const runDir = path.join(runsDir, entry);
+      try {
+        const idx = await this.getIndex(entry);
+        const idxTime = new Date(idx.updated_at).getTime();
+        const maxAge = idx.partial ? cfg.failure_days : cfg.success_days;
+        const ageDays = (now - idxTime) / (1000 * 60 * 60 * 24);
+
+        if (ageDays < maxAge) continue;
+
+        // Check if any evidence is marked important
+        if (idx.refs.some(r => r.important)) continue;
+
+        // Remove entire run evidence directory
+        removedBytes += idx.refs.reduce((sum, r) => sum + (r.bytes ?? 0), 0);
+        await fs.rm(runDir, { recursive: true, force: true });
+        removedRuns++;
+      } catch { /* skip corrupted entries */ }
+    }
+
+    return { removed_runs: removedRuns, removed_bytes: removedBytes };
   }
 
   // --- Private ---
