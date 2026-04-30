@@ -192,9 +192,18 @@ export class EvidenceStore {
         // Check if any evidence is marked important
         if (idx.refs.some(r => r.important)) continue;
 
-        // Remove entire run evidence directory
-        removedBytes += idx.refs.reduce((sum, r) => sum + (r.bytes ?? 0), 0);
-        await fs.rm(runDir, { recursive: true, force: true });
+        // Delete only evidence files, not run metadata (run.json, events.jsonl, brain/)
+        for (const ref of idx.refs) {
+          try {
+            const filePath = path.join(runDir, ref.path);
+            await fs.rm(filePath, { force: true });
+            removedBytes += ref.bytes ?? 0;
+          } catch { /* file already gone */ }
+        }
+        // Remove the evidence index itself (evidence is gone)
+        try { await fs.rm(path.join(runDir, "evidence-index.json"), { force: true }); } catch { /* ok */ }
+        // Remove empty snapshots directory
+        try { await fs.rmdir(path.join(runDir, "snapshots")); } catch { /* not empty or not exist */ }
         removedRuns++;
       } catch { /* skip corrupted entries */ }
     }

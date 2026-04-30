@@ -7,8 +7,6 @@ import { Views } from "@embed-agent/views";
 import { SystemConfigSchema, LLMConfigSchema } from "@embed-agent/contracts";
 import { CommandHandler } from "./command-handler.js";
 import { runCli } from "./cli.js";
-import fs from "node:fs/promises";
-import path from "node:path";
 
 interface BootstrapResult {
   handler: CommandHandler;
@@ -50,11 +48,11 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   const runStore = new RunStore(dataRoot, log);
   const targetStore = new TargetStore(dataRoot);
   const memoryStore = new MemoryStore(dataRoot);
-  const evidenceStore = new EvidenceStore(dataRoot);
-
   // 3. Create EventBus + wire persistence
   const eventBus = new EventBus();
-  eventStore.subscribeToBus(eventBus, runStore);
+  // EvidenceStore with EventBus for evidence_collected events
+  const evidenceStore = new EvidenceStore(dataRoot, { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } });
+  eventStore.subscribeToBus(eventBus, runStore, evidenceStore);
 
   // 4. Create LLM (Anthropic if key set, Mock for dev)
   const apiKey = process.env["ANTHROPIC_API_KEY"];
@@ -160,11 +158,13 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
       );
 
       const ag = new Aggregator(eventBus);
-      // Boot markers loaded from target profile on first step (see connection setup)
 
-      // EvidenceWriter: appends to step evidence file
-      const evFile = path.join(dataRoot, "runs", runId, `${stepId}.log`);
-      const ew = { append: (d: string) => { fs.appendFile(evFile, d).catch(() => {}); } };
+      // EvidenceWriter: routes through EvidenceStore for indexing + evidence_collected events
+      const ew = {
+        append: (d: string) => {
+          evidenceStore.write(runId, `step-${stepId}:full`, d).catch(() => {});
+        },
+      };
 
       const pipe = new OutputPipe(ew, rb, rd, ag, eventBus, stepId);
       pipe.setRunId(runId);

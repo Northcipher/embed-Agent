@@ -116,10 +116,12 @@ export class EventStore {
    * Subscribe this EventStore to an EventBus for automatic persistence.
    * Events with run_id → runs/{run_id}/events.jsonl + RunStore lastEventSeq update.
    * Events without run_id → global events.jsonl.
+   * Events with evidence_refs → EvidenceStore.updateKeyEvents for index.
    */
   subscribeToBus(
     bus: { subscribe(types: string[], handler: (e: Record<string, unknown>) => void): () => void },
     runStore?: { updateLastEventSeq(runId: string, seq: number): Promise<void> },
+    evidenceStore?: { updateKeyEvents(runId: string, keyEvent: { seq: number; summary: string; evidence_refs: string[] }): Promise<void> },
   ): () => void {
     return bus.subscribe(["*"], async (event) => {
       try {
@@ -128,6 +130,12 @@ export class EventStore {
           const { seq } = await this.append(event.run_id as string, entry);
           if (runStore) {
             await runStore.updateLastEventSeq(event.run_id as string, seq).catch(() => {});
+          }
+          // Sync key events with evidence_refs to EvidenceStore index
+          if (evidenceStore && entry.evidence_refs && entry.evidence_refs.length > 0) {
+            await evidenceStore.updateKeyEvents(event.run_id as string, {
+              seq, summary: entry.summary, evidence_refs: entry.evidence_refs,
+            }).catch(() => {});
           }
         } else {
           await this.appendGlobal(entry);
