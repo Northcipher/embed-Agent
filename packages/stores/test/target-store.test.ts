@@ -32,4 +32,10 @@ describe("TargetStore", () => {
     await s.remove("b2");
     expect(await s.get("b2")).toBeNull();
   });
+
+  it("rejects path traversal in get/getState/remove", async () => {
+    await expect(s.get("../escape")).rejects.toThrow("path characters");
+    await expect(s.getState("../escape")).rejects.toThrow("path characters");
+    await expect(s.remove("../escape")).rejects.toThrow("path characters");
+  });
 });

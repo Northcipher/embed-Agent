@@ -36,11 +36,11 @@ export class TargetStore {
   constructor(private dataRoot = ".embed-agent") {}
 
   private dir(targetId: string): string {
+    validateId(targetId, "targetId");
     return path.join(this.dataRoot, "targets", targetId);
   }
 
   async add(profile: TargetProfile): Promise<void> {
-    validateId(profile.target_id, "target_id");
     await writeAtomic(path.join(this.dir(profile.target_id), "profile.json"), JSON.stringify(profile, null, 2));
     const initState: TargetRuntimeState = {
       target_id: profile.target_id, state: "idle",
@@ -52,16 +52,15 @@ export class TargetStore {
 
   async get(targetId: string): Promise<TargetProfile | null> {
     try { return JSON.parse(await fs.readFile(path.join(this.dir(targetId), "profile.json"), "utf-8")) as TargetProfile; }
-    catch { return null; }
+    catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
   }
 
   async getState(targetId: string): Promise<TargetRuntimeState | null> {
     try { return JSON.parse(await fs.readFile(path.join(this.dir(targetId), "runtime-state.json"), "utf-8")) as TargetRuntimeState; }
-    catch { return null; }
+    catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
   }
 
   async updateState(targetId: string, patch: Partial<TargetRuntimeState>): Promise<void> {
-    validateId(targetId, "targetId");
     const current = await this.getState(targetId);
     if (!current) throw new Error(`Target not found: ${targetId}`);
     const updated = { ...current, ...patch, target_id: targetId, updated_at: new Date().toISOString() };
