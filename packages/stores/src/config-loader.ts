@@ -26,9 +26,10 @@ export class ConfigLoader {
   constructor(private configRoot: string, private logger: Logger) {}
 
   /** Load a config file, parse as YAML, validate with a Zod schema. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async load<T>(
     relativePath: string,
-    schema: { safeParse: (data: unknown) => { success: boolean; data?: T; error?: { issues: { message: string; path: (string | number)[] }[] } } },
+    schema: { safeParse: (data: unknown) => any },
   ): Promise<ConfigLoadResult<T>> {
     const errors: ConfigLoadResult<T>["errors"] = [];
     const filePath = path.join(this.configRoot, relativePath);
@@ -76,8 +77,9 @@ export class ConfigLoader {
   }
 
   /** Load all required configs. Returns null if any critical config fails. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async loadAll<T extends Record<string, unknown>>(
-    configs: Record<string, { schema: { safeParse: (d: unknown) => { success: boolean; data?: unknown; error?: { issues: { message: string; path: (string | number)[] }[] } } }; required: boolean }>,
+    configs: Record<string, { schema: { safeParse: (d: unknown) => any }; required: boolean }>,
   ): Promise<{ configs: Partial<T>; errors: ConfigLoadResult<unknown>["errors"] }> {
     const result: Partial<T> = {};
     const allErrors: ConfigLoadResult<unknown>["errors"] = [];

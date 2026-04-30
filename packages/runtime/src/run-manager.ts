@@ -96,6 +96,13 @@ export class RunManager {
   private activeDecisionHandlers = new Map<string, DecisionHandler>();
   private stepQueues = new Map<string, StepQueue>();
 
+  // Factories injected by bootstrap — avoid stubs in executeRun
+  private executorFactory?: (runId: string, targetId: string) => StepExecutor;
+  private dhFactory?: (runId: string) => DecisionHandler;
+
+  setExecutorFactory(fn: (runId: string, targetId: string) => StepExecutor): void { this.executorFactory = fn; }
+  setDecisionHandlerFactory(fn: (runId: string) => DecisionHandler): void { this.dhFactory = fn; }
+
   constructor(
     private runStore: RunStoreIO,
     private targetState: TargetStateIO,
@@ -270,33 +277,19 @@ export class RunManager {
   }
 
   /**
-   * Execute all steps in a run. Creates StepExecutor + DecisionHandler and drives the loop.
-   * Call after createRun or for manual execution. Returns when run reaches terminal state.
+   * Execute all steps in a run. Uses injected StepExecutor + DecisionHandler factories.
+   * Must be called after setExecutorFactory / setDecisionHandlerFactory are configured.
    */
   async executeRun(runId: string, targetId: string): Promise<void> {
     const sq = this.stepQueues.get(runId);
     if (!sq) return;
 
-    // Import StepExecutor and DecisionHandler lazily to avoid circular deps
-    const { StepExecutor } = await import("./step-executor.js");
-    const { DecisionHandler } = await import("./decision-handler.js");
+    if (!this.executorFactory || !this.dhFactory) {
+      throw new Error("executeRun called before executorFactory/dhFactory were injected — call setExecutorFactory/setDecisionHandlerFactory from bootstrap");
+    }
 
-    // Get or create the target profile for ConnectionManager
-    const target = { target_id: targetId, connections: {} as Record<string, unknown> };
-
-    // Create per-run executor (needs ConnectionManager, OutputPipe, etc. from tool layer)
-    // These are injected by the bootstrap — for now use basic wiring
-    const executor = new StepExecutor(
-      runId, target, this.eb, this.hm,
-      { getForStep: () => null }, // Will be set by caller
-    );
-
-    const dh = new DecisionHandler(
-      this.eb as never, this.hm,
-      { decide: async () => ({ decision: "continue", reason: "no Observer configured", confidence: 0.5, reasoning_trace: "", evidence_refs: [] }) },
-      { pause: (rid, r) => this.pause(rid, r), cancel: (rid, r) => this.cancel(rid, r), stopRun: (rid, r) => this.stopRun(rid, r) },
-      { assembleObserverContext: async () => ({ staticPrompt: "", input: { memory: { working_memory: [], known_issues: [] }, constraints: { remaining_sec: 600, allowed_capabilities: [] }, circuit_breaker_active: false, warning_escalation: false, triggering_event: {}, recent_events: [] } }) },
-    );
+    const executor = this.executorFactory(runId, targetId);
+    const dh = this.dhFactory(runId);
 
     // Execute steps until done
     let hasMore = true;

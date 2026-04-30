@@ -1,8 +1,9 @@
 import { ConfigLoader, Logger, PromptLoader, EventStore, EvidenceStore, RunStore, TargetStore, MemoryStore } from "@embed-agent/stores";
-import { EventBus, ContextAssembler, RunManager, HookManager } from "@embed-agent/runtime";
+import { EventBus, ContextAssembler, RunManager, HookManager, StepExecutor, DecisionHandler } from "@embed-agent/runtime";
 import { ConnectionManager, TargetManager } from "@embed-agent/tools";
 import { LLMCallManager, MockProvider, AnthropicProvider, Planner, Observer, ReplyGenerator, Memory } from "@embed-agent/agent";
 import { Views } from "@embed-agent/views";
+import { SystemConfigSchema, LLMConfigSchema } from "@embed-agent/contracts";
 import { CommandHandler } from "./command-handler.js";
 import { runCli } from "./cli.js";
 
@@ -19,12 +20,17 @@ interface BootstrapResult {
 export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapResult> {
   const logger = new Logger({ module: "bootstrap", pretty: true });
 
-  // 1. Load configs
+  // 1. Load configs with real Zod schema validation
   const loader = new ConfigLoader(configRoot, logger);
   const { configs, errors } = await loader.loadAll({
-    "targets.yml": { schema: { safeParse: (d: unknown) => ({ success: true, data: d }) }, required: false },
-    "system.yml": { schema: { safeParse: (d: unknown) => ({ success: true, data: d }) }, required: false },
+    "system.yml": { schema: SystemConfigSchema, required: true },
   });
+
+  // Model config validation
+  const { configs: llmConfigs, errors: llmErrors } = await loader.loadAll({
+    "llm.yml": { schema: LLMConfigSchema, required: true },
+  });
+  errors.push(...llmErrors);
 
   if (errors.length > 0) {
     logger.error("Config validation failed", { errors });
@@ -33,7 +39,8 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   }
 
   // 2. Create stores
-  const dataRoot = (configs["system"] as Record<string, unknown>)?.data_root as string ?? ".embed-agent";
+  const systemConfig = configs["system"] as Record<string, unknown> | undefined;
+  const dataRoot = (systemConfig?.storage as Record<string, unknown>)?.data_root as string ?? ".embed-agent";
   const log = new Logger({ module: "embed-agent", minLevel: "info" });
 
   const eventStore = new EventStore(dataRoot);
@@ -61,17 +68,19 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
     log.warn("No ANTHROPIC_API_KEY set — using MockProvider for LLM calls");
   }
 
-  // Read model names from system config — required, no defaults
-  const llmConfig = (configs["system"] as Record<string, unknown>);
-  const cfgModels = llmConfig?.models as Record<string, string> | undefined;
-  if (!cfgModels?.planner || !cfgModels?.observer || !cfgModels?.reply) {
-    logger.error("LLM models not configured. Set models.planner, models.observer, models.reply in system.yml");
+  // Read model names from LLM config — required, no defaults
+  const llmCfg = llmConfigs["llm"] as Record<string, unknown> | undefined;
+  const providers = llmCfg?.providers as Record<string, Record<string, unknown>> | undefined;
+  const defaultProvider = llmCfg?.default_provider as string ?? "anthropic";
+  const providerCfg = providers?.[defaultProvider];
+  if (!providerCfg?.models) {
+    logger.error("LLM models not configured. Set providers.<name>.models in llm.yml");
     process.exit(1);
   }
   const models = {
-    planner: { model: cfgModels.planner, timeout: 120 },
-    observer: { model: cfgModels.observer, timeout: 60 },
-    reply: { model: cfgModels.reply, timeout: 60 },
+    planner: { model: (providerCfg.models as Record<string, string>).planner!, timeout: 120 },
+    observer: { model: (providerCfg.models as Record<string, string>).observer!, timeout: 60 },
+    reply: { model: (providerCfg.models as Record<string, string>).reply!, timeout: 60 },
   };
 
   const llm = new LLMCallManager(llmProvider, models);
@@ -125,6 +134,23 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   };
 
   const rm = new RunManager(runStore, targetStore, tm, eventBus, hm, contextAssembler, plannerAdapter, replyAdapter, dataRoot);
+
+  // Inject executor/decision-handler factories — no stubs
+  rm.setExecutorFactory((runId: string, targetId: string) => {
+    const target = { target_id: targetId, connections: {} as Record<string, unknown> };
+    return new StepExecutor(runId, target, eventBus, hm, cm);
+  });
+  rm.setDecisionHandlerFactory((runId: string) => {
+    return new DecisionHandler(
+      eventBus, hm,
+      { decide: async (sp: string, input: Record<string, unknown>) => observerInst.decide(sp, input as never, runId) },
+      { pause: (rid, r) => rm.pause(rid, r), cancel: (rid, r) => rm.cancel(rid, r), stopRun: (rid, r) => rm.stopRun(rid, r) },
+      { assembleObserverContext: async (rid: string, event: Record<string, unknown>, cbActive: boolean, warnEsc: boolean) => {
+        const ctx = await contextAssembler.assembleObserverContext(rid, event as never, cbActive, warnEsc);
+        return { staticPrompt: ctx.staticPrompt, input: ctx.input as Record<string, unknown> };
+      }},
+    );
+  });
 
   // 9. Views
   const views = new Views(runStore, eventStore, evidenceStore, targetStore, memoryStore);

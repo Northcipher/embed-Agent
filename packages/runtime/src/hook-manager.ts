@@ -11,7 +11,8 @@ export type HookPoint =
   | "PostStepComplete"
   | "PostStepFailed"
   | "OnStopDecision"
-  | "OnFinalizing";
+  | "OnFinalizing"
+  | "RuntimeStart";
 
 export interface HookConfig {
   name: string;

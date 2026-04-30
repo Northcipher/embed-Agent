@@ -75,7 +75,7 @@ export class StepExecutor {
     });
 
     if (preResult.decision === "block") {
-      this.eb.emit({
+      await this.eb.emit({
         type: "run_paused", run_id: this.runId, source: "step_executor",
         summary: `Step blocked by PreStepExecute hook: ${preResult.reason ?? "no reason"}`,
         payload: { step_id: step.id, reason: preResult.reason },
@@ -96,7 +96,7 @@ export class StepExecutor {
     }
 
     // 3. Execute with retry
-    this.eb.emit({
+    await this.eb.emit({
       type: "step_started", run_id: this.runId, step_id: step.id, source: "step_executor",
       summary: `Step ${step.id} started`, payload: { capability: step.capability, action: step.action },
     });
@@ -105,13 +105,13 @@ export class StepExecutor {
       const result = await this.executeWithRetry(step, conn);
 
       if (this._interrupted) {
-        this.eb.emit({ type: "step_failed", run_id: this.runId, step_id: step.id, source: "step_executor", summary: "Step interrupted", payload: {} });
+        await this.eb.emit({ type: "step_failed", run_id: this.runId, step_id: step.id, source: "step_executor", summary: "Step interrupted", payload: {} });
         await this.hm.execute("PostStepFailed", { run_id: this.runId, step_id: step.id, reason: "interrupted" });
         return { completed: false, interrupted: true };
       }
 
       if (!result.success) {
-        this.eb.emit({ type: "step_failed", run_id: this.runId, step_id: step.id, source: "step_executor", summary: result.error ?? "unknown", payload: { failure_type: result.failureType } });
+        await this.eb.emit({ type: "step_failed", run_id: this.runId, step_id: step.id, source: "step_executor", summary: result.error ?? "unknown", payload: { failure_type: result.failureType } });
         await this.hm.execute("PostStepFailed", { run_id: this.runId, step_id: step.id, reason: result.error });
         const errResult: { completed: boolean; interrupted?: boolean; error?: string; failureType?: string } = { completed: false };
         if (result.error) errResult.error = result.error;
@@ -119,7 +119,7 @@ export class StepExecutor {
         return errResult;
       }
 
-      this.eb.emit({ type: "step_completed", run_id: this.runId, step_id: step.id, source: "step_executor", summary: `Step ${step.id} completed`, payload: {} });
+      await this.eb.emit({ type: "step_completed", run_id: this.runId, step_id: step.id, source: "step_executor", summary: `Step ${step.id} completed`, payload: {} });
       await this.hm.execute("PostStepComplete", { run_id: this.runId, step_id: step.id });
       return { completed: true };
     } finally {
@@ -153,7 +153,7 @@ export class StepExecutor {
 
       // CB2: same-cause consecutive failure detection
       if (!this.retryBreaker.shouldRetry(failureType)) {
-        this.eb.emit({
+        await this.eb.emit({
           type: "step_failed", run_id: this.runId, step_id: step.id, source: "step_executor",
           summary: `CB2: possible hardware issue — ${failureType} repeated`,
           payload: { failure_type: failureType },
@@ -209,7 +209,7 @@ export class StepExecutor {
                 if (conn.exec) {
                   const r = await conn.exec(cmd, 10);
                   if (pipe) await pipe.feedExec(r.stdout, r.stderr, r.exit_code);
-                  this.eb.emit({
+                  await this.eb.emit({
                     type: "observation", run_id: this.runId, source: "step_executor",
                     summary: `Sampling: ${cmd} (exit ${r.exit_code})`,
                     payload: { sampling_command: cmd, exit_code: r.exit_code },
