@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { writeAtomic } from "./atomic.js";
 
 export type RunState = "planning" | "running" | "paused" | "collecting_evidence" | "finalizing" | "completed" | "failed" | "cancelled";
 
@@ -28,15 +29,13 @@ export class RunStore {
   }
 
   async create(run: RunRecord): Promise<void> {
-    const file = this.runFile(run.run_id);
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, JSON.stringify(run, null, 2), "utf-8");
+    await writeAtomic(this.runFile(run.run_id), JSON.stringify(run, null, 2));
   }
 
   async update(runId: string, patch: Partial<RunRecord>): Promise<void> {
     const current = await this.get(runId);
     if (!current) throw new Error(`Run not found: ${runId}`);
-    await fs.writeFile(this.runFile(runId), JSON.stringify({ ...current, ...patch }, null, 2), "utf-8");
+    await writeAtomic(this.runFile(runId), JSON.stringify({ ...current, ...patch }, null, 2));
   }
 
   async updateLastEventSeq(runId: string, seq: number): Promise<void> {
@@ -46,7 +45,10 @@ export class RunStore {
   async get(runId: string): Promise<RunRecord | null> {
     try {
       return JSON.parse(await fs.readFile(this.runFile(runId), "utf-8")) as RunRecord;
-    } catch { return null; }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw new Error(`Corrupted run record ${runId}: ${(e as Error).message}`);
+    }
   }
 
   async listNonTerminal(): Promise<RunRecord[]> {
@@ -54,8 +56,12 @@ export class RunStore {
     const result: RunRecord[] = [];
     try {
       for (const entry of await fs.readdir(dir)) {
-        const r = await this.get(entry);
-        if (r && !["completed", "failed", "cancelled"].includes(r.state)) result.push(r);
+        try {
+          const r = await this.get(entry);
+          if (r && !["completed", "failed", "cancelled"].includes(r.state)) result.push(r);
+        } catch {
+          // corrupted run record — skip but continue listing
+        }
       }
     } catch { /* dir not exist */ }
     return result;

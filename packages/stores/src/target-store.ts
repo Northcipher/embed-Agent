@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { writeAtomic } from "./atomic.js";
 
 function validateId(id: string, label: string): void {
   if (id.includes("..") || id.includes("/") || id.includes("\\")) {
@@ -40,8 +41,7 @@ export class TargetStore {
 
   async add(profile: TargetProfile): Promise<void> {
     validateId(profile.target_id, "target_id");
-    await fs.mkdir(this.dir(profile.target_id), { recursive: true });
-    await fs.writeFile(path.join(this.dir(profile.target_id), "profile.json"), JSON.stringify(profile, null, 2), "utf-8");
+    await writeAtomic(path.join(this.dir(profile.target_id), "profile.json"), JSON.stringify(profile, null, 2));
     const initState: TargetRuntimeState = {
       target_id: profile.target_id, state: "idle",
       serial: "disconnected", adb: "disconnected", fastboot: "disconnected",
@@ -97,8 +97,6 @@ export class TargetStore {
   }
 
   private async writeState(targetId: string, state: TargetRuntimeState): Promise<void> {
-    const file = path.join(this.dir(targetId), "runtime-state.json");
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, JSON.stringify(state, null, 2), "utf-8");
+    await writeAtomic(path.join(this.dir(targetId), "runtime-state.json"), JSON.stringify(state, null, 2));
   }
 }

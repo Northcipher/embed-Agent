@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { writeAtomic } from "./atomic.js";
 
 export interface WorkingMemoryEntry {
   key: string; summary: string;
@@ -39,8 +40,7 @@ export class MemoryStore {
 
   async writeWorkingMemory(runId: string, entries: WorkingMemoryEntry[]): Promise<void> {
     const dir = path.join(this.memDir(), "working-memory");
-    await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(path.join(dir, `${runId}.json`), JSON.stringify(entries), "utf-8");
+    await writeAtomic(path.join(dir, `${runId}.json`), JSON.stringify(entries));
   }
 
   async readWorkingMemory(runId: string): Promise<WorkingMemoryEntry[]> {
@@ -73,7 +73,7 @@ export class MemoryStore {
         const f = JSON.parse(l) as SemanticFact;
         return f.fact_id === factId ? JSON.stringify({ ...f, ...patch }) : l;
       });
-      await fs.writeFile(file, updated.join("\n") + "\n", "utf-8");
+      await writeAtomic(file, updated.join("\n") + "\n");
     } catch { /* no facts yet */ }
   }
 
@@ -94,8 +94,7 @@ export class MemoryStore {
 
   async writeProfile(profile: RunProfile): Promise<void> {
     const dir = path.join(this.memDir(), "run-profiles");
-    await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(path.join(dir, `${profile.run_id}.json`), JSON.stringify(profile), "utf-8");
+    await writeAtomic(path.join(dir, `${profile.run_id}.json`), JSON.stringify(profile));
   }
 
   async getLatestProfile(targetId: string): Promise<RunProfile | null> {

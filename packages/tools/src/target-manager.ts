@@ -39,12 +39,11 @@ export class TargetManager {
     const method = t.recovery?.reboot_method ?? "adb";
     if (method === "custom_command") return false;
 
-    try {
-      const conn = this.cm.get(t, method as Transport);
-      if (conn?.exec) await conn.exec("reboot", 30);
-    } catch { return false; }
+    const conn = this.cm.get(t, method as Transport);
+    if (!conn?.exec) return false;
 
-    return true;
+    try { await conn.exec("reboot", 30); return true; }
+    catch { return false; }
   }
 
   isBusy(state: { state: string } | null): boolean {

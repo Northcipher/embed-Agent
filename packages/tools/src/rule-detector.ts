@@ -16,11 +16,19 @@ export interface Rule {
 interface Emitter { emit(e: Record<string, unknown>): void; }
 interface EvidenceSaver { saveWindow(runId: string, ref: string, data: string): Promise<void>; }
 
+interface PendingCapture {
+  rule: Rule;
+  lineIdx: number;
+  ref: string;
+  remaining: number;
+}
+
 export class RuleDetector {
   private system: Rule[] = [];
   private target: Rule[] = [];
   private known: Rule[] = [];
   private step: Rule[] = [];
+  private pending: PendingCapture[] = [];
 
   constructor(
     private rb: RingBuffer,
@@ -48,25 +56,48 @@ export class RuleDetector {
   detect(line: string, lineIdx: number): void {
     for (const r of this.active) {
       if (r.kind === "pattern" && r.pattern?.test(line)) {
-        const before = r.capture?.before_lines ?? 200;
         const after = r.capture?.after_lines ?? 80;
-        const window = this.rb.getWindow(lineIdx, before, after);
         const ref = r.capture?.ref ?? "serial:last-window";
-
-        // Write evidence window
-        if (this.evidence && this.runId) {
-          this.evidence.saveWindow(this.runId, ref, window.join("\n")).catch(() => {});
-        }
-
-        this.eb.emit({
-          type: "rule_matched", rule_id: r.id, severity: r.severity,
-          source: "rule_detector", step_id: undefined,
-          summary: `Rule ${r.id} matched`,
-          payload: { pattern: r.pattern.source },
-          evidence_refs: [ref],
-        });
+        this.pending.push({ rule: r, lineIdx, ref, remaining: after });
       }
     }
+  }
+
+  async flushPending(): Promise<void> {
+    const ready: PendingCapture[] = [];
+    this.pending = this.pending.filter(p => {
+      p.remaining--;
+      if (p.remaining <= 0) { ready.push(p); return false; }
+      return true;
+    });
+    for (const p of ready) await this.captureAndEmit(p);
+  }
+
+  async flushAllPending(): Promise<void> {
+    for (const p of this.pending) await this.captureAndEmit(p);
+    this.pending = [];
+  }
+
+  private async captureAndEmit(p: PendingCapture): Promise<void> {
+    const before = p.rule.capture?.before_lines ?? 200;
+    const after = p.rule.capture?.after_lines ?? 80;
+    const window = this.rb.getWindow(p.lineIdx, before, after);
+
+    let evidenceSaved = false;
+    if (this.evidence && this.runId) {
+      try {
+        await this.evidence.saveWindow(this.runId, p.ref, window.join("\n"));
+        evidenceSaved = true;
+      } catch { /* evidence write failed — emit without ref */ }
+    }
+
+    this.eb.emit({
+      type: "rule_matched", rule_id: p.rule.id, severity: p.rule.severity,
+      source: "rule_detector", step_id: undefined,
+      summary: `Rule ${p.rule.id} matched`,
+      payload: { pattern: p.rule.pattern?.source },
+      ...(evidenceSaved ? { evidence_refs: [p.ref] } : {}),
+    });
   }
 
   checkExitCode(exitCode: number): void {
