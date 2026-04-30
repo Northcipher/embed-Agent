@@ -49,43 +49,45 @@ export class Planner {
     this.eb = eb;
   }
 
-  async call(staticPrompt: string, dynamicContext: PlannerDynamicContext): Promise<PlanResult> {
+  async call(staticPrompt: string, dynamicContext: PlannerDynamicContext, runId?: string): Promise<PlanResult> {
     const messages: LLMMessage[] = [
       { role: "system", content: staticPrompt },
       { role: "user", content: JSON.stringify(dynamicContext, null, 2) },
     ];
 
     let result: PlanResult;
+    let source = "llm";
 
     try {
       const llmResult = await this.llm.call("planner", messages);
       if ("status" in llmResult) {
         // CB4 degraded — use fallback
         result = { status: "planned", plan: { ...FALLBACK_PLAN, plan_id: generateId() } };
-        this.eb?.emit({ type: "plan_generation_failed", source: "planner", summary: "CB4 degraded — used fallback plan", payload: {} });
-        return result;
+        source = "fallback_cb4";
+      } else {
+        result = this.parsePlan(llmResult.content);
       }
-
-      result = this.parsePlan(llmResult.content);
     } catch {
       // LLM failure — use fallback template
       result = { status: "planned", plan: { ...FALLBACK_PLAN, plan_id: generateId() } };
-      this.eb?.emit({ type: "plan_generation_failed", source: "planner", summary: "LLM call failed — used fallback plan", payload: {} });
-      return result;
+      source = "fallback_error";
     }
 
-    // Emit audit event
+    // Emit plan_generated audit event (contracts type) with run_id
     if (result.status === "planned") {
+      const plan = result.plan;
       this.eb?.emit({
-        type: "plan_generated", source: "planner",
-        summary: `Plan ${result.plan.plan_id} generated with ${result.plan.steps.length} steps`,
-        payload: { plan_id: result.plan.plan_id, step_count: result.plan.steps.length, estimated_duration_sec: result.plan.estimated_duration_sec },
+        type: "plan_generated", run_id: runId, source: "planner",
+        summary: `Plan ${plan.plan_id} (${source}) with ${plan.steps.length} steps`,
+        payload: { plan_id: plan.plan_id, step_count: plan.steps.length, source, estimated_duration_sec: plan.estimated_duration_sec },
       });
     } else {
+      // clarification_needed
       this.eb?.emit({
-        type: "plan_generation_failed", source: "planner",
+        type: "plan_generated", run_id: runId, source: "planner",
+        severity: "warning",
         summary: `Clarification needed: ${result.missing_info.join(", ")}`,
-        payload: { missing_info: result.missing_info },
+        payload: { status: "clarification_needed", missing_info: result.missing_info },
       });
     }
 

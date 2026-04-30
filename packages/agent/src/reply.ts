@@ -32,7 +32,8 @@ interface RunInfo {
 }
 
 // Failure event types that indicate a failed run
-const FAILURE_TYPES = new Set(["step_failed", "run_failed", "decision_made"]);
+// decision_made is NOT a failure signal — it's an audit event for any Observer decision
+const FAILURE_TYPES = new Set(["step_failed", "run_failed"]);
 
 export class ReplyGenerator {
   constructor(

@@ -119,6 +119,7 @@ export class LLMCircuitBreaker {
 
 export class LLMCallManager {
   private breakers = new Map<string, LLMCircuitBreaker>();
+  private retryConfig: { maxRetries: number; backoffMs: number[] };
 
   constructor(
     private provider: LLMProvider,
@@ -127,7 +128,13 @@ export class LLMCallManager {
       observer: { model: string; timeout: number; maxTokens?: number };
       reply: { model: string; timeout: number; maxTokens?: number };
     },
-  ) {}
+    retryConfig?: { maxRetries?: number; backoffMs?: number[] },
+  ) {
+    this.retryConfig = {
+      maxRetries: retryConfig?.maxRetries ?? 2,
+      backoffMs: retryConfig?.backoffMs ?? [1000, 3000],
+    };
+  }
 
   private breaker(role: string): LLMCircuitBreaker {
     let b = this.breakers.get(role);
@@ -145,18 +152,42 @@ export class LLMCallManager {
     }
 
     const cfg = this.models[role];
-    try {
-      const resp = await this.provider.call(messages, {
-        model: cfg.model,
-        timeout: cfg.timeout,
-        maxTokens: cfg.maxTokens ?? 4096,
-      });
-      br.recordSuccess();
-      return resp;
-    } catch (e) {
-      br.recordFailure();
-      throw e;
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= this.retryConfig.maxRetries; attempt++) {
+      try {
+        const resp = await this.provider.call(messages, {
+          model: cfg.model,
+          timeout: cfg.timeout,
+          maxTokens: cfg.maxTokens ?? 4096,
+        });
+        br.recordSuccess();
+        return resp;
+      } catch (e) {
+        lastError = e;
+        const isRetryable = this.isRetryableError(e);
+        if (!isRetryable || attempt >= this.retryConfig.maxRetries) {
+          br.recordFailure();
+          throw e;
+        }
+        // Retry with backoff
+        const delay = this.retryConfig.backoffMs[attempt] ?? this.retryConfig.backoffMs[this.retryConfig.backoffMs.length - 1]!;
+        await new Promise(r => setTimeout(r, delay));
+      }
     }
+
+    // Should not reach here
+    throw lastError;
+  }
+
+  private isRetryableError(e: unknown): boolean {
+    const msg = (e as Error).message ?? String(e);
+    // Retry on rate limits, server errors, network issues; not on auth/validation
+    if (msg.includes("429") || msg.includes("rate") || msg.includes("Rate")) return true;
+    if (msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("504")) return true;
+    if (msg.includes("ETIMEDOUT") || msg.includes("ECONNRESET") || msg.includes("socket")) return true;
+    if (msg.includes("overloaded") || msg.includes("capacity")) return true;
+    return false;
   }
 
   isDegraded(role?: string): boolean {

@@ -14,7 +14,10 @@ export class Memory {
   constructor(private store: MemoryStoreLike) {}
 
   async writeWorkingMemory(runId: string, entry: { key: string; summary: string; source: "observer" | "planner" | "human" }): Promise<void> {
-    await this.store.writeWorkingMemory(runId, [{ ...entry, at: new Date().toISOString() }]);
+    // Read existing entries, append new one, write back
+    const existing = await this.store.readWorkingMemory(runId);
+    existing.push({ ...entry, at: new Date().toISOString() });
+    await this.store.writeWorkingMemory(runId, existing);
   }
 
   async readWorkingMemory(runId: string): Promise<{ key: string; summary: string; source: string }[]> {
