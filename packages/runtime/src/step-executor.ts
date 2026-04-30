@@ -11,6 +11,7 @@ interface ConnectionResolver {
 interface OutputPipeLike {
   feedStream(chunk: string): Promise<void>;
   feedExec(stdout: string, stderr: string, exitCode: number): Promise<void>;
+  flush(): Promise<void>;
 }
 
 export interface RetryConfig {
@@ -192,12 +193,15 @@ export class StepExecutor {
           if (!conn.stream) return { success: false, error: "stream not supported", failureType: "unsupported" };
           const deadline = Date.now() + timeout * 1000;
           for await (const line of conn.stream(timeout)) {
-            if (this._interrupted) break;
+            if (this._interrupted) { await pipe?.flush(); break; }
             if (pipe) await pipe.feedStream(line);
             if (Date.now() > deadline) {
+              await pipe?.flush();
               return { success: false, error: "stream timeout", failureType: "timeout" };
             }
           }
+          // Flush any pending captures that were waiting for after_lines
+          await pipe?.flush();
           return { success: true };
         }
 

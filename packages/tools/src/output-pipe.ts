@@ -56,6 +56,8 @@ export class OutputPipe {
     this.ag.onExecComplete?.(this.stepId);
   }
 
+  async flush(): Promise<void> { await this.rd.flushAllPending(); }
+
   disableSilence(): void { if (this.silenceTimer) clearTimeout(this.silenceTimer); }
 
   private resetSilence(): void {

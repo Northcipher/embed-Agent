@@ -42,8 +42,24 @@ export class TargetManager {
     const conn = this.cm.get(t, method as Transport);
     if (!conn?.exec) return false;
 
-    try { await conn.exec("reboot", 30); return true; }
+    // 1. Issue reboot
+    try { await conn.exec("reboot", 30); }
     catch { return false; }
+
+    // 2. Wait for device to come back online (poll with backoff)
+    const deadline = Date.now() + 120_000; // 2 min max
+    let delay = 3000;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, delay));
+      delay = Math.min(delay * 1.5, 15_000);
+      try {
+        await conn.connect();
+        const state = conn.state();
+        if (state === "connected") return true;
+      } catch { /* still booting */ }
+    }
+
+    return false;
   }
 
   isBusy(state: { state: string } | null): boolean {

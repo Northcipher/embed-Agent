@@ -54,16 +54,22 @@ export class RunStore {
   async listNonTerminal(): Promise<RunRecord[]> {
     const dir = path.join(this.dataRoot, "runs");
     const result: RunRecord[] = [];
+    const corrupted: string[] = [];
     try {
       for (const entry of await fs.readdir(dir)) {
         try {
           const r = await this.get(entry);
           if (r && !["completed", "failed", "cancelled"].includes(r.state)) result.push(r);
-        } catch {
-          // corrupted run record — skip but continue listing
+        } catch (e) {
+          // Corrupted run record — surface it, don't silently drop
+          corrupted.push(entry);
+          console.error(`[RunStore] Corrupted run record "${entry}": ${(e as Error).message}`);
         }
       }
     } catch { /* dir not exist */ }
+    if (corrupted.length > 0) {
+      console.error(`[RunStore] ${corrupted.length} corrupted run(s) need manual recovery: ${corrupted.join(", ")}`);
+    }
     return result;
   }
 }
