@@ -40,7 +40,7 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   });
   // Optional configs: log warnings but don't block startup
   for (const e of targetErrors) {
-    log.warn(`Optional config skipped: ${e.file}: ${e.message}`);
+    logger.warn(`Optional config skipped: ${e.file}: ${e.message}`);
   }
 
   if (errors.length > 0) {
@@ -111,7 +111,7 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   const llm = new LLMCallManager(llmProvider, models, llmRetry);
 
   // 5. Load prompts
-  const promptLoader = new PromptLoader(`${dataRoot}/prompts`);
+  const promptLoader = new PromptLoader(`config/prompts`);
   let prompts: { planner?: string; observer?: string } | undefined;
   try {
     const set = await promptLoader.loadAll("1");
