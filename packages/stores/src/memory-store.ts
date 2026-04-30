@@ -83,24 +83,13 @@ export class MemoryStore {
       return lines.map(l => JSON.parse(l) as SemanticFact)
         .filter(f => f.scope === scope && f.scope_id === scopeId)
         .filter(f => !category || f.category === category)
-        .filter(f => !verifiedOnly || f.verified);
+        .filter(f => !verifiedOnly || f.verified)
+        .filter(f => f.statement !== "__DELETED__");
     } catch { return []; }
   }
 
   async deleteFact(factId: string): Promise<void> {
-    // Add a tombstone marker that queryFacts always excludes
     await this.updateFact(factId, { verified: false, statement: "__DELETED__" } as Partial<SemanticFact>);
-  }
-
-  async queryFacts(scope: string, scopeId: string, category?: string, verifiedOnly = false): Promise<SemanticFact[]> {
-    try {
-      const lines = (await fs.readFile(path.join(this.memDir(), "semantic-facts.jsonl"), "utf-8")).trim().split("\n");
-      return lines.map(l => JSON.parse(l) as SemanticFact)
-        .filter(f => f.scope === scope && f.scope_id === scopeId)
-        .filter(f => !category || f.category === category)
-        .filter(f => !verifiedOnly || f.verified)
-        .filter(f => f.statement !== "__DELETED__"); // exclude tombstoned facts
-    } catch { return []; }
   }
 
   async writeProfile(profile: RunProfile): Promise<void> {
