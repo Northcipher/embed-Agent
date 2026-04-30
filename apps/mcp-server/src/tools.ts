@@ -98,7 +98,7 @@ export const TOOL_DEFINITIONS = [
         allow_shell_exec: { type: "boolean", description: "Allow shell commands on device" },
         no_flash: { type: "boolean", description: "Skip flashing even if plan requires it" },
         continuous: { type: "boolean", description: "Run continuously without auto-stopping" },
-        test_hint: { type: "string", description: "Test hint (e.g. 'adb_shell:uname -a')" },
+        test_hint: { type: "object", properties: { kind: { type: "string", enum: ["serial","adb_shell","fastboot","custom"] }, command: { type: "string" }, pattern: { type: "string" } }, description: "Structured test hint: {kind, command?, pattern?}" },
         concerns: { type: "array", items: { type: "string" }, description: "Specific concerns to watch for" },
       },
       required: ["target", "artifact_path", "artifact_type", "expected"],

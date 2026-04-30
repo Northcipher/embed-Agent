@@ -36,10 +36,14 @@ const handlers = {
     if (input.success_criteria) ctx.success_criteria = input.success_criteria;
     if (input.failure_criteria) ctx.failure_criteria = input.failure_criteria;
 
-    // Structured test_hint: { kind, command?, pattern? }
+    // Structured test_hint: { kind?, command?, pattern? }
     const hint = input.test_hint as Record<string, unknown> | undefined;
-    if (hint?.command) {
-      ctx.test_hint = { kind: (hint.kind as string) ?? "adb_shell", command: hint.command as string };
+    if (hint && (hint.command || hint.pattern)) {
+      ctx.test_hint = {
+        kind: (hint.kind as string) ?? "adb_shell",
+        ...(hint.command ? { command: hint.command as string } : {}),
+        ...(hint.pattern ? { pattern: hint.pattern as string } : {}),
+      };
     }
 
     const mcpInput: Record<string, unknown> = {
@@ -73,8 +77,9 @@ const handlers = {
     const deadline = Date.now() + waitSec * 1000;
     let cursor = (input.after_seq as number) ?? 0;
 
+    const limit = (input.limit as number) ?? 100;
     while (Date.now() < deadline) {
-      const s = await handler.events(runId, cursor, 100);
+      const s = await handler.events(runId, cursor, limit);
       if (s.events.length > 0) {
         const status = await handler.status(runId);
         return { summary: `${s.events.length} new events. Run is ${status?.state ?? "unknown"}`, data: { run_id: runId, state: status?.state ?? "unknown", events: s.events, next_after_seq: s.next_after_seq } };
@@ -97,7 +102,9 @@ const handlers = {
     const ref = input.ref as string | undefined;
     const r = await handler.evidence(runId, ref);
     if (ref) {
-      return { summary: r.available ? `Evidence "${ref}": ${(r as { content?: string }).content?.length ?? 0} chars` : `Evidence "${ref}" not available`, data: { available: r.available, ref, content: (r as { content?: string }).content, truncated: ((r as { content?: string }).content?.length ?? 0) > 50000 } };
+      const fullContent = (r as { content?: string }).content ?? "";
+      const truncated = fullContent.length > 50000;
+      return { summary: r.available ? `Evidence "${ref}": ${fullContent.length} chars${truncated ? " (truncated)" : ""}` : `Evidence "${ref}" not available`, data: { available: r.available, ref, content: truncated ? fullContent.slice(0, 50000) : fullContent, truncated } };
     }
     const idx = (r as { index?: { refs: unknown[] } }).index;
     return { summary: `Evidence index: ${idx?.refs?.length ?? 0} refs available`, data: { available: r.available, index: idx } };
@@ -113,7 +120,7 @@ const handlers = {
       data: {
         run_id: runId, verdict, state, confidence: verdict === "pass" ? 0.9 : 0.5,
         summary: r.summary ?? "", suggested_next: r.suggested_next ?? "check evidence", result_available: r.result_available,
-        checks: (r.key_evidence ?? []).map((ke: { summary: string; evidence_refs: string[] }, i: number) => ({ id: `check-${i}`, title: ke.summary, status: "fail" as const, reason: ke.summary, evidence_refs: ke.evidence_refs })),
+        checks: (r.key_evidence ?? []).map((ke: { summary: string; evidence_refs: string[] }, i: number) => ({ id: `check-${i}`, title: ke.summary, status: verdict === "pass" ? "pass" as const : "fail" as const, reason: ke.summary, evidence_refs: ke.evidence_refs })),
         key_evidence: r.key_evidence ?? [],
       },
     };
