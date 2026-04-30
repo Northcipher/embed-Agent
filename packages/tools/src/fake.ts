@@ -7,12 +7,16 @@ export class FakeConnection implements Connection {
   execResult: ExecResult = { stdout: "", stderr: "", exit_code: 0 };
   streamLines: string[] = [];
   flashShouldFail = false;
+  delayMs = 0; // Simulate slow device for timeout/pause tests
 
   async connect(): Promise<void> { this._state = "connected"; }
   async disconnect(): Promise<void> { this._state = "disconnected"; }
   state() { return this._state; }
 
-  async exec(): Promise<ExecResult> { return this.execResult; }
+  async exec(): Promise<ExecResult> {
+    if (this.delayMs > 0) await new Promise(r => setTimeout(r, this.delayMs));
+    return this.execResult;
+  }
 
   async *stream(): AsyncIterable<string> {
     for (const line of this.streamLines) {

@@ -96,7 +96,13 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
     reply: { model: (providerCfg.models as Record<string, string>).reply!, timeout: 60 },
   };
 
-  const llm = new LLMCallManager(llmProvider, models);
+  // Wire observer CB4 config from system.yml
+  const obsCfg = (systemConfig?.observer as Record<string, unknown>);
+  const cb4Cfg = obsCfg?.circuit_breaker as Record<string, unknown> | undefined;
+  const llmRetry = {
+    maxRetries: (cb4Cfg?.max_failures as number) ?? 3,
+  };
+  const llm = new LLMCallManager(llmProvider, models, llmRetry);
 
   // 5. Load prompts
   const promptLoader = new PromptLoader(`${dataRoot}/prompts`);
@@ -164,7 +170,8 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
 
     // Per-step OutputPipe factory: creates RuleDetector + RingBuffer per step, shares Aggregator
     const pipeFactory = (stepId: string) => {
-      const rb = new RingBuffer(500);
+      const ringCfg = (systemConfig?.runtime as Record<string, unknown>)?.ring_buffer as Record<string, unknown> | undefined;
+      const rb = new RingBuffer((ringCfg?.max_lines as number) ?? 500);
       const evidenceSaver = { saveWindow: (rid: string, ref: string, data: string) => evidenceStore.write(rid, ref, data).then(() => {}) };
       const rd = new RuleDetector(rb, eventBus, evidenceSaver, runId);
       rd.setStepId?.(stepId);
@@ -191,9 +198,17 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
       return pipe;
     };
 
-    return new StepExecutor(runId, target, eventBus, hm, cm, pipeFactory);
+    // Wire retry config from system.yml
+    const rtCfg = (systemConfig?.runtime as Record<string, unknown>)?.retry as Record<string, unknown> | undefined;
+    const retryConfig = rtCfg ? {
+      maxRetries: rtCfg.max_retries as number,
+      intervals: rtCfg.intervals_sec as number[],
+      retryable: rtCfg.retryable as string[],
+    } : undefined;
+    return new StepExecutor(runId, target, eventBus, hm, cm, pipeFactory, retryConfig);
   });
   rm.setDecisionHandlerFactory((runId: string) => {
+    const obsDebounceSec = (obsCfg?.debounce_sec as number) ?? 30;
     return new DecisionHandler(
       eventBus, hm,
       { decide: async (sp: string, input: Record<string, unknown>) => observerInst.decide(sp, input as never, runId) },
@@ -202,6 +217,7 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
         const ctx = await contextAssembler.assembleObserverContext(rid, event as never, cbActive, warnEsc);
         return { staticPrompt: ctx.staticPrompt, input: ctx.input as Record<string, unknown> };
       }},
+      obsDebounceSec,
     );
   });
 
