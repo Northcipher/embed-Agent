@@ -21,17 +21,15 @@ interface TargetStateIO {
 
 // --- Interfaces for Agent layer ---
 
-interface PlanResult {
-  plan_id: string;
-  estimated_duration_sec: number;
-  steps: Step[];
-  evidence_policy: { always: string[]; on_failure: string[] };
-  success_criteria: string[];
-  failure_signals: string[];
+interface PlanCallResult {
+  status: "planned" | "clarification_needed";
+  plan?: { plan_id: string; estimated_duration_sec: number; steps: Step[]; evidence_policy: { always: string[]; on_failure: string[] }; success_criteria: string[]; failure_signals: string[] };
+  missing_info?: string[];
+  suggested_next?: string;
 }
 
 interface PlannerCaller {
-  call(staticPrompt: string, dynamicContext: Record<string, unknown>): Promise<PlanResult>;
+  call(staticPrompt: string, dynamicContext: Record<string, unknown>): Promise<PlanCallResult>;
 }
 
 interface AgentReply {
@@ -146,13 +144,23 @@ export class RunManager {
     }
 
     // 5. ContextAssembler → Planner → Plan
-    let plan: PlanResult;
+    let planResult: PlanCallResult;
     try {
       const ctx = await this.contextAssembler.assemblePlannerContext(runId);
-      plan = await this.planner.call(ctx.staticPrompt, ctx.dynamicContext);
+      planResult = await this.planner.call(ctx.staticPrompt, ctx.dynamicContext);
     } catch (e) {
       return await this.rejectRun(runId, req.target, `Plan generation failed: ${(e as Error).message}`, "plan_rejected");
     }
+
+    // Handle clarification_needed from Planner
+    if (planResult.status === "clarification_needed") {
+      return {
+        status: "clarification_needed", run_id: runId,
+        reasons: planResult.missing_info ?? ["Planner needs more information"],
+      };
+    }
+
+    const plan = planResult.plan!;
 
     // 6. Validate plan
     if (!plan.steps || plan.steps.length === 0) {
@@ -209,12 +217,15 @@ export class RunManager {
     await this.hm.execute("OnFinalizing", { run_id: runId, status, reason });
 
     // 3. Reply generates result. Reply is the ONLY result_ready publisher.
-    //    Fallback path also publishes result_ready so it's never skipped.
     let reply: AgentReply;
     try {
       if (status === "cancelled") {
         reply = await this.reply.generateCancelled(runId, reason);
+      } else if (status === "completed") {
+        // Normal completion — LLM-driven reply with full event analysis
+        reply = await this.reply.generate(runId);
       } else {
+        // Failed (early failure) — rule-based minimal reply
         reply = await this.reply.generateMinimal(runId, reason);
       }
     } catch {

@@ -1,5 +1,8 @@
 import { ConfigLoader, Logger, PromptLoader, EventStore, EvidenceStore, RunStore, TargetStore, MemoryStore } from "@embed-agent/stores";
-import { EventBus, ContextAssembler } from "@embed-agent/runtime";
+import { EventBus, ContextAssembler, RunManager, HookManager } from "@embed-agent/runtime";
+import { ConnectionManager, TargetManager } from "@embed-agent/tools";
+import { LLMCallManager, MockProvider, AnthropicProvider, Planner, Observer, ReplyGenerator, Memory } from "@embed-agent/agent";
+import { Views } from "@embed-agent/views";
 import { CommandHandler } from "./command-handler.js";
 import { runCli } from "./cli.js";
 
@@ -11,7 +14,7 @@ interface BootstrapResult {
 
 /**
  * Production bootstrap: loads config, creates all services, wires them together.
- * If any required config fails, prints errors and calls process.exit(1).
+ * Uses AnthropicProvider if ANTHROPIC_API_KEY is set, otherwise MockProvider for dev.
  */
 export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapResult> {
   const logger = new Logger({ module: "bootstrap", pretty: true });
@@ -25,9 +28,7 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
 
   if (errors.length > 0) {
     logger.error("Config validation failed", { errors });
-    for (const e of errors) {
-      process.stderr.write(`  ${e.file}: ${e.message}\n`);
-    }
+    for (const e of errors) process.stderr.write(`  ${e.file}: ${e.message}\n`);
     process.exit(1);
   }
 
@@ -36,62 +37,85 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   const log = new Logger({ module: "embed-agent", minLevel: "info" });
 
   const eventStore = new EventStore(dataRoot);
-  const evidenceStore = new EvidenceStore(dataRoot, { emit: async () => {} });
   const runStore = new RunStore(dataRoot, log);
   const targetStore = new TargetStore(dataRoot);
   const memoryStore = new MemoryStore(dataRoot);
+  const evidenceStore = new EvidenceStore(dataRoot);
 
-  // 3. Create EventBus
+  // 3. Create EventBus + wire persistence
   const eventBus = new EventBus();
-
-  // 4. Wire EventBus → EventStore persistence
   eventStore.subscribeToBus(eventBus, runStore);
+
+  // 4. Create LLM (Anthropic if key set, Mock for dev)
+  const apiKey = process.env["ANTHROPIC_API_KEY"];
+  const llmProvider = apiKey
+    ? new AnthropicProvider(apiKey)
+    : new MockProvider();
+  if (!apiKey) {
+    (llmProvider as MockProvider).setResponse(JSON.stringify({
+      plan_id: "default", estimated_duration_sec: 300,
+      steps: [{ id: "check", capability: "shell_exec", action: "exec", command: "uname -a", timeout_sec: 60 }],
+      evidence_policy: { always: ["serial:full"], on_failure: ["logcat"] },
+      success_criteria: ["device responds to shell"], failure_signals: ["kernel panic"],
+    }));
+    log.warn("No ANTHROPIC_API_KEY set — using MockProvider for LLM calls");
+  }
+
+  const llm = new LLMCallManager(llmProvider, {
+    planner: { model: "claude-sonnet-4-6", timeout: 120 },
+    observer: { model: "claude-haiku-4-5", timeout: 60 },
+    reply: { model: "claude-haiku-4-5", timeout: 60 },
+  });
 
   // 5. Load prompts
   const promptLoader = new PromptLoader(`${dataRoot}/prompts`);
   let prompts: { planner?: string; observer?: string } | undefined;
   try {
     const set = await promptLoader.loadAll("1");
-    const plannerPrompt = set.get("planner")?.system;
-    const observerPrompt = set.get("observer")?.system;
-    if (plannerPrompt || observerPrompt) {
-      prompts = {};
-      if (plannerPrompt) prompts.planner = plannerPrompt;
-      if (observerPrompt) prompts.observer = observerPrompt;
-    }
-    log.info("Prompts loaded from files");
-  } catch {
-    log.info("Using built-in prompts (no prompt files found)");
-  }
+    const pp = set.get("planner")?.system;
+    const op = set.get("observer")?.system;
+    if (pp || op) { prompts = {}; if (pp) prompts.planner = pp; if (op) prompts.observer = op; }
+  } catch { /* use built-in defaults */ }
 
-  // 6. Create ContextAssembler
-  const contextAssembler = new ContextAssembler(
-    runStore, eventStore, targetStore, memoryStore, prompts,
+  // 6. Agent layer
+  const memory = new Memory(memoryStore);
+  const planner = new Planner(llm, { emit: async (e) => { await eventBus.emit(e); } });
+  const observer = new Observer(llm);
+  const reply = new ReplyGenerator(llm, eventStore, evidenceStore, runStore,
+    memoryStore as never /* MemoryStore satisfies MemoryWriter at runtime */,
+    { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } }, dataRoot,
   );
 
-  // 7. Create stubs for agent layer (full wiring requires agent package)
-  const stubPlanner = { call: async () => ({ status: "clarification_needed" as const, missing_info: ["no LLM configured"], suggested_next: "configure LLM" }) };
-  const stubReply = {
-    generate: async () => ({ run_id: "", status: "completed" as const, summary: "", suggested_next: "", evidence_path: "", key_evidence: [], confidence: 0 }),
-    generateMinimal: async () => ({ run_id: "", status: "failed" as const, summary: "", suggested_next: "", evidence_path: "", key_evidence: [], confidence: 0 }),
-    generateCancelled: async () => ({ run_id: "", status: "cancelled" as const, summary: "", suggested_next: "", evidence_path: "", key_evidence: [], confidence: 0 }),
+  // 7. Tool layer
+  const cm = new ConnectionManager();
+  const tm = new TargetManager(cm, targetStore);
+
+  // 8. Runtime layer
+  const hm = new HookManager([], { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } });
+  const contextAssembler = new ContextAssembler(runStore, eventStore, targetStore, memoryStore, prompts);
+
+  // Adapters: bridge Agent types to RunManager's DI interfaces
+  const plannerAdapter = { call: async (sp: string, dc: Record<string, unknown>) => planner.call(sp, dc as never) };
+  const replyAdapter = {
+    generate: (rid: string) => reply.generate(rid),
+    generateMinimal: (rid: string, reason: string) => reply.generateMinimal(rid, reason),
+    generateCancelled: (rid: string, reason: string) => reply.generateCancelled(rid, reason),
   };
 
-  // 8. Create RunManager (deferred — requires full agent wiring)
-  // For now, create CommandHandler with views-only query support
-  const handler = new CommandHandler(
-    null as never, // Will be replaced when full wiring is done
-    null as never,
-  );
+  const rm = new RunManager(runStore, targetStore, tm, eventBus, hm, contextAssembler, plannerAdapter, replyAdapter, dataRoot);
 
-  log.info("Bootstrap complete");
+  // 9. Views
+  const views = new Views(runStore, eventStore, evidenceStore, targetStore, memoryStore);
+
+  // 10. CommandHandler — fully wired
+  const handler = new CommandHandler(rm, views);
+
+  log.info("Bootstrap complete — Embed Agent ready");
 
   return {
     handler,
     logger: log,
-    shutdown: async () => {
-      log.info("Shutting down");
-    },
+    shutdown: async () => { log.info("Shutting down"); },
   };
 }
 

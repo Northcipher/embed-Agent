@@ -20,7 +20,9 @@
   "dependencies": {
     "@embed-agent/runtime": "workspace:*",
     "@embed-agent/stores": "workspace:*",
-    "@embed-agent/views": "workspace:*"
+    "@embed-agent/views": "workspace:*",
+    "@embed-agent/agent": "workspace:*",
+    "@embed-agent/tools": "workspace:*"
   },
   "bin": {
     "va": "./dist/main.js"
