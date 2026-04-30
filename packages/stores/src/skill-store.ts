@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { validateId } from "./validate.js";
 
 export interface Skill {
   name: string;
@@ -55,6 +56,7 @@ export class SkillStore {
   }
 
   async create(name: string, skill: Skill): Promise<void> {
+    validateId(name, "skillName");
     this.skills.set(name, skill);
     const dir = path.join(this.dataRoot, "skills", "custom");
     await fs.mkdir(dir, { recursive: true });

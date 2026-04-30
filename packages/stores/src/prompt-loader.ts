@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { validateId } from "./validate.js";
 
 export type PromptRole = "planner" | "observer" | "reply";
 
@@ -16,6 +17,7 @@ export class PromptLoader {
 
   /** Load a prompt from prompts/{role}-v{version}.md */
   async load(role: PromptRole, version: string): Promise<PromptSet> {
+    validateId(version, "version");
     const cacheKey = `${role}-${version}`;
     if (this.cache.has(cacheKey)) return this.cache.get(cacheKey)!;
 

@@ -28,12 +28,10 @@ export class LocalConnection implements Connection {
   async disconnect(): Promise<void> {}
 
   async exec(cmd: string, timeout: number): Promise<ExecResult> {
-    // Security: validate against allowed commands whitelist
-    if (this.policy.allowed_commands.length > 0) {
-      const cmdName = cmd.split(/\s+/)[0] ?? "";
-      if (!this.policy.allowed_commands.includes(cmdName)) {
-        return { stdout: "", stderr: `Command not allowed: ${cmdName}`, exit_code: 126 };
-      }
+    // Security: whitelist enforcement — "*" allows all, empty list allows none
+    const cmdName = cmd.split(/\s+/)[0] ?? "";
+    if (!this.policy.allowed_commands.includes("*") && !this.policy.allowed_commands.includes(cmdName)) {
+      return { stdout: "", stderr: `Command not allowed: ${cmdName}`, exit_code: 126 };
     }
 
     // Use execFile with argv — no shell interpolation

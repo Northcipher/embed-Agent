@@ -87,7 +87,8 @@ Output JSON:
       } else {
         reply = this.parseReply(runId, status, result.content);
       }
-    } catch {
+    } catch (e) {
+      console.error(`[ReplyGenerator] LLM call failed for ${runId}:`, (e as Error).message);
       reply = this.buildMinimal(runId, status, "LLM failed — rule-based summary");
     }
 
@@ -206,7 +207,7 @@ Output JSON:
       const dir = path.join(this.dataRoot, "runs", runId, "brain");
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(path.join(dir, "reply.json"), JSON.stringify(reply, null, 2), "utf-8");
-    } catch { /* persistence failure is non-fatal */ }
+    } catch (e) { console.error(`[ReplyGenerator] Failed to persist reply:`, (e as Error).message); }
   }
 
   private async writeArtifacts(
@@ -248,6 +249,6 @@ Output JSON:
     await Promise.all([
       this.memory.writeEpisode(episode),
       this.memory.writeProfile(profile),
-    ]).catch(() => { /* memory write failure is non-fatal */ });
+    ]).catch((e) => { console.error(`[ReplyGenerator] Memory write failed:`, (e as Error).message); });
   }
 }

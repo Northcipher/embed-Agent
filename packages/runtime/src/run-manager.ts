@@ -271,7 +271,9 @@ export class RunManager {
     this.stepQueues.set(runId, sq);
 
     // Start async execution — don't await, let it run in background
-    this.executeRun(runId, req.target).catch(() => {});
+    this.executeRun(runId, req.target).catch((e) => {
+      console.error(`[RunManager] Background execution failed for ${runId}:`, (e as Error).message);
+    });
 
     return { status: "accepted", run_id: runId };
   }
@@ -333,10 +335,8 @@ export class RunManager {
         // Failed (early failure) — rule-based minimal reply
         reply = await this.reply.generateMinimal(runId, reason);
       }
-    } catch {
-      // ReplyCaller failed — use in-memory fallback. result_ready was not published
-      // (Reply is the sole publisher), but the run_failed audit event below still
-      // serves as the terminal signal for views/clients.
+    } catch (e) {
+      console.error(`[RunManager] Reply generation failed for ${runId}:`, (e as Error).message);
       reply = {
         run_id: runId, status,
         summary: reason, suggested_next: "check evidence manually", evidence_path: `${this.dataRoot}/runs/${runId}`,

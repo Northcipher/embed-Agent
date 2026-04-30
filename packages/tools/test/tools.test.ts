@@ -5,8 +5,8 @@ import { RuleDetector, type Rule } from "../src/rule-detector.js";
 import { FakeConnection } from "../src/fake.js";
 
 describe("LocalConnection", () => {
-  it("exec echo", async () => {
-    const c = new LocalConnection();
+  it("exec echo with allowed command", async () => {
+    const c = new LocalConnection({ allowed_commands: ["echo"] });
     const r = await c.exec!("echo hello", 5);
     expect(r.stdout.trim()).toBe("hello");
   });

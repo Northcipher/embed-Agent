@@ -26,7 +26,7 @@ export class EventBus {
     for (const [pattern, handlers] of this.subs) {
       if (pattern === "*" || pattern === event.type) {
         for (const h of handlers) {
-          try { await h(event); } catch { /* don't break other subscribers */ }
+          try { await h(event); } catch (e) { console.error(`[EventBus] Subscriber error for ${event.type}:`, (e as Error).message); }
         }
       }
     }

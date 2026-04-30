@@ -132,7 +132,7 @@ export class EventStore {
         } else {
           await this.appendGlobal(entry);
         }
-      } catch { /* persistence failure shouldn't crash */ }
+      } catch (e) { console.error(`[EventStore] Bus persistence failed:`, (e as Error).message); }
     });
   }
 }

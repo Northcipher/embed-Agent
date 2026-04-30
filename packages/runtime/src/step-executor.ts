@@ -123,7 +123,7 @@ export class StepExecutor {
       await this.hm.execute("PostStepComplete", { run_id: this.runId, step_id: step.id });
       return { completed: true };
     } finally {
-      try { await conn.disconnect(); } catch { /* ignore */ }
+      try { await conn.disconnect(); } catch (e) { console.error(`[StepExecutor] Disconnect failed:`, (e as Error).message); }
     }
   }
 
