@@ -61,12 +61,17 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
     log.warn("No ANTHROPIC_API_KEY set — using MockProvider for LLM calls");
   }
 
-  // Read model names from system config, fall back to defaults
+  // Read model names from system config — required, no defaults
   const llmConfig = (configs["system"] as Record<string, unknown>);
+  const cfgModels = llmConfig?.models as Record<string, string> | undefined;
+  if (!cfgModels?.planner || !cfgModels?.observer || !cfgModels?.reply) {
+    logger.error("LLM models not configured. Set models.planner, models.observer, models.reply in system.yml");
+    process.exit(1);
+  }
   const models = {
-    planner: { model: (llmConfig?.models as Record<string, string>)?.planner ?? "claude-sonnet-4-6", timeout: 120 },
-    observer: { model: (llmConfig?.models as Record<string, string>)?.observer ?? "claude-haiku-4-5", timeout: 60 },
-    reply: { model: (llmConfig?.models as Record<string, string>)?.reply ?? "claude-haiku-4-5", timeout: 60 },
+    planner: { model: cfgModels.planner, timeout: 120 },
+    observer: { model: cfgModels.observer, timeout: 60 },
+    reply: { model: cfgModels.reply, timeout: 60 },
   };
 
   const llm = new LLMCallManager(llmProvider, models);
