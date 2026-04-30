@@ -25,8 +25,8 @@ export interface Step {
   src?: string;
   dst?: string;
   timeout_sec: number;
-  condition: StepCondition;
-  on_failure: StepOnFailure;
+  condition?: StepCondition;
+  on_failure?: StepOnFailure;
   observe?: ObserveConfig;
   retry_policy?: RetryPolicy;
 }

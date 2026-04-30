@@ -1,14 +1,7 @@
 import type { LLMCallManager, LLMMessage } from "./llm.js";
-import type { Step } from "./types.js";
+import type { Step, Plan } from "@embed-agent/contracts";
 
-export interface Plan {
-  plan_id: string;
-  estimated_duration_sec: number;
-  steps: Step[];
-  evidence_policy: { always: string[]; on_failure: string[] };
-  success_criteria: string[];
-  failure_signals: string[];
-}
+export type { Plan };
 
 export interface PlannerDynamicContext {
   target_id: string;

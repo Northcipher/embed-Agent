@@ -1,12 +1,6 @@
-export interface Step {
-  id: string;
-  capability: string;
-  action: "exec" | "stream" | "push" | "flash" | "wait";
-  command?: string;
-  timeout_sec: number;
-  retry_policy?: { max_retries: number; intervals_sec: number[] };
-  observe?: { sampling_commands?: string[] };
-}
+import type { Step } from "@embed-agent/contracts";
+
+export type { Step };
 
 export class StepQueue {
   private steps: Step[] = [];

@@ -1,3 +1,4 @@
+import type { Decision } from "@embed-agent/contracts";
 import type { HookManager } from "./hook-manager.js";
 
 interface EventEmitter {
@@ -6,7 +7,7 @@ interface EventEmitter {
 }
 
 interface ObserverCaller {
-  decide(staticPrompt: string, input: Record<string, unknown>): Promise<DecisionResult>;
+  decide(staticPrompt: string, input: Record<string, unknown>): Promise<Decision>;
 }
 
 interface RunController {
@@ -29,20 +30,7 @@ interface ContextProvider {
   ): Promise<{ staticPrompt: string; input: Record<string, unknown> }>;
 }
 
-export interface DecisionResult {
-  decision: "stop" | "continue" | "collect_more" | "extend_wait" | "pause" | "suggest" | "observe_more_frequent" | "observe_again_at";
-  reason: string;
-  confidence: number;
-  reasoning_trace: string;
-  evidence_refs: string[];
-  params?: {
-    extra_wait_sec?: number;
-    logs?: string[];
-    observe_interval?: number;
-    observe_at?: number;
-  };
-  suggestion?: string;
-}
+export type DecisionResult = Decision;
 
 export class ObserverOverrideBreaker {
   private overrides = 0;
