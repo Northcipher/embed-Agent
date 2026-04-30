@@ -133,7 +133,7 @@ export class DecisionHandler {
     // CB1: active → only suggest (never stop/pause)
     if (this.overrideBreaker.isActive()) {
       this.eb.emit({
-        type: "suggestion_generated", source: "decision_handler",
+        type: "suggestion_generated", run_id: this.runId, source: "decision_handler",
         summary: `Auto-stop disabled (CB1). Rule "${ruleId}" severity=${severity}`,
         payload: { rule_id: ruleId },
       });
@@ -160,7 +160,7 @@ export class DecisionHandler {
       await this.executeDecision(decision);
     } catch (e) {
       this.eb.emit({
-        type: "decision_rejected", source: "decision_handler",
+        type: "decision_rejected", run_id: this.runId, source: "decision_handler",
         summary: `Observer call failed: ${(e as Error).message}`,
         payload: { rule_id: ruleId },
       });
