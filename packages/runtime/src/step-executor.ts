@@ -65,7 +65,7 @@ export class StepExecutor {
 
   extendTimeout(seconds: number): void { this._timeoutExtension += seconds; }
 
-  async executeStep(step: Step): Promise<{ completed: boolean; interrupted?: boolean; error?: string; failureType?: string }> {
+  async executeStep(step: Step): Promise<{ completed: boolean; interrupted?: boolean; blocked?: boolean; error?: string; failureType?: string }> {
     this._interrupted = false;
     this._timeoutExtension = 0;
 
@@ -80,7 +80,7 @@ export class StepExecutor {
         summary: `Step blocked by PreStepExecute hook: ${preResult.reason ?? "no reason"}`,
         payload: { step_id: step.id, reason: preResult.reason },
       });
-      return { completed: false, error: `Hook blocked: ${preResult.reason}` };
+      return { completed: false, blocked: true, error: `Hook blocked: ${preResult.reason}` };
     }
 
     // 2. Get Connection

@@ -131,14 +131,14 @@ export class DecisionHandler {
       return;
     }
 
-    // CB3: accumulate distinct warnings
-    this.warningAccum.record(ruleId);
-
     // debounce by rule_id
     if (this.isDebounced(ruleId)) return;
 
-    // info → skip Observer
+    // info → skip Observer (don't accumulate in CB3)
     if (severity === "info") return;
+
+    // CB3: accumulate distinct warnings (only warning+ severity)
+    this.warningAccum.record(ruleId);
 
     // warning → call Observer
     try {

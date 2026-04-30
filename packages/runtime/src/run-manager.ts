@@ -86,18 +86,6 @@ function generateId(): string {
   return `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function publishResultReady(eb: EventEmitter, reply: AgentReply): void {
-  eb.emit({
-    type: "result_ready", run_id: reply.run_id, source: "reply_generator",
-    summary: reply.summary,
-    payload: {
-      status: reply.status, summary: reply.summary,
-      suggested_next: reply.suggested_next, evidence_path: reply.evidence_path,
-      key_evidence: reply.key_evidence,
-    },
-  });
-}
-
 // --- RunManager ---
 
 export class RunManager {
@@ -154,7 +142,7 @@ export class RunManager {
       run_id: runId, target_id: req.target, artifact: req.artifact,
     });
     if (hookResult.decision === "block") {
-      return await this.rejectRun(runId, req.target, `PreRunStart hook blocked: ${hookResult.reason ?? "no reason"}`);
+      return await this.rejectRun(runId, req.target, `PreRunStart hook blocked: ${hookResult.reason ?? "no reason"}`, "rejected");
     }
 
     // 5. ContextAssembler → Planner → Plan
@@ -163,19 +151,19 @@ export class RunManager {
       const ctx = await this.contextAssembler.assemblePlannerContext(runId);
       plan = await this.planner.call(ctx.staticPrompt, ctx.dynamicContext);
     } catch (e) {
-      return await this.rejectRun(runId, req.target, `Plan generation failed: ${(e as Error).message}`);
+      return await this.rejectRun(runId, req.target, `Plan generation failed: ${(e as Error).message}`, "plan_rejected");
     }
 
     // 6. Validate plan
     if (!plan.steps || plan.steps.length === 0) {
-      return await this.rejectRun(runId, req.target, "Plan rejected: no steps generated");
+      return await this.rejectRun(runId, req.target, "Plan rejected: no steps generated", "plan_rejected");
     }
 
     // 7. Pre-flight — derive required transports from plan steps
     const transports = this.requiredTransports(plan.steps, req.constraints?.no_flash ?? false);
     const pf = await this.tm.preflight(req.target, transports, req.artifact.path);
     if (!pf.all_passed) {
-      return await this.rejectRun(runId, req.target, "Pre-flight failed", pf.checks.map(c => ({ check: c.check, error: c.error ?? "failed" })));
+      return await this.rejectRun(runId, req.target, "Pre-flight failed", "target_not_ready", pf.checks.map(c => ({ check: c.check, error: c.error ?? "failed" })));
     }
 
     // 8. Emit RunStarted → update state (running + target busy) → load steps
@@ -198,11 +186,11 @@ export class RunManager {
   }
 
   private async rejectRun(
-    runId: string, targetId: string, reason: string,
+    runId: string, targetId: string, reason: string, status: string,
     failedChecks?: { check: string; error: string }[],
   ): Promise<{ status: string; run_id?: string; reasons?: string[]; failed_checks?: { check: string; error: string }[] }> {
     await this.finalize(runId, targetId, "failed", reason);
-    const result: { status: string; run_id?: string; reasons?: string[]; failed_checks?: { check: string; error: string }[] } = { status: "plan_rejected", run_id: runId, reasons: [reason] };
+    const result: { status: string; run_id?: string; reasons?: string[]; failed_checks?: { check: string; error: string }[] } = { status, run_id: runId, reasons: [reason] };
     if (failedChecks) result.failed_checks = failedChecks;
     return result;
   }
@@ -230,13 +218,14 @@ export class RunManager {
         reply = await this.reply.generateMinimal(runId, reason);
       }
     } catch {
+      // ReplyCaller failed — use in-memory fallback. result_ready was not published
+      // (Reply is the sole publisher), but the run_failed audit event below still
+      // serves as the terminal signal for views/clients.
       reply = {
         run_id: runId, status,
         summary: reason, suggested_next: "check evidence manually", evidence_path: `${this.dataRoot}/runs/${runId}`,
         key_evidence: [],
       };
-      // Ensure result_ready is published even when ReplyCaller fails
-      publishResultReady(this.eb, reply);
     }
 
     // 4. RM emits audit event FIRST, then updates state.
@@ -349,6 +338,11 @@ export class RunManager {
     if (!result.completed) {
       if (result.interrupted) {
         // Interrupted by pause/cancel — leave as-is (caller handles)
+        return false;
+      }
+      if (result.blocked) {
+        // Hook blocked — treat as pause, not failure
+        await this.pause(runId, result.error ?? "Hook blocked step");
         return false;
       }
       // Step failed — finalize as failed

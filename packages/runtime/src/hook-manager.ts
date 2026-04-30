@@ -31,20 +31,48 @@ export interface HookResult {
 // Hook points that allow returning a decision
 const DECISION_POINTS: HookPoint[] = ["PreRunStart", "PreStepExecute", "OnStopDecision"];
 
+interface AuditEmitter {
+  emit(e: Record<string, unknown>): Promise<void>;
+}
+
 export class HookManager {
   private hooks: HookConfig[];
+  private eb: AuditEmitter | undefined;
 
-  constructor(hooks: HookConfig[] = []) {
+  constructor(hooks: HookConfig[] = [], eb?: AuditEmitter) {
     this.hooks = hooks;
+    this.eb = eb;
   }
 
   async execute(point: HookPoint, ctx: Record<string, unknown>): Promise<HookResult> {
     const matching = this.hooks.filter(h => h.on === point && this.matches(h.match, ctx));
 
     for (const hook of matching) {
-      const result = await this.runHook(hook, ctx);
-      if (DECISION_POINTS.includes(point) && result.decision) {
-        return result; // first decision wins
+      const startTime = Date.now();
+      let result: HookResult;
+      try {
+        result = await this.runHook(hook, ctx);
+      } catch {
+        result = { stderr: "Hook execution threw" };
+      }
+
+      // Always emit hook_executed audit event
+      this.eb?.emit({
+        type: "hook_executed",
+        source: "hook_manager",
+        summary: `Hook "${hook.name}" on ${point}: ${result.decision ?? "proceed"}`,
+        payload: {
+          hook_name: hook.name,
+          point,
+          decision: result.decision,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          duration_ms: Date.now() - startTime,
+        },
+      });
+
+      if (DECISION_POINTS.includes(point)) {
+        return result; // first matching hook's result for decision points
       }
     }
 
@@ -61,17 +89,18 @@ export class HookManager {
 
   private async runHook(hook: HookConfig, ctx: Record<string, unknown>): Promise<HookResult> {
     // Security: validate command is a script path, not inline shell
-    await this.validateCommand(hook.command);
+    const scriptPath = await this.validateCommand(hook.command);
+
+    // Interpolate {{variables}} from ctx
+    const args = [JSON.stringify(ctx)];
 
     try {
-      const args = [JSON.stringify(ctx)];
-      const { stdout, stderr } = await execFileP(hook.command, args, {
+      const { stdout, stderr } = await execFileP(scriptPath, args, {
         timeout: hook.timeout * 1000,
         maxBuffer: 1024 * 1024,
       });
 
       const output = stdout.trim();
-      // Only decision-capable hooks can return a decision
       if (DECISION_POINTS.includes(hook.on) && output) {
         try {
           const parsed = JSON.parse(output) as HookResult;
@@ -84,19 +113,35 @@ export class HookManager {
       return { stdout, stderr };
     } catch (e) {
       const err = e as { code?: string; stderr?: string };
-      // Don't block on hook failure — return the error for audit
-      const msg = err.code === "ENOENT" ? `Hook script not found: ${hook.command}` : (err.stderr ?? `Hook failed: ${(e as Error).message}`);
+      // Proceed on failure — never throw
+      const msg = err.code === "ENOENT"
+        ? `Hook script not found: ${hook.command}`
+        : (err.stderr ?? `Hook failed: ${(e as Error).message}`);
       return { stderr: msg };
     }
   }
 
-  private async validateCommand(command: string): Promise<void> {
-    // Must be an absolute or relative file path — no spaces or shell metacharacters
-    if (!/^\.?\/|^\//.test(command) || /[;&|`$(){}\\]/.test(command)) {
-      throw new Error(`Hook command must be a file path, got: ${command}`);
+  /**
+   * Validate hook command: must be a script file path.
+   * Reject inline shell (pipes, redirects, command separators, backticks).
+   * Scripts with arguments (e.g., "./script.sh --flag") are allowed.
+   */
+  private async validateCommand(command: string): Promise<string> {
+    // Extract the script path (first token that looks like a path)
+    const match = command.match(/^(\.\/\S+|\/\S+)/);
+    const scriptPath = match?.[1];
+    if (!scriptPath) {
+      throw new Error(`Hook command must start with a file path, got: ${command}`);
     }
 
-    // Verify the file exists and is readable
-    await fs.access(command, fs.constants.R_OK);
+    // Reject shell metacharacters in the remainder of the command
+    const remainder = command.slice(scriptPath.length);
+    if (/[;&|`$(){}]/.test(remainder)) {
+      throw new Error(`Hook command contains shell metacharacters: ${command}`);
+    }
+
+    // Verify the script file exists and is readable
+    await fs.access(scriptPath, fs.constants.R_OK);
+    return scriptPath;
   }
 }
