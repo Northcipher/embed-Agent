@@ -1,7 +1,7 @@
 import type { HookManager } from "./hook-manager.js";
 
 interface EventEmitter {
-  emit(e: Record<string, unknown>): void;
+  emit(e: Record<string, unknown>): Promise<void>;
   subscribe(types: string[], handler: (e: Record<string, unknown>) => void): () => void;
 }
 
@@ -12,6 +12,7 @@ interface ObserverCaller {
 interface RunController {
   pause(runId: string, reason: string): Promise<void>;
   cancel(runId: string, reason: string): Promise<void>;
+  stopRun(runId: string, reason: string): Promise<void>;
 }
 
 interface StepController {
@@ -108,10 +109,13 @@ export class DecisionHandler {
   }
 
   private async handleEvent(event: Record<string, unknown>): Promise<void> {
+    // Cross-run isolation: ignore events from other runs
+    if (event.run_id !== this.runId) return;
+
     const severity = (event.severity as string) ?? "info";
     const ruleId = (event.rule_id as string) ?? (event.type as string);
 
-    // fatal → stop. Bypasses CB1/CB3.
+    // fatal → stop (failed path, not cancelled). Bypasses CB1/CB3.
     if (severity === "fatal") {
       const hookResult = await this.hm.execute("OnStopDecision", {
         run_id: this.runId, rule_id: ruleId, event_type: event.type, severity,
@@ -174,7 +178,28 @@ export class DecisionHandler {
     return false;
   }
 
+  private readonly VALID_DECISIONS = new Set<string>([
+    "stop", "continue", "collect_more", "extend_wait", "pause", "suggest", "observe_more_frequent", "observe_again_at",
+  ]);
+
+  private validateDecision(d: DecisionResult): boolean {
+    if (!this.VALID_DECISIONS.has(d.decision)) return false;
+    if (typeof d.confidence !== "number" || d.confidence < 0 || d.confidence > 1) return false;
+    if (typeof d.reason !== "string" || d.reason.length === 0) return false;
+    return true;
+  }
+
   private async executeDecision(d: DecisionResult): Promise<void> {
+    // Validate before accepting
+    if (!this.validateDecision(d)) {
+      this.eb.emit({
+        type: "decision_rejected", source: "decision_handler", run_id: this.runId,
+        summary: `Invalid decision: ${JSON.stringify(d)}`,
+        payload: { decision: d.decision },
+      });
+      return;
+    }
+
     this.eb.emit({
       type: "decision_made", source: "observer", run_id: this.runId,
       summary: d.reason,
@@ -184,7 +209,7 @@ export class DecisionHandler {
 
     switch (d.decision) {
       case "stop":
-        await this.runController.cancel(this.runId, d.reason);
+        await this.runController.stopRun(this.runId, d.reason);
         break;
       case "pause":
         await this.runController.pause(this.runId, d.reason);

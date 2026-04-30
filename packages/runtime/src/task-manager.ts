@@ -5,7 +5,7 @@ interface RunStoreReader {
 }
 
 interface EventEmitter {
-  emit(e: Record<string, unknown>): void;
+  emit(e: Record<string, unknown>): Promise<void>;
 }
 
 export interface Task {
@@ -14,6 +14,9 @@ export interface Task {
   watch_path?: string;
   skill: string;
   params?: Record<string, string>;
+  target: string;
+  artifact: { path: string; type: string; version?: string; build_id?: string };
+  expected: string;
   last_run?: { run_id: string; state: string };
 }
 
@@ -42,9 +45,9 @@ export class TaskManager {
 
     // Create new run via RunManager
     const result = await this.rm.createRun({
-      artifact: { path: "", type: "" }, // filled by skill
-      target: "", // filled by skill
-      expected: `Task: ${task.name}`,
+      artifact: task.artifact,
+      target: task.target,
+      expected: task.expected,
       constraints: {},
     });
 

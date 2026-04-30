@@ -84,9 +84,9 @@ export class HookManager {
       return { stdout, stderr };
     } catch (e) {
       const err = e as { code?: string; stderr?: string };
-      // Don't block on hook failure unless it returned a decision
-      if (err.code === "ENOENT") throw new Error(`Hook script not found: ${hook.command}`);
-      return { stderr: err.stderr ?? `Hook failed: ${(e as Error).message}` };
+      // Don't block on hook failure — return the error for audit
+      const msg = err.code === "ENOENT" ? `Hook script not found: ${hook.command}` : (err.stderr ?? `Hook failed: ${(e as Error).message}`);
+      return { stderr: msg };
     }
   }
 

@@ -77,7 +77,7 @@ export interface ValidateRequest {
 // --- Event emitter interface ---
 
 interface EventEmitter {
-  emit(e: Record<string, unknown>): void;
+  emit(e: Record<string, unknown>): Promise<void>;
 }
 
 // --- Helper ---
@@ -86,13 +86,24 @@ function generateId(): string {
   return `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function publishResultReady(eb: EventEmitter, reply: AgentReply): void {
+  eb.emit({
+    type: "result_ready", run_id: reply.run_id, source: "reply_generator",
+    summary: reply.summary,
+    payload: {
+      status: reply.status, summary: reply.summary,
+      suggested_next: reply.suggested_next, evidence_path: reply.evidence_path,
+      key_evidence: reply.key_evidence,
+    },
+  });
+}
+
 // --- RunManager ---
 
 export class RunManager {
   private activeExecutors = new Map<string, StepExecutor>();
   private activeDecisionHandlers = new Map<string, DecisionHandler>();
   private stepQueues = new Map<string, StepQueue>();
-  private locks = new Set<string>(); // target_id set
 
   constructor(
     private runStore: RunStoreIO,
@@ -122,7 +133,7 @@ export class RunManager {
       return { status: "target_busy", reasons: [`Target ${req.target} is in state ${ts?.state ?? "unknown"}`] };
     }
 
-    // 3. Create Run + acquire lock
+    // 3. Create Run + acquire lock (set target to preparing)
     const runId = generateId();
     const run: RunRecord = {
       run_id: runId,
@@ -136,8 +147,7 @@ export class RunManager {
       created_at: new Date().toISOString(),
     };
     await this.runStore.create(run);
-    await this.targetState.updateState(req.target, { current_run_id: runId });
-    this.locks.add(req.target);
+    await this.targetState.updateState(req.target, { state: "preparing", current_run_id: runId });
 
     // 4. PreRunStart hook
     const hookResult = await this.hm.execute("PreRunStart", {
@@ -168,14 +178,17 @@ export class RunManager {
       return await this.rejectRun(runId, req.target, "Pre-flight failed", pf.checks.map(c => ({ check: c.check, error: c.error ?? "failed" })));
     }
 
-    // 8. Emit RunStarted → update state → load steps
+    // 8. Emit RunStarted → update state (running + target busy) → load steps
     this.eb.emit({
       type: "run_started", run_id: runId, source: "run_manager",
       summary: `Run ${runId} started on target ${req.target}`,
       payload: { plan_id: plan.plan_id, target_id: req.target, estimated_duration_sec: plan.estimated_duration_sec },
     });
 
-    await this.runStore.update(runId, { state: "running", started_at: new Date().toISOString() });
+    await Promise.all([
+      this.runStore.update(runId, { state: "running", started_at: new Date().toISOString() }),
+      this.targetState.updateState(req.target, { state: "busy" }),
+    ]);
 
     const sq = new StepQueue();
     sq.load(plan.steps);
@@ -207,7 +220,8 @@ export class RunManager {
     // 2. OnFinalizing hook
     await this.hm.execute("OnFinalizing", { run_id: runId, status, reason });
 
-    // 3. Reply generates result (Reply is the ONLY result_ready publisher)
+    // 3. Reply generates result. Reply is the ONLY result_ready publisher.
+    //    Fallback path also publishes result_ready so it's never skipped.
     let reply: AgentReply;
     try {
       if (status === "cancelled") {
@@ -221,11 +235,11 @@ export class RunManager {
         summary: reason, suggested_next: "check evidence manually", evidence_path: `${this.dataRoot}/runs/${runId}`,
         key_evidence: [],
       };
+      // Ensure result_ready is published even when ReplyCaller fails
+      publishResultReady(this.eb, reply);
     }
 
-    // 4. Reply emits result_ready (via its own emit). RM consumes it:
-    // RM emits audit event FIRST, then updates state.
-
+    // 4. RM emits audit event FIRST, then updates state.
     const auditType = `run_${reply.status}`;
     this.eb.emit({
       type: auditType, run_id: runId, source: "run_manager",
@@ -240,16 +254,15 @@ export class RunManager {
     if (reply.status !== "completed") updatePatch.failure_reason = reason;
     await this.runStore.update(runId, updatePatch);
 
-    // 5. Release lock
-    this.locks.delete(targetId);
-    await this.targetState.updateState(targetId, { current_run_id: undefined });
+    // 5. Release lock — target back to idle
+    await this.targetState.updateState(targetId, { state: "idle", current_run_id: undefined });
 
     // 6. PostRunEnd hook
     await this.hm.execute("PostRunEnd", { run_id: runId, status: reply.status });
   }
 
   // ============================================================
-  // pause / resume / cancel
+  // pause / resume / cancel / stop (fatal)
   // ============================================================
 
   async pause(runId: string, reason: string): Promise<void> {
@@ -274,6 +287,14 @@ export class RunManager {
     if (!run) throw new Error(`Run not found: ${runId}`);
     this.activeExecutors.get(runId)?.interrupt();
     await this.finalize(runId, run.target_id, "cancelled", reason);
+  }
+
+  /** Stop a run due to fatal signal — uses "failed" path, not "cancelled". */
+  async stopRun(runId: string, reason: string): Promise<void> {
+    const run = await this.runStore.get(runId);
+    if (!run) throw new Error(`Run not found: ${runId}`);
+    this.activeExecutors.get(runId)?.interrupt();
+    await this.finalize(runId, run.target_id, "failed", reason);
   }
 
   // ============================================================
@@ -302,6 +323,16 @@ export class RunManager {
     const result = await executor.executeStep(step);
     dh.detach();
 
-    return result.completed;
+    if (!result.completed) {
+      if (result.interrupted) {
+        // Interrupted by pause/cancel — leave as-is (caller handles)
+        return false;
+      }
+      // Step failed — finalize as failed
+      await this.finalize(runId, executor["target"]?.target_id ?? "", "failed", result.error ?? "Step failed");
+      return false;
+    }
+
+    return true;
   }
 }

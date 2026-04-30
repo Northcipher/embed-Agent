@@ -2,7 +2,7 @@ import type { Step } from "./step-queue.js";
 import type { Connection, ExecResult } from "@embed-agent/tools";
 import type { HookManager, HookPoint } from "./hook-manager.js";
 
-interface EventEmitter { emit(e: Record<string, unknown>): void; }
+interface EventEmitter { emit(e: Record<string, unknown>): Promise<void>; }
 
 interface ConnectionResolver {
   getForStep(target: { target_id: string; connections: Record<string, unknown> }, action: string, capability: string): Connection | null;
@@ -194,7 +194,7 @@ export class StepExecutor {
           const deadline = Date.now() + timeout * 1000;
           for await (const line of conn.stream(timeout)) {
             if (this._interrupted) { await pipe?.flush(); break; }
-            if (pipe) await pipe.feedStream(line);
+            if (pipe) await pipe.feedStream(line + "\n");
             if (Date.now() > deadline) {
               await pipe?.flush();
               return { success: false, error: "stream timeout", failureType: "timeout" };

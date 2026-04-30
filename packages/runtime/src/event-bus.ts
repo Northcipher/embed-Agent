@@ -1,12 +1,14 @@
-type Handler = (e: Record<string, unknown>) => void;
+type Handler = (e: Record<string, unknown>) => void | Promise<void>;
 
 export class EventBus {
   private subs = new Map<string, Set<Handler>>();
 
-  emit(event: Record<string, unknown>): void {
+  async emit(event: Record<string, unknown>): Promise<void> {
     for (const [pattern, handlers] of this.subs) {
       if (pattern === "*" || pattern === event.type) {
-        for (const h of handlers) { try { h(event); } catch { /* don't break other subscribers */ } }
+        for (const h of handlers) {
+          try { await h(event); } catch { /* don't break other subscribers */ }
+        }
       }
     }
   }
