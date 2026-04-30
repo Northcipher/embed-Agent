@@ -11,3 +11,4 @@ export {
   GetTargetCapabilitiesInput,
   type ToolHandlers,
 } from "./tools.js";
+export { createMcpServer } from "./server.js";

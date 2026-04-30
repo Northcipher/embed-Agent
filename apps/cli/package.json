@@ -19,5 +19,8 @@
   },
   "dependencies": {
     "@embed-agent/runtime": "workspace:*"
+  },
+  "bin": {
+    "va": "./dist/main.js"
   }
 }

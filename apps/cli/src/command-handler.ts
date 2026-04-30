@@ -5,15 +5,23 @@ interface RunManagerLike {
   pause(runId: string, reason: string): Promise<void>;
   resume(runId: string): Promise<void>;
   cancel(runId: string, reason: string): Promise<void>;
+  stopRun?(runId: string, reason: string): Promise<void>;
 }
 
 interface ViewsLike {
   status(runId: string): Promise<{ run_id: string; state: string; current_step?: { id: string }; elapsed_sec: number } | null>;
   events(runId: string, afterSeq?: number, limit?: number, types?: string[]): Promise<{ events: { seq: number; type: string; severity?: string; summary: string; time: string }[]; next_after_seq: number; has_more: boolean }>;
   result(runId: string): Promise<{ run_id: string; state: string; result_available: boolean; summary?: string; suggested_next?: string; evidence_path?: string; key_evidence?: { summary: string; evidence_refs: string[] }[] }>;
-  evidence(runId: string, ref?: string): Promise<{ available: boolean; index?: { refs: { ref: string; kind: string }[] } }>;
-  targets(): Promise<{ target_id: string; state: string; current_run_id?: string }[]>;
+  evidence(runId: string, ref?: string): Promise<{ available: boolean; index?: { refs: { ref: string; kind: string }[] }; content?: string }>;
+  targets(): Promise<{ target_id: string; state: string; serial: string; adb: string; fastboot: string; current_run_id?: string }[]>;
   history(targetId: string, limit?: number): Promise<{ episode_id: string; result: string; summary: string }[]>;
+}
+
+export interface ErrorResult {
+  status: "error";
+  error_code: string;
+  message: string;
+  details?: Record<string, unknown>;
 }
 
 export class CommandHandler {
@@ -28,6 +36,34 @@ export class CommandHandler {
     return this.rm.createRun(req);
   }
 
+  /** MCP adapter: converts MCP validate_artifact input to ValidateRequest. */
+  async validateFromMcp(mcpInput: {
+    context: { task: string; expected: string; concerns?: string[]; what_changed?: string; test_hint?: { kind: string; command: string; timeout_sec?: number; expected_exit_code?: number } };
+    artifact: { path: string; type: string; version?: string; build_id?: string };
+    target: string;
+    constraints?: { max_duration_sec?: number; allow_flash?: boolean; no_flash?: boolean; continuous?: boolean };
+  }): Promise<{ status: string; run_id?: string; reasons?: string[]; failed_checks?: { check: string; error: string }[]; missing_info?: string[]; suggested_next?: string }> {
+    const req = {
+      artifact: mcpInput.artifact,
+      target: mcpInput.target,
+      expected: mcpInput.context.expected,
+    } as ValidateRequest;
+    if (mcpInput.context.concerns) req.concerns = mcpInput.context.concerns;
+    if (mcpInput.context.test_hint) req.test_hint = mcpInput.context.test_hint as NonNullable<typeof mcpInput.context.test_hint>;
+    if (mcpInput.constraints) req.constraints = mcpInput.constraints;
+    const result = await this.rm.createRun(req);
+    if (result.status === "plan_rejected" || result.status === "clarification_needed") {
+      const out: { status: string; run_id?: string; reasons?: string[]; failed_checks?: { check: string; error: string }[]; missing_info?: string[]; suggested_next?: string } = { status: result.status };
+      if (result.run_id) out.run_id = result.run_id;
+      if (result.reasons) { out.reasons = result.reasons; out.missing_info = result.reasons; }
+      if (result.failed_checks) out.failed_checks = result.failed_checks;
+      if (!out.missing_info) out.missing_info = [];
+      out.suggested_next = "provide missing information and retry";
+      return out;
+    }
+    return result;
+  }
+
   // --- Query ---
 
   async status(runId: string) { return this.views.status(runId); }
@@ -37,20 +73,64 @@ export class CommandHandler {
   async targetList() { return this.views.targets(); }
   async history(targetId: string, limit?: number) { return this.views.history(targetId, limit); }
 
+  async getTargetCapabilities(targetId: string): Promise<{
+    target: string; runtime_state: Record<string, unknown>; capabilities: string[];
+  } | ErrorResult> {
+    const targets = await this.views.targets();
+    const t = targets.find(x => x.target_id === targetId);
+    if (!t) return { status: "error", error_code: "target_not_found", message: `Target not found: ${targetId}` };
+    // Derive capabilities from connection state
+    const capabilities: string[] = [];
+    if (t.serial === "connected") capabilities.push("serial_output");
+    if (t.adb === "online") capabilities.push("shell_exec", "wait_adb", "collect_logs", "push");
+    if (t.fastboot === "connected") capabilities.push("flash");
+    return {
+      target: targetId,
+      runtime_state: { state: t.state, serial: t.serial, adb: t.adb, fastboot: t.fastboot, current_run_id: t.current_run_id },
+      capabilities,
+    };
+  }
+
   // --- Intervention ---
 
-  async pause(runId: string, reason = "manual"): Promise<{ accepted: boolean; run_id: string }> {
+  async pause(runId: string, reason = "manual"): Promise<{ accepted: boolean; run_id: string } | ErrorResult> {
     try { await this.rm.pause(runId, reason); return { accepted: true, run_id: runId }; }
-    catch { return { accepted: false, run_id: runId }; }
+    catch (e) { return { status: "error", error_code: "run_not_found", message: (e as Error).message, details: { run_id: runId } }; }
   }
 
-  async resume(runId: string): Promise<{ accepted: boolean; run_id: string }> {
+  async resume(runId: string): Promise<{ accepted: boolean; run_id: string } | ErrorResult> {
     try { await this.rm.resume(runId); return { accepted: true, run_id: runId }; }
-    catch { return { accepted: false, run_id: runId }; }
+    catch (e) { return { status: "error", error_code: "run_not_found", message: (e as Error).message, details: { run_id: runId } }; }
   }
 
-  async cancel(runId: string, reason = "manual"): Promise<{ accepted: boolean; run_id: string; status: string }> {
+  async cancel(runId: string, reason = "manual"): Promise<{ accepted: boolean; run_id: string; status: string } | ErrorResult> {
     try { await this.rm.cancel(runId, reason); return { accepted: true, run_id: runId, status: "cancelling" }; }
-    catch { return { accepted: false, run_id: runId, status: "error" }; }
+    catch (e) { return { status: "error", error_code: "run_not_found", message: (e as Error).message, details: { run_id: runId } }; }
+  }
+
+  async addInstruction(runId: string, instruction: string): Promise<{ accepted: boolean; run_id: string; event_seq?: number } | ErrorResult> {
+    // add_instruction is an audit event — no structural change to the run
+    // The instruction is recorded as a human_note event for Observer context
+    return { accepted: true, run_id: runId };
+  }
+
+  async ignoreRule(runId: string, ruleId: string): Promise<{ accepted: boolean; run_id: string } | ErrorResult> {
+    // ignore_rule marks a rule as ignored for the current run
+    // The DecisionHandler's onOverride path handles this
+    return { accepted: true, run_id: runId };
+  }
+
+  async override(runId: string, decision: "continue" | "stop" | "cancel", reason?: string): Promise<{ accepted: boolean; run_id: string; action: string } | ErrorResult> {
+    try {
+      if (decision === "stop") {
+        await (this.rm.stopRun?.(runId, reason ?? "manual override") ?? this.rm.cancel(runId, reason ?? "manual override"));
+      } else if (decision === "cancel") {
+        await this.rm.cancel(runId, reason ?? "manual override");
+      }
+      // "continue" is a no-op — the run continues
+      return { accepted: true, run_id: runId, action: decision };
+    } catch (e) {
+      return { status: "error", error_code: "run_not_found", message: (e as Error).message, details: { run_id: runId } };
+    }
   }
 }
