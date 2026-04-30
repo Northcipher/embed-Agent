@@ -1,19 +1,36 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-export interface EventRecord {
-  seq: number;
-  run_id?: string;
-  time: string;
+// --- Types ---
+
+/** Fields the caller provides when appending an event. seq and time are assigned by the store. */
+export interface AppendEvent {
   type: string;
   source: string;
   summary: string;
   payload: Record<string, unknown>;
+  run_id?: string;
   severity?: string;
   step_id?: string;
   elapsed_sec?: number;
   evidence_refs?: string[];
 }
+
+/** Persisted event record with store-assigned seq and time. */
+export interface EventRecord extends AppendEvent {
+  seq: number;
+  time: string;
+}
+
+// --- Validation ---
+
+function validateId(id: string, label: string): void {
+  if (id.includes("..") || id.includes("/") || id.includes("\\")) {
+    throw new Error(`Invalid ${label}: "${id}" contains path characters`);
+  }
+}
+
+// --- Seq reading ---
 
 async function readLastSeq(filePath: string): Promise<number> {
   try {
@@ -26,10 +43,19 @@ async function readLastSeq(filePath: string): Promise<number> {
   }
 }
 
+// --- Event Store ---
+
 export class EventStore {
-  constructor(private dataRoot = ".embed-agent") {}
+  private dataRoot: string;
+  /** Per-file mutex: chains promises to serialize read-modify-append per event stream. */
+  private locks = new Map<string, Promise<void>>();
+
+  constructor(dataRoot = ".embed-agent") {
+    this.dataRoot = path.resolve(dataRoot);
+  }
 
   private runEventsPath(runId: string): string {
+    validateId(runId, "runId");
     return path.join(this.dataRoot, "runs", runId, "events.jsonl");
   }
 
@@ -37,23 +63,42 @@ export class EventStore {
     return path.join(this.dataRoot, "events.jsonl");
   }
 
-  async append(runId: string, event: EventRecord): Promise<{ seq: number }> {
+  /** Serialize append ops per file to prevent duplicate seq under concurrent calls. */
+  private serialized(file: string, fn: () => Promise<void>): Promise<void> {
+    const prev = this.locks.get(file) ?? Promise.resolve();
+    const next = prev.then(fn, fn); // run fn even if prev rejected
+    this.locks.set(file, next);
+    return next;
+  }
+
+  async append(runId: string, event: AppendEvent): Promise<{ seq: number }> {
     const file = this.runEventsPath(runId);
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    const seq = (await readLastSeq(file)) + 1;
-    await fs.appendFile(file, JSON.stringify({ ...event, seq, time: new Date().toISOString() }) + "\n", "utf-8");
+    let seq = 0;
+
+    await this.serialized(file, async () => {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      seq = (await readLastSeq(file)) + 1;
+      await fs.appendFile(file, JSON.stringify({ ...event, seq, time: new Date().toISOString() }) + "\n", "utf-8");
+    });
+
     return { seq };
   }
 
-  async appendGlobal(event: EventRecord): Promise<{ seq: number }> {
+  async appendGlobal(event: AppendEvent): Promise<{ seq: number }> {
     const file = this.globalEventsPath();
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    const seq = (await readLastSeq(file)) + 1;
-    await fs.appendFile(file, JSON.stringify({ ...event, seq, time: new Date().toISOString() }) + "\n", "utf-8");
+    let seq = 0;
+
+    await this.serialized(file, async () => {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      seq = (await readLastSeq(file)) + 1;
+      await fs.appendFile(file, JSON.stringify({ ...event, seq, time: new Date().toISOString() }) + "\n", "utf-8");
+    });
+
     return { seq };
   }
 
   async read(runId: string, afterSeq = 0, limit = 100): Promise<EventRecord[]> {
+    validateId(runId, "runId");
     try {
       const content = await fs.readFile(this.runEventsPath(runId), "utf-8");
       return content.trim().split("\n")
