@@ -20,6 +20,7 @@
   "dependencies": {
     "@embed-agent/stores": "workspace:*",
     "@embed-agent/views": "workspace:*",
+    "@embed-agent/cli": "workspace:*",
     "zod": "^4.3.6"
   },
   "bin": {

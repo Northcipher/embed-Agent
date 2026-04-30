@@ -1,55 +1,76 @@
-// MCP Server stdio entry — boots with query-only Views support
-import { EventStore, EvidenceStore, RunStore, TargetStore, MemoryStore, Logger } from "@embed-agent/stores";
-import { Views } from "@embed-agent/views";
-import { createMcpServer, type McpMessage } from "./server.js";
+// MCP Server — thin entry point. All functionality lives in the CLI bootstrap.
+import { bootstrap } from "@embed-agent/cli";
+import { createMcpServer, type McpTransport } from "./server.js";
 
-const dataRoot = process.env["EMBED_AGENT_DATA"] ?? ".embed-agent";
-const log = new Logger({ module: "mcp-server" });
+const { handler } = await bootstrap();
 
-const runStore = new RunStore(dataRoot, log);
-const targetStore = new TargetStore(dataRoot);
-const memoryStore = new MemoryStore(dataRoot);
-const eventStore = new EventStore(dataRoot);
-const evidenceStore = new EvidenceStore(dataRoot);
-const views = new Views(runStore, eventStore, evidenceStore, targetStore, memoryStore);
+const handlers = {
+  validate_artifact: async (input: Record<string, unknown>) => {
+    const context = (input.context ?? {}) as Record<string, unknown>;
+    const mcpCtx: { task: string; expected: string; concerns?: string[]; what_changed?: string; test_hint?: { kind: string; command: string; timeout_sec?: number; expected_exit_code?: number } } = {
+      task: (context.task as string) ?? "",
+      expected: (context.expected as string) ?? "",
+    };
+    if (context.concerns) mcpCtx.concerns = context.concerns as string[];
+    if (context.what_changed) mcpCtx.what_changed = context.what_changed as string;
+    if (context.test_hint) mcpCtx.test_hint = context.test_hint as { kind: string; command: string; timeout_sec?: number; expected_exit_code?: number };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const handlers: Record<string, (input: any) => Promise<any>> = {
-  validate_artifact: async () => ({
-    status: "clarification_needed",
-    missing_info: ["RunManager not available in MCP server — use CLI for validate"],
-    suggested_next: "Use embedagent CLI with full bootstrap for validation",
-  }),
-  get_run_status: async (input) => {
-    const s = await views.status(input.run_id);
-    if (!s) return null;
-    return { run_id: s.run_id, state: s.state, elapsed_sec: s.elapsed_sec, evidence_path: s.evidence_path, last_event_seq: 0 };
+    const mcpInput = {
+      context: mcpCtx,
+      artifact: (input.artifact ?? {}) as { path: string; type: string },
+      target: (input.target as string) ?? "",
+    } as Parameters<typeof handler.validateFromMcp>[0];
+    if (input.constraints) (mcpInput as Record<string, unknown>).constraints = input.constraints;
+    return handler.validateFromMcp(mcpInput);
   },
-  watch_run: async (input) => {
-    const s = await views.events(input.run_id, input.after_seq, input.limit ?? 100);
-    const run = await runStore.get(input.run_id);
-    return { run_id: input.run_id, status: run?.state ?? "unknown", events: s.events, next_after_seq: s.next_after_seq };
+
+  get_run_status: async (input: Record<string, unknown>) => {
+    return handler.status((input.run_id as string) ?? "");
   },
-  get_run_events: async (input) => views.events(input.run_id, input.after_seq, input.limit, input.types),
-  get_evidence: async (input) => views.evidence(input.run_id, input.ref),
-  get_run_result: async (input) => views.result(input.run_id),
-  intervene_run: async (input) => ({ run_id: input.run_id, accepted: false, action: input.action, event_seq: undefined }),
-  cancel_run: async (input) => ({ run_id: input.run_id, accepted: false, status: "error" }),
-  get_target_capabilities: async (input) => {
-    const t = await views.targets();
-    const found = t.find(x => x.target_id === input.target);
-    if (!found) return { target: input.target, runtime_state: { state: "unknown", serial: "unknown", adb: "unknown", fastboot: "unknown" }, capabilities: [] };
-    const caps: string[] = [];
-    if (found.serial === "connected") caps.push("serial_output");
-    if (found.adb === "online") caps.push("shell_exec", "wait_adb", "collect_logs");
-    if (found.fastboot === "connected") caps.push("flash");
-    return { target: input.target, runtime_state: { state: found.state, serial: found.serial, adb: found.adb, fastboot: found.fastboot, current_run_id: found.current_run_id }, capabilities: caps };
+
+  watch_run: async (input: Record<string, unknown>) => {
+    const runId = (input.run_id as string) ?? "";
+    const s = await handler.events(runId, (input.after_seq as number) ?? 0, (input.limit as number) ?? 100);
+    const status = await handler.status(runId);
+    return { run_id: runId, status: status?.state ?? "unknown", events: s.events, next_after_seq: s.next_after_seq };
+  },
+
+  get_run_events: async (input: Record<string, unknown>) => {
+    return handler.events((input.run_id as string) ?? "", (input.after_seq as number) ?? 0, (input.limit as number) ?? 100, input.types as string[] | undefined);
+  },
+
+  get_evidence: async (input: Record<string, unknown>) => {
+    return handler.evidence((input.run_id as string) ?? "", input.ref as string | undefined);
+  },
+
+  get_run_result: async (input: Record<string, unknown>) => {
+    return handler.result((input.run_id as string) ?? "");
+  },
+
+  intervene_run: async (input: Record<string, unknown>) => {
+    const runId = (input.run_id as string) ?? "";
+    const action = (input.action as string) ?? "";
+    if (action === "pause") return handler.pause(runId, (input.reason as string) ?? "MCP");
+    if (action === "resume") return handler.resume(runId);
+    if (action === "cancel") return handler.cancel(runId, (input.reason as string) ?? "MCP");
+    if (action === "add_instruction") return handler.addInstruction(runId, (input.instruction as string) ?? "");
+    if (action === "ignore_rule") return handler.ignoreRule(runId, (input.rule_id as string) ?? "");
+    if (action === "override") return handler.override(runId, ((input.decision as string) ?? "continue") as "continue" | "stop" | "cancel", input.reason as string | undefined);
+    return { run_id: runId, accepted: false, action };
+  },
+
+  cancel_run: async (input: Record<string, unknown>) => {
+    const runId = (input.run_id as string) ?? "";
+    return handler.cancel(runId, (input.reason as string) ?? "MCP");
+  },
+
+  get_target_capabilities: async (input: Record<string, unknown>) => {
+    return handler.getTargetCapabilities((input.target as string) ?? "");
   },
 };
 
-// Simple stdio transport
-const transport = {
-  onmessage: (() => {}) as (msg: McpMessage) => void | Promise<void>,
+const transport: McpTransport = {
+  onmessage: () => {},
   async start() {
     process.stdin.setEncoding("utf-8");
     let buf = "";
@@ -65,11 +86,11 @@ const transport = {
         } catch { /* skip malformed */ }
       }
     });
-    log.info("MCP Server started on stdio");
   },
   async send(msg: { jsonrpc: string; id?: unknown; result?: unknown; error?: { code: number; message: string } }) {
     process.stdout.write(JSON.stringify(msg) + "\n");
   },
 };
+
 createMcpServer(handlers as never, transport);
 transport.start();

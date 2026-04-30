@@ -37,7 +37,7 @@ export interface McpMessage {
   params?: Record<string, unknown>;
 }
 
-interface McpTransport {
+export interface McpTransport {
   onmessage?: (msg: McpMessage) => void | Promise<void>;
   start(): Promise<void>;
   send(msg: { jsonrpc: "2.0"; id?: unknown; result?: unknown; error?: { code: number; message: string } }): Promise<void>;
