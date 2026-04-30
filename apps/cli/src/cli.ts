@@ -158,7 +158,7 @@ export async function runCli(handler: CommandHandler, argv: string[] = process.a
       }
 
       default:
-        print(`Usage: va <command> [options]
+        print(`Usage: embedagent <command> [options]
 
 Commands:
   validate     --artifact <path> --type <type> --target <id> --expected <desc>

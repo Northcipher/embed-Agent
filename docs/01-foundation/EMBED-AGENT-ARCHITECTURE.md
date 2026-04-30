@@ -1097,10 +1097,10 @@ Observer 发现新模式:
 Notification Filter:
   → 如果 config.on.memory_suggestion = true
   → 发通知: "Observer 建议新 SemanticFact: 'foo error 可能无害'。
-            请确认: va memory confirm <fact-id>"
+            请确认: embedagent memory confirm <fact-id>"
 
 人确认:
-  CLI: va memory confirm <fact-id>
+  CLI: embedagent memory confirm <fact-id>
   TUI: 选中 → 确认
   → verified=true。SemanticFact 持久化到 Memory Store。
   → 下次 Run 开始时，ContextAssembler 从 Memory Store 读取 verified=true
@@ -1109,7 +1109,7 @@ Notification Filter:
   → 不热更新。当前正在执行的 Run 不受影响。
 
 人拒绝:
-  va memory delete <fact-id>
+  embedagent memory delete <fact-id>
   → 删除。不生效。
 ```
 
@@ -1265,7 +1265,7 @@ Runtime 启动时:
 
 暴露方式:
   - TUI status bar 展示关键数字
-  - CLI: va status（系统级，不只是 Run）
+  - CLI: embedagent status（系统级，不只是 Run）
   - Notification: LLM 成功率持续低于阈值 → 告警
 ```
 
@@ -1339,11 +1339,11 @@ run_result (result_ready → 唯一终态通知):
    {reply.summary}
    建议: {reply.suggested_next}
    证据: {evidence_root}
-   查看: va result --run-id {run_id}"
+   查看: embedagent result --run-id {run_id}"
 
 target_offline (即时):
   "Target {target_id} 进入 offline 状态。原因: {offline_reason}
-   恢复步骤: 检查物理连接 → 检查串口/ADB → va target status {target_id}"
+   恢复步骤: 检查物理连接 → 检查串口/ADB → embedagent target status {target_id}"
 
 target_offline_long (持续 > 30min):
   "Target {target_id} offline 已持续 {duration} 分钟。
@@ -1353,8 +1353,8 @@ target_offline_long (持续 > 30min):
 memory_suggestion:
   "Observer 建议新 SemanticFact:
    '{suggestion}'
-   确认: va memory confirm {fact_id}
-   忽略: va memory delete {fact_id}"
+   确认: embedagent memory confirm {fact_id}
+   忽略: embedagent memory delete {fact_id}"
 
 去重:
   同 Run 同原因 5 分钟内不重复

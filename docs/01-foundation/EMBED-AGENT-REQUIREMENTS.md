@@ -16,7 +16,7 @@
 ### 第一步：一次性配置。
 
 ```bash
-va target add --id board-01 \
+embedagent target add --id board-01 \
   --serial /dev/ttyUSB0 --baud 115200 \
   --adb device-02 --flash-method fastboot \
   --boot-markers "Booting Linux,init started,boot completed" \
@@ -29,13 +29,13 @@ va target add --id board-01 \
 ### 第二步：日常使用。一句话。
 
 ```bash
-va validate --artifact boot.img --target board-01 \
+embedagent validate --artifact boot.img --target board-01 \
   --expected "设备能正常启动，ADB 能回来"
 
-va validate --continuous --duration 4h --observe-interval 5m \
+embedagent validate --continuous --duration 4h --observe-interval 5m \
   --expected "4 小时内无崩溃、无内存泄漏"
 
-va task create --name "nightly" --cron "0 2 * * *" --skill validate-boot
+embedagent task create --name "nightly" --cron "0 2 * * *" --skill validate-boot
 ```
 
 ### 第三步：看结果。一眼懂。
@@ -69,7 +69,7 @@ Timeline:
 ### 场景A：验证镜像能否启动
 
 ```
-人: va validate --artifact boot.img --target board-01
+人: embedagent validate --artifact boot.img --target board-01
       --expected "设备能正常启动，ADB 能回来"
 
 系统:
@@ -90,7 +90,7 @@ Timeline:
 ### 场景B：长期压测监测
 
 ```
-人: va validate --continuous --duration 4h --observe-interval 5m
+人: embedagent validate --continuous --duration 4h --observe-interval 5m
       --observe-metrics "memory,cpu,latency"
       --expected "4 小时内无崩溃、无内存泄漏"
 
@@ -107,7 +107,7 @@ Timeline:
 ### 场景C：定时回归
 
 ```
-人: va task create --name "nightly" --cron "0 2 * * *" --skill validate-boot
+人: embedagent task create --name "nightly" --cron "0 2 * * *" --skill validate-boot
 系统: 每天凌晨 2 点自动跑。结果推 Slack。
 ```
 
@@ -149,16 +149,16 @@ serial + dmesg + logcat 三个源同时指向 foo_service crash
 ### 场景H：人中途干预
 
 ```
-va pause / resume / cancel --run-id
-va intervene --run-id --instruction "检查 dmesg 有没有 foo error"
-va ignore-rule --run-id --rule-id foo_error
-va override --run-id --decision continue
+embedagent pause / resume / cancel --run-id
+embedagent intervene --run-id --instruction "检查 dmesg 有没有 foo error"
+embedagent ignore-rule --run-id --rule-id foo_error
+embedagent override --run-id --decision continue
 ```
 
 ### 场景I：记住已知坑
 
 ```
-第 1 次: dmesg 出现 "foo error" → 失败。人确认已知无害 → va memory add
+第 1 次: dmesg 出现 "foo error" → 失败。人确认已知无害 → embedagent memory add
 第 2 次: 自动忽略 → 继续执行
 ```
 
@@ -411,37 +411,37 @@ LLM 在旁边: "可能是 init 模块问题。慢 56% vs baseline。"
 
 ```
 验证 & 执行
-  va validate              一次性验证
-  va run --skill            直接跑 Skill
-  va task create/ls/pause/resume/delete
+  embedagent validate              一次性验证
+  embedagent run --skill            直接跑 Skill
+  embedagent task create/ls/pause/resume/delete
 
 查询
-  va status --run-id        Run 状态
-  va watch --run-id         实时盯 Run
-  va events --run-id        历史事件
-  va result --run-id        最终结果
-  va evidence --run-id      证据索引/内容
+  embedagent status --run-id        Run 状态
+  embedagent watch --run-id         实时盯 Run
+  embedagent events --run-id        历史事件
+  embedagent result --run-id        最终结果
+  embedagent evidence --run-id      证据索引/内容
 
 干预
-  va pause / resume / cancel --run-id
-  va intervene --run-id --instruction "..."
-  va ignore-rule --run-id --rule-id
-  va override --run-id --decision continue
+  embedagent pause / resume / cancel --run-id
+  embedagent intervene --run-id --instruction "..."
+  embedagent ignore-rule --run-id --rule-id
+  embedagent override --run-id --decision continue
 
 知识
-  va memory add / ls / confirm / delete
+  embedagent memory add / ls / confirm / delete
 
 技能
-  va skill list / show / create
+  embedagent skill list / show / create
 
 设备
-  va target add / ls / show / remove
+  embedagent target add / ls / show / remove
 
 Hook
-  va hook list / show / test
+  embedagent hook list / show / test
 
 导出
-  va export / import
+  embedagent export / import
 ```
 
 ---

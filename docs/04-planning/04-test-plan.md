@@ -204,7 +204,7 @@ M2 验收:
   - LLM 降级: mock LLM 失败 3 次 → fallback 模式
 
 M3 验收:
-  - CLI: va validate/status/watch/result/evidence 全部可用
+  - CLI: embedagent validate/status/watch/result/evidence 全部可用
   - MCP: validate_artifact/watch_run/get_run_result 全部可用
   - TUI: Run 列表 + Target 列表 + 实时 Timeline
   - Hook: PreStepExecute block → Run paused

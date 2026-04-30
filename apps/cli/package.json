@@ -25,6 +25,6 @@
     "@embed-agent/tools": "workspace:*"
   },
   "bin": {
-    "va": "./dist/main.js"
+    "embedagent": "./dist/main.js"
   }
 }

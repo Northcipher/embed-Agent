@@ -847,13 +847,13 @@ get_target_capabilities
 CLI 只是 MCP 语义 wrapper。
 
 ```text
-va validate -> validate_artifact
-va status -> get_run_status
-va watch -> watch_run
-va evidence -> get_evidence
-va result -> get_run_result
-va cancel -> cancel_run
-va pause/resume -> intervene_run
+embedagent validate -> validate_artifact
+embedagent status -> get_run_status
+embedagent watch -> watch_run
+embedagent evidence -> get_evidence
+embedagent result -> get_run_result
+embedagent cancel -> cancel_run
+embedagent pause/resume -> intervene_run
 ```
 
 ### 12.3 Console View

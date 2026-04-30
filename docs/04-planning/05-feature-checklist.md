@@ -421,11 +421,11 @@
 □ 5.3.3   Storage Metrics      磁盘用量 + 总 Run 数
 □ 5.3.4   Target Metrics       在线率 + 平均 busy 时长
 □ 5.3.5   Cost Metrics         每 Session LLM 成本
-□ 5.3.6   暴露方式              TUI status bar / CLI va status(系统级) / 超标告警
+□ 5.3.6   暴露方式              TUI status bar / CLI embedagent status(系统级) / 超标告警
 ```
 
   🧪 测试:
-    □ 所有metrics正确暴露。TUI status bar+CLI va status可用
+    □ 所有metrics正确暴露。TUI status bar+CLI embedagent status可用
     □ 超标告警: LLM成功率<阈值→通知
 
 ## Phase 6: 入口 (apps)

@@ -423,7 +423,7 @@ interface SystemMetrics {
 
 // 暴露方式:
 //  - TUI status bar: cost, cache hit rate
-//  - CLI: va status (系统级)
+//  - CLI: embedagent status (系统级)
 //  - Notification: LLM 成功率持续 < 阈值 → 告警
 ```
 

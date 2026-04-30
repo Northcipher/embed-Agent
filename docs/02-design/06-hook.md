@@ -154,7 +154,7 @@ RuntimeStart      → Runtime 启动
 
 ```typescript
 // Hook 执行后 → 发 HookExecuted Event（无论成功/失败）。
-// Store 持久化。人可通过 CLI 查询: va hook list --run-id xxx。
+// Store 持久化。人可通过 CLI 查询: embedagent hook list --run-id xxx。
 
 interface HookExecutedEvent {
   type: "hook_executed";

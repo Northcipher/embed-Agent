@@ -8,7 +8,7 @@
 ### 1.1 验证 & 执行
 
 ```
-va validate
+embedagent validate
   --artifact <path>          必填。镜像路径
   --target <id>              必填。Target ID
   --expected <string>        必填。一句话描述验证目标
@@ -20,70 +20,70 @@ va validate
   [--observe-interval <sec>] 可选。checkpoint 间隔。默认 300
   [--observe-metrics <list>] 可选。监控指标，逗号分隔
 
-va run
+embedagent run
   --skill <name>             必填。Skill 名称
   [--param k=v...]           可选。Skill 参数
 
-va task create
+embedagent task create
   --name <name>              必填。任务名称
   (--cron <expr> | --watch <path>) 必选一。触发方式
   --skill <name>             必填。Skill 名称
   [--param k=v...]           可选。Skill 参数
 
-va task list / show <name> / pause <name> / resume <name> / delete <name>
+embedagent task list / show <name> / pause <name> / resume <name> / delete <name>
 ```
 
 ### 1.2 查询
 
 ```
-va status --run-id <id>
+embedagent status --run-id <id>
   → { run_id, state, current_step?, target_state, elapsed_sec, last_event_seq }
 
-va watch --run-id <id> [--after <seq>] [--wait <sec>]
+embedagent watch --run-id <id> [--after <seq>] [--wait <sec>]
   → 实时输出 Timeline 格式
 
-va events --run-id <id> [--after <seq>] [--limit <n>] [--types <list>]
+embedagent events --run-id <id> [--after <seq>] [--limit <n>] [--types <list>]
   → { events: [...], next_after_seq, has_more }
 
-va result --run-id <id>
+embedagent result --run-id <id>
   → { run_id, status, summary, key_evidence: [...], suggested_next, evidence_path }
 
-va evidence --run-id <id> [--ref <ref>] [--grep <pattern>] [--head <n>]
+embedagent evidence --run-id <id> [--ref <ref>] [--grep <pattern>] [--head <n>]
   → EvidenceIndex 或窗口内容
 ```
 
 ### 1.3 干预
 
 ```
-va pause --run-id <id>
-va resume --run-id <id>
-va cancel --run-id <id> [--reason <string>]
-va intervene --run-id <id> --instruction <string>
-va ignore-rule --run-id <id> --rule-id <id>
-va override --run-id <id> --decision <continue|stop|cancel>
+embedagent pause --run-id <id>
+embedagent resume --run-id <id>
+embedagent cancel --run-id <id> [--reason <string>]
+embedagent intervene --run-id <id> --instruction <string>
+embedagent ignore-rule --run-id <id> --rule-id <id>
+embedagent override --run-id <id> --decision <continue|stop|cancel>
 ```
 
 ### 1.4 知识 & 技能 & 设备
 
 ```
-va memory add --target <id> --category <known_issue|threshold|...> "<statement>"
-va memory ls [--target <id>] [--category <category>]
-va memory confirm <fact-id>
-va memory delete <fact-id>
+embedagent memory add --target <id> --category <known_issue|threshold|...> "<statement>"
+embedagent memory ls [--target <id>] [--category <category>]
+embedagent memory confirm <fact-id>
+embedagent memory delete <fact-id>
 
-va skill list [--category <cat>]
-va skill show <name>
-va skill create --from-run <run-id> --name <name>
+embedagent skill list [--category <cat>]
+embedagent skill show <name>
+embedagent skill create --from-run <run-id> --name <name>
 
-va target add --file <path> | (--id <id> --serial <port> --adb <dev> --flash-method <method> ...)
-va target ls / show <id> / remove <id>
+embedagent target add --file <path> | (--id <id> --serial <port> --adb <dev> --flash-method <method> ...)
+embedagent target ls / show <id> / remove <id>
 
-va hook list [--run-id <id>]
-va hook show <name>
-va hook test <name> [--point <point>]
+embedagent hook list [--run-id <id>]
+embedagent hook show <name>
+embedagent hook test <name> [--point <point>]
 
-va export --run-id <id> --output <path>
-va import --file <path>
+embedagent export --run-id <id> --output <path>
+embedagent import --file <path>
 ```
 
 ---
