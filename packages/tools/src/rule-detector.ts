@@ -95,7 +95,7 @@ export class RuleDetector {
         evidenceSaved = true;
       } catch (e) {
         // Evidence write failed — emit failure trail before emitting rule without refs
-        this.eb.emit({
+        await this.eb.emit({
           type: "evidence_collected", run_id: this.runId, source: "rule_detector",
           severity: "warning",
           summary: `Evidence write failed for ref "${p.ref}": ${(e as Error).message}`,
@@ -104,7 +104,7 @@ export class RuleDetector {
       }
     }
 
-    this.eb.emit({
+    await this.eb.emit({
       type: "rule_matched", run_id: this.runId, rule_id: p.rule.id, severity: p.rule.severity,
       source: "rule_detector", step_id: this.currentStepId,
       summary: `Rule ${p.rule.id} matched`,
