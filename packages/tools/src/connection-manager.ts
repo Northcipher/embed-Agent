@@ -6,8 +6,17 @@ import { FastbootConnection } from "./fastboot.js";
 
 export type Transport = "serial" | "adb" | "fastboot" | "ssh" | "local";
 
+interface Emitter {
+  emit(e: Record<string, unknown>): void;
+}
+
 export class ConnectionManager {
   private pool = new Map<string, Connection>();
+  private eb: Emitter | undefined;
+
+  constructor(eb?: Emitter) {
+    this.eb = eb;
+  }
 
   get(target: { target_id: string; connections: Record<string, unknown> }, transport: Transport): Connection | null {
     const key = `${target.target_id}:${transport}`;
@@ -28,12 +37,15 @@ export class ConnectionManager {
       }
       case "fastboot": {
         const f = target.connections.fastboot as { device_id: string } | undefined;
-        conn = new FastbootConnection(f?.device_id);
+        if (f) conn = new FastbootConnection(f.device_id);
         break;
       }
     }
 
-    if (conn) this.pool.set(key, conn);
+    if (conn) {
+      this.pool.set(key, conn);
+      this.wireDisconnect(target.target_id, transport, conn);
+    }
     return conn;
   }
 
@@ -44,5 +56,21 @@ export class ConnectionManager {
     if (capability === "wait_adb" || capability === "collect_logs") return this.get(target, "adb");
     if (capability === "shell_exec") return this.get(target, "adb") ?? this.get(target, "ssh");
     return this.get(target, "adb") ?? this.get(target, "ssh") ?? this.get(target, "local");
+  }
+
+  private wireDisconnect(targetId: string, transport: Transport, conn: Connection): void {
+    if (!this.eb) return;
+    const prev = conn.onDisconnect;
+    conn.onDisconnect = () => {
+      prev?.();
+      this.eb!.emit({
+        type: "target_state_changed",
+        source: "connection_manager",
+        summary: `${transport} disconnected for target ${targetId}`,
+        payload: { target_id: targetId, transport, state: "disconnected" },
+      });
+      // Remove from pool so next get() reconnects
+      this.pool.delete(`${targetId}:${transport}`);
+    };
   }
 }
