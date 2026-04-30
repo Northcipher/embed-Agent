@@ -3,7 +3,7 @@ import type { RingBuffer } from "./ring-buffer.js";
 interface Emitter { emit(e: Record<string, unknown>): void; }
 interface EvidenceWriter { append(d: string): void; }
 interface LineDetector { detect(line: string, idx: number): void; flushPending(): Promise<void>; flushAllPending(): Promise<void>; checkExitCode?(c: number): void; checkSilence?(connected: boolean, silenceMs: number): void; }
-interface LineAggregator { feed(line: string): void; onExecComplete?(sid: string): void; }
+interface LineAggregator { feed(line: string): void; onExecComplete?(sid: string, exitCode?: number, source?: string): void; }
 interface ConnectionState { state(): "connected" | "disconnected" | "error"; }
 
 export class OutputPipe {
