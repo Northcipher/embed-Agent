@@ -30,9 +30,22 @@ const handlers = {
 
   watch_run: async (input: Record<string, unknown>) => {
     const runId = (input.run_id as string) ?? "";
-    const s = await handler.events(runId, (input.after_seq as number) ?? 0, (input.limit as number) ?? 100);
+    const waitSec = Math.min((input.wait_sec as number) ?? 5, 30); // max 30s
+    const afterSeq = (input.after_seq as number) ?? 0;
+    const deadline = Date.now() + waitSec * 1000;
+    let cursor = afterSeq;
+
+    while (Date.now() < deadline) {
+      const s = await handler.events(runId, cursor, 100);
+      if (s.events.length > 0) {
+        const status = await handler.status(runId);
+        return { run_id: runId, status: status?.state ?? "unknown", events: s.events, next_after_seq: s.next_after_seq };
+      }
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    // Timeout — return empty
     const status = await handler.status(runId);
-    return { run_id: runId, status: status?.state ?? "unknown", events: s.events, next_after_seq: s.next_after_seq };
+    return { run_id: runId, status: status?.state ?? "unknown", events: [], next_after_seq: afterSeq };
   },
 
   get_run_events: async (input: Record<string, unknown>) => {
@@ -66,6 +79,19 @@ const handlers = {
 
   get_target_capabilities: async (input: Record<string, unknown>) => {
     return handler.getTargetCapabilities((input.target as string) ?? "");
+  },
+
+  list_targets: async () => {
+    const targets = await handler.targetList();
+    const result: { target_id: string; state: string; serial: string; adb: string; fastboot: string; current_run_id?: string; capabilities: string[] }[] = [];
+    for (const t of targets) {
+      const caps: string[] = [];
+      if (t.serial === "connected") caps.push("serial_output");
+      if (t.adb === "online") caps.push("shell_exec", "wait_adb", "collect_logs", "push");
+      if (t.fastboot === "connected") caps.push("flash");
+      result.push({ ...t, capabilities: caps });
+    }
+    return { targets: result, summary: `${result.length} target(s) configured` };
   },
 };
 

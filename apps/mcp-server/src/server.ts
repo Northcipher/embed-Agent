@@ -200,6 +200,8 @@ async function dispatchTool(
       const parsed = GetTargetCapabilitiesInput.parse(input);
       return handlers.get_target_capabilities(parsed);
     }
+    case "list_targets":
+      return handlers.list_targets();
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

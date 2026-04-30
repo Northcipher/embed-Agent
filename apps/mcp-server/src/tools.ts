@@ -225,6 +225,14 @@ export const TOOL_DEFINITIONS = [
       required: ["target"],
     },
   },
+  {
+    name: "list_targets",
+    description: "List all configured targets with their state, capabilities, and active runs.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
 ];
 
 // --- Tool handler types ---
@@ -264,5 +272,8 @@ export interface ToolHandlers {
   get_target_capabilities(input: z.infer<typeof GetTargetCapabilitiesInput>): Promise<{
     target: string; runtime_state: { state: string; serial: string; adb: string; fastboot: string; current_run_id?: string };
     capabilities: string[];
+  }>;
+  list_targets(): Promise<{
+    targets: { target_id: string; state: string; serial: string; adb: string; fastboot: string; current_run_id?: string; capabilities: string[] }[];
   }>;
 }

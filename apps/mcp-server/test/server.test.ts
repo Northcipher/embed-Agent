@@ -3,8 +3,8 @@ import { createMcpServer, type McpMessage } from "../src/server.js";
 import { ValidateArtifactInput, GetRunStatusInput, TOOL_DEFINITIONS, type ToolHandlers } from "../src/tools.js";
 
 describe("MCP Server", () => {
-  it("has 9 tool definitions", () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(9);
+  it("has 10 tool definitions", () => {
+    expect(TOOL_DEFINITIONS).toHaveLength(10);
     const names = TOOL_DEFINITIONS.map(t => t.name);
     expect(names).toContain("validate_artifact");
     expect(names).toContain("get_run_status");
@@ -138,5 +138,6 @@ function createHandlers(): ToolHandlers {
       runtime_state: { state: "unknown", serial: "unknown", adb: "unknown", fastboot: "unknown" },
       capabilities: [],
     }),
+    list_targets: async () => ({ targets: [], summary: "0 targets" }),
   };
 }
