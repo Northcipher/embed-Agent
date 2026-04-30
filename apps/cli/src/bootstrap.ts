@@ -80,19 +80,32 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   // 6. Agent layer
   const memory = new Memory(memoryStore);
   const planner = new Planner(llm, { emit: async (e) => { await eventBus.emit(e); } });
-  const observer = new Observer(llm);
   const reply = new ReplyGenerator(llm, eventStore, evidenceStore, runStore,
     memoryStore as never /* MemoryStore satisfies MemoryWriter at runtime */,
     { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } }, dataRoot,
   );
 
   // 7. Tool layer
-  const cm = new ConnectionManager();
+  const cm = new ConnectionManager(
+    { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } },
+    targetStore,
+  );
   const tm = new TargetManager(cm, targetStore);
 
   // 8. Runtime layer
   const hm = new HookManager([], { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } });
-  const contextAssembler = new ContextAssembler(runStore, eventStore, targetStore, memoryStore, prompts);
+
+  // Create SkillRegistry + load skills
+  const { SkillStore } = await import("@embed-agent/stores");
+  const { SkillRegistry } = await import("@embed-agent/agent");
+  const skillStore = new SkillStore(dataRoot);
+  const skillRegistry = new SkillRegistry(skillStore);
+  await skillRegistry.loadAll().catch(() => {});
+
+  // Wire Observer Memory
+  const observerInst = new Observer(llm, memory);
+
+  const contextAssembler = new ContextAssembler(runStore, eventStore, targetStore, memoryStore, skillRegistry, prompts);
 
   // Adapters: bridge Agent types to RunManager's DI interfaces
   const plannerAdapter = { call: async (sp: string, dc: Record<string, unknown>) => planner.call(sp, dc as never) };

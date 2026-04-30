@@ -22,7 +22,7 @@ export interface HookConfig {
 }
 
 export interface HookResult {
-  decision?: "block" | "retry" | "continue";
+  decision?: "block" | "retry" | "proceed";
   reason?: string;
   stdout?: string;
   stderr?: string;

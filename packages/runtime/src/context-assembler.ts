@@ -27,6 +27,9 @@ interface MemoryReader {
 export interface PlannerContext {
   staticPrompt: string;
   dynamicContext: {
+    task: string;
+    expected: string;
+    concerns?: string[];
     target_id: string;
     target_hints: Record<string, unknown>;
     connections: Record<string, unknown>;
@@ -42,10 +45,14 @@ export interface PlannerContext {
 export interface ObserverContext {
   staticPrompt: string;
   input: {
+    run?: { state: string; elapsed_sec: number; current_step_id?: string };
     triggering_event: EventRecord;
     recent_events: EventRecord[];
-    working_memory: { key: string; summary: string; source: string }[];
-    relevant_facts: { fact_id: string; category: string; statement: string }[];
+    memory: {
+      working_memory: { key: string; summary: string; source: string }[];
+      known_issues: { fact_id: string; category: string; statement: string }[];
+    };
+    constraints: { remaining_sec: number; allowed_capabilities: string[] };
     circuit_breaker_active: boolean;
     warning_escalation: boolean;
   };
@@ -88,7 +95,7 @@ export class ContextAssembler {
     this.observerPrompt = prompts?.observer ?? OBSERVER_PROMPT;
   }
 
-  async assemblePlannerContext(runId: string): Promise<PlannerContext> {
+  async assemblePlannerContext(runId: string, taskInfo?: { task: string; expected: string; concerns?: string[] }): Promise<PlannerContext> {
     const run = await this.runStore.get(runId);
     if (!run) throw new Error(`Run not found: ${runId}`);
 
@@ -101,28 +108,30 @@ export class ContextAssembler {
     const tier1 = this.skillRegistry?.matchTop(taskDesc, 5) ?? [];
     const tier2 = this.skillRegistry?.loadMatchedSteps(taskDesc, 3) ?? [];
 
-    return {
-      staticPrompt: this.plannerPrompt,
-      dynamicContext: {
-        target_id: run.target_id,
-        target_hints: target?.target_hints ?? {},
-        connections: target?.connections ?? {},
-        artifact: run.artifact,
-        relevant_episodes: episodes.map(e => ({
-          episode_id: e.episode_id, summary: e.summary, result: e.result,
-        })),
-        relevant_facts: facts.map(f => ({
-          fact_id: f.fact_id, category: f.category, statement: f.statement,
-        })),
-        pitfalls: episodes.flatMap(e => e.pitfalls),
-        matched_skills: tier1,
-        matched_skills_full: tier2.map(s => ({
-          name: s.name, description: s.description,
-          steps: s.steps, evidence_policy: s.evidence,
-          success_criteria: s.success, failure_signals: s.failure,
-        })),
-      },
-    };
+    const dc = {
+      task: taskInfo?.task ?? `Validate ${run.artifact.type} on ${run.target_id}`,
+      expected: taskInfo?.expected ?? "Device operates normally",
+      target_id: run.target_id,
+      target_hints: target?.target_hints ?? {},
+      connections: target?.connections ?? {},
+      artifact: run.artifact,
+      relevant_episodes: episodes.map(e => ({
+        episode_id: e.episode_id, summary: e.summary, result: e.result,
+      })),
+      relevant_facts: facts.map(f => ({
+        fact_id: f.fact_id, category: f.category, statement: f.statement,
+      })),
+      pitfalls: episodes.flatMap(e => e.pitfalls),
+      matched_skills: tier1,
+      matched_skills_full: tier2.map(s => ({
+        name: s.name, description: s.description,
+        steps: s.steps, evidence_policy: s.evidence,
+        success_criteria: s.success, failure_signals: s.failure,
+      })),
+    } as Record<string, unknown>;
+    if (taskInfo?.concerns) dc.concerns = taskInfo.concerns;
+
+    return { staticPrompt: this.plannerPrompt, dynamicContext: dc as PlannerContext["dynamicContext"] };
   }
 
   async assembleObserverContext(
@@ -140,15 +149,24 @@ export class ContextAssembler {
       this.memory.queryFacts("target", targetId, undefined, true),
     ]);
 
+    const runObj: { state: string; elapsed_sec: number; current_step_id?: string } = {
+      state: run?.state ?? "unknown", elapsed_sec: run?.elapsed_sec ?? 0,
+    };
+    if (run?.current_step_id) runObj.current_step_id = run.current_step_id;
+
     return {
       staticPrompt: this.observerPrompt,
       input: {
+        run: runObj,
         triggering_event: triggeringEvent,
         recent_events: recentEvents,
-        working_memory: wm.map(w => ({ key: w.key, summary: w.summary, source: w.source })),
-        relevant_facts: facts.map(f => ({
-          fact_id: f.fact_id, category: f.category, statement: f.statement,
-        })),
+        memory: {
+          working_memory: wm.map(w => ({ key: w.key, summary: w.summary, source: w.source })),
+          known_issues: facts.map(f => ({
+            fact_id: f.fact_id, category: f.category, statement: f.statement,
+          })),
+        },
+        constraints: { remaining_sec: 600, allowed_capabilities: [] },
         circuit_breaker_active: circuitBreakerActive,
         warning_escalation: warningEscalation,
       },
