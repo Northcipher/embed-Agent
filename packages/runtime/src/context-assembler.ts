@@ -13,6 +13,11 @@ interface TargetStoreReader {
   get(targetId: string): Promise<{ target_id: string; display_name?: string; target_hints?: Record<string, unknown>; connections: Record<string, unknown> } | null>;
 }
 
+interface SkillReader {
+  matchTop(task: string, n?: number): { name: string; description: string }[];
+  loadMatchedSteps(task: string, n?: number): { name: string; description: string; category: string; steps: { action: string; capability: string; command?: string; timeout_sec: number }[]; evidence: { always: string[]; on_failure: string[] }; success: string[]; failure: string[] }[];
+}
+
 interface MemoryReader {
   listByTarget(targetId: string, limit?: number): Promise<{ episode_id: string; summary: string; result: string; key_evidence: { summary: string; refs: string[] }[]; suggestions: string[]; pitfalls: string[] }[]>;
   queryFacts(scope: string, scopeId: string, category?: string, verifiedOnly?: boolean): Promise<{ fact_id: string; category: string; statement: string; verified: boolean }[]>;
@@ -29,6 +34,8 @@ export interface PlannerContext {
     relevant_episodes: { episode_id: string; summary: string; result: string }[];
     relevant_facts: { fact_id: string; category: string; statement: string }[];
     pitfalls: string[];
+    matched_skills?: { name: string; description: string }[];
+    matched_skills_full?: { name: string; description: string; steps: unknown[]; evidence_policy: { always: string[]; on_failure: string[] }; success_criteria: string[]; failure_signals: string[] }[];
   };
 }
 
@@ -74,6 +81,7 @@ export class ContextAssembler {
     private eventStore: EventStoreReader,
     private targetStore: TargetStoreReader,
     private memory: MemoryReader,
+    private skillRegistry?: SkillReader,
     prompts?: { planner?: string; observer?: string },
   ) {
     this.plannerPrompt = prompts?.planner ?? PLANNER_PROMPT;
@@ -87,6 +95,11 @@ export class ContextAssembler {
     const target = await this.targetStore.get(run.target_id);
     const episodes = await this.memory.listByTarget(run.target_id, 5);
     const facts = await this.memory.queryFacts("target", run.target_id);
+
+    // Skill progressive loading: Tier1 (name+desc) + Tier2 (top-3 full steps)
+    const taskDesc = run.artifact.type ? `validate ${run.artifact.type}` : "validate device";
+    const tier1 = this.skillRegistry?.matchTop(taskDesc, 5) ?? [];
+    const tier2 = this.skillRegistry?.loadMatchedSteps(taskDesc, 3) ?? [];
 
     return {
       staticPrompt: this.plannerPrompt,
@@ -102,6 +115,12 @@ export class ContextAssembler {
           fact_id: f.fact_id, category: f.category, statement: f.statement,
         })),
         pitfalls: episodes.flatMap(e => e.pitfalls),
+        matched_skills: tier1,
+        matched_skills_full: tier2.map(s => ({
+          name: s.name, description: s.description,
+          steps: s.steps, evidence_policy: s.evidence,
+          success_criteria: s.success, failure_signals: s.failure,
+        })),
       },
     };
   }

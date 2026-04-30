@@ -192,6 +192,9 @@ export class StepExecutor {
         case "stream": {
           if (!conn.stream) return { success: false, error: "stream not supported", failureType: "unsupported" };
           const deadline = Date.now() + timeout * 1000;
+          let lastSample = Date.now();
+          const sampleInterval = (step.observe?.sampling_commands?.length ? 60_000 : 0); // sample every 60s
+
           for await (const line of conn.stream(timeout)) {
             if (this._interrupted) { await pipe?.flush(); break; }
             if (pipe) await pipe.feedStream(line + "\n");
@@ -199,8 +202,22 @@ export class StepExecutor {
               await pipe?.flush();
               return { success: false, error: "stream timeout", failureType: "timeout" };
             }
+            // Active sampling: periodically run observe.sampling_commands
+            if (sampleInterval > 0 && Date.now() - lastSample >= sampleInterval) {
+              lastSample = Date.now();
+              for (const cmd of (step.observe?.sampling_commands ?? [])) {
+                if (conn.exec) {
+                  const r = await conn.exec(cmd, 10);
+                  if (pipe) await pipe.feedExec(r.stdout, r.stderr, r.exit_code);
+                  this.eb.emit({
+                    type: "observation", run_id: this.runId, source: "step_executor",
+                    summary: `Sampling: ${cmd} (exit ${r.exit_code})`,
+                    payload: { sampling_command: cmd, exit_code: r.exit_code },
+                  });
+                }
+              }
+            }
           }
-          // Flush any pending captures that were waiting for after_lines
           await pipe?.flush();
           return { success: true };
         }

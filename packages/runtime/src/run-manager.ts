@@ -15,8 +15,9 @@ interface RunStoreIO {
 }
 
 interface TargetStateIO {
-  getState(targetId: string): Promise<{ state: string; current_run_id?: string } | null>;
+  getState(targetId: string): Promise<{ state: string; current_run_id?: string; target_id?: string } | null>;
   updateState(targetId: string, patch: Record<string, unknown>): Promise<void>;
+  listStates?(): Promise<{ target_id: string; state: string; current_run_id?: string }[]>;
 }
 
 // --- Interfaces for Agent layer ---
@@ -102,6 +103,73 @@ export class RunManager {
     private reply: ReplyCaller,
     private dataRoot = ".embed-agent",
   ) {}
+
+  // ============================================================
+  // Host crash recovery
+  // ============================================================
+
+  /** Recover from host crash on startup. Detects stale non-terminal runs, fails them, cleans locks. */
+  async recoverOnStartup(): Promise<{ recovered: number; cleaned_locks: number }> {
+    const runs = await this.runStore.listNonTerminal();
+    let recovered = 0;
+    let cleanedLocks = 0;
+
+    for (const run of runs) {
+      const elapsed = Date.now() - new Date(run.created_at).getTime();
+      const staleThreshold = 30 * 60 * 1000; // 30 min stale
+
+      switch (run.state) {
+        case "running":
+        case "collecting_evidence": {
+          // Read last event to check staleness
+          const events = await this.eventStoreRead(run.run_id, Math.max(0, run.last_event_seq - 1), 2);
+          const lastEvent = events[events.length - 1];
+          const lastEventAge = lastEvent ? Date.now() - new Date(lastEvent.time).getTime() : elapsed;
+
+          if (lastEventAge > staleThreshold) {
+            await this.finalize(run.run_id, run.target_id, "failed", `Host crash: run stale (last event ${Math.round(lastEventAge / 60000)}m ago)`);
+            recovered++;
+          }
+          break;
+        }
+        case "planning":
+        case "finalizing": {
+          // These states are always stale after crash — the host was mid-operation
+          if (elapsed > staleThreshold) {
+            await this.finalize(run.run_id, run.target_id, "failed", `Host crash during ${run.state}`);
+            recovered++;
+          }
+          break;
+        }
+        case "paused":
+          // Leave paused runs as-is (human intervention was pending)
+          break;
+      }
+    }
+
+    // Clean up stale target locks: any target with current_run_id where the run is terminal
+    const states = await this.targetState.listStates?.() ?? [];
+    for (const s of states) {
+      if (!s.current_run_id) continue;
+      const run = await this.runStore.get(s.current_run_id);
+      if (!run || ["completed", "failed", "cancelled"].includes(run.state)) {
+        await this.targetState.updateState(s.target_id, { state: "idle", current_run_id: undefined });
+        cleanedLocks++;
+      }
+    }
+
+    return { recovered, cleaned_locks: cleanedLocks };
+  }
+
+  // EventStore reader — optionally injected for crash recovery
+  private eventReader?: { read(runId: string, afterSeq?: number, limit?: number): Promise<{ time: string }[]> };
+  setEventReader(reader: { read(runId: string, afterSeq?: number, limit?: number): Promise<{ time: string }[]> }): void {
+    this.eventReader = reader;
+  }
+
+  private async eventStoreRead(runId: string, afterSeq: number, limit: number): Promise<{ time: string }[]> {
+    return this.eventReader?.read(runId, afterSeq, limit) ?? [];
+  }
 
   // ============================================================
   // createRun — full admission

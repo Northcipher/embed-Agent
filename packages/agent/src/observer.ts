@@ -17,32 +17,77 @@ export interface ObserverInput {
   warning_escalation?: boolean;
 }
 
+interface MemoryWriter {
+  writeWorkingMemory(runId: string, entry: { key: string; summary: string; source: "observer" | "planner" | "human" }): Promise<void>;
+}
+
 const OBSERVER_FALLBACKS: Record<string, Decision["decision"]> = {
   fatal: "stop",
   target_state_changed: "pause",
 };
 
 export class Observer {
-  constructor(private llm: LLMCallManager) {}
+  private memory: MemoryWriter | undefined;
 
-  async decide(staticPrompt: string, input: ObserverInput): Promise<Decision> {
+  constructor(private llm: LLMCallManager, memory?: MemoryWriter) {
+    this.memory = memory;
+  }
+
+  async decide(staticPrompt: string, input: ObserverInput, runId?: string): Promise<Decision> {
+    // 4.3.5 Semantic variant matching: check known_issues BEFORE calling LLM
+    const knownMatch = this.matchKnownIssue(input);
+    if (knownMatch) {
+      const decision: Decision = {
+        decision: "continue",
+        reason: `Known issue matched: ${knownMatch}`,
+        confidence: 0.9,
+        reasoning_trace: `Semantic variant of known issue detected — continuing`,
+        evidence_refs: [],
+      };
+      if (runId) this.memory?.writeWorkingMemory(runId, { key: "known_issue_match", summary: knownMatch, source: "observer" });
+      return decision;
+    }
+
     const messages: LLMMessage[] = [
       { role: "system", content: staticPrompt },
       { role: "user", content: JSON.stringify(input, null, 2) },
     ];
 
+    let decision: Decision;
     try {
       const result = await this.llm.call("observer", messages);
       if ("status" in result) {
-        // CB4 degraded — use severity-based fallback
-        return this.fallbackDecision(input);
+        decision = this.fallbackDecision(input);
+      } else {
+        decision = this.parseDecision(result.content, input);
       }
-
-      return this.parseDecision(result.content, input);
     } catch {
-      // LLM failure — use severity-based fallback
-      return this.fallbackDecision(input);
+      decision = this.fallbackDecision(input);
     }
+
+    // 4.3.6 Write decision reasoning to Working Memory
+    if (runId) {
+      this.memory?.writeWorkingMemory(runId, {
+        key: `observer_decision_${Date.now()}`,
+        summary: `[${decision.decision}] ${decision.reason}`,
+        source: "observer",
+      }).catch(() => { /* non-fatal */ });
+    }
+
+    return decision;
+  }
+
+  /** Check if the triggering event matches any known issue pattern (semantic variant). */
+  private matchKnownIssue(input: ObserverInput): string | null {
+    const eventSummary = (input.triggering_event.summary as string) ?? "";
+    const eventType = (input.triggering_event.type as string) ?? "";
+    for (const issue of input.memory.known_issues) {
+      // Simple keyword match — extended_pattern would use regex
+      const keywords = issue.statement.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+      const matchCount = keywords.filter(k => eventSummary.toLowerCase().includes(k) || eventType.includes(k)).length;
+      if (matchCount >= 2) return issue.statement;
+    }
+    return null;
   }
 
   private parseDecision(content: string, input: ObserverInput): Decision {
