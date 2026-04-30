@@ -5,3 +5,6 @@ export { TargetStore, type TargetState, type TargetProfile, type TargetRuntimeSt
 export { MemoryStore, type WorkingMemoryEntry, type Episode, type SemanticFact, type RunProfile } from "./memory-store.js";
 export { SkillStore, type Skill } from "./skill-store.js";
 export { TaskStore, type TaskRecord } from "./task-store.js";
+export { Logger, type LogLevel, type LoggerOptions } from "./logger.js";
+export { ConfigLoader, type ConfigLoadResult } from "./config-loader.js";
+export { PromptLoader, type PromptRole, type PromptSet } from "./prompt-loader.js";

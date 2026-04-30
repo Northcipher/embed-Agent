@@ -18,7 +18,8 @@
     "vitest": "^4.0.15"
   },
   "dependencies": {
-    "@embed-agent/runtime": "workspace:*"
+    "@embed-agent/runtime": "workspace:*",
+    "@embed-agent/stores": "workspace:*"
   },
   "bin": {
     "va": "./dist/main.js"

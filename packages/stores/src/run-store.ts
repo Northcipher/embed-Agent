@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { writeAtomic } from "./atomic.js";
+import type { Logger } from "./logger.js";
 
 function validateId(id: string, label: string): void {
   if (id.includes("..") || id.includes("/") || id.includes("\\")) {
@@ -31,9 +32,11 @@ export class RunStore {
   private dataRoot: string;
   /** Per-run mutex for read-modify-write serialization. */
   private locks = new Map<string, Promise<void>>();
+  private log: Logger | undefined;
 
-  constructor(dataRoot = ".embed-agent") {
+  constructor(dataRoot = ".embed-agent", log?: Logger) {
     this.dataRoot = dataRoot;
+    this.log = log;
   }
 
   private runFile(runId: string): string {
@@ -90,12 +93,16 @@ export class RunStore {
         } catch (e) {
           // Corrupted run record — surface it, don't silently drop
           corrupted.push(entry);
-          console.error(`[RunStore] Corrupted run record "${entry}": ${(e as Error).message}`);
+          const errMsg = (e as Error).message;
+          if (this.log) this.log.error(`Corrupted run record "${entry}"`, { error: errMsg });
+          else console.error(`[RunStore] Corrupted run record "${entry}": ${errMsg}`);
         }
       }
     } catch { /* dir not exist */ }
     if (corrupted.length > 0) {
-      console.error(`[RunStore] ${corrupted.length} corrupted run(s) need manual recovery: ${corrupted.join(", ")}`);
+      const msg = `${corrupted.length} corrupted run(s) need manual recovery: ${corrupted.join(", ")}`;
+      if (this.log) this.log.warn(msg);
+      else console.error(`[RunStore] ${msg}`);
     }
     return result;
   }

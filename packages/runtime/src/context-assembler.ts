@@ -66,12 +66,19 @@ Respond with a decision:
 - suggest: make a suggestion but don't interrupt`;
 
 export class ContextAssembler {
+  private plannerPrompt: string;
+  private observerPrompt: string;
+
   constructor(
     private runStore: RunStoreReader,
     private eventStore: EventStoreReader,
     private targetStore: TargetStoreReader,
     private memory: MemoryReader,
-  ) {}
+    prompts?: { planner?: string; observer?: string },
+  ) {
+    this.plannerPrompt = prompts?.planner ?? PLANNER_PROMPT;
+    this.observerPrompt = prompts?.observer ?? OBSERVER_PROMPT;
+  }
 
   async assemblePlannerContext(runId: string): Promise<PlannerContext> {
     const run = await this.runStore.get(runId);
@@ -82,7 +89,7 @@ export class ContextAssembler {
     const facts = await this.memory.queryFacts("target", run.target_id);
 
     return {
-      staticPrompt: PLANNER_PROMPT,
+      staticPrompt: this.plannerPrompt,
       dynamicContext: {
         target_id: run.target_id,
         target_hints: target?.target_hints ?? {},
@@ -115,7 +122,7 @@ export class ContextAssembler {
     ]);
 
     return {
-      staticPrompt: OBSERVER_PROMPT,
+      staticPrompt: this.observerPrompt,
       input: {
         triggering_event: triggeringEvent,
         recent_events: recentEvents,
