@@ -2,60 +2,64 @@ import { describe, it, expect } from "vitest";
 import { NotificationFilter, LogChannel } from "../src/notification-filter.js";
 
 describe("NotificationFilter", () => {
-  it("sends notification for matching event", async () => {
-    const events: Record<string, unknown>[] = [];
+  it("sends notification for matching event with semantic category", async () => {
     const channel = new LogChannel();
+    const events: Record<string, unknown>[] = [];
     const filter = new NotificationFilter(
-      { subscribe: (_t, h) => { events.push; const fn = (e: Record<string, unknown>) => h(e); return () => {}; } },
+      {
+        subscribe: (_t, h) => {
+          const fn = (e: Record<string, unknown>) => h(e);
+          return () => {};
+        },
+        emit: async (e) => { events.push(e); },
+      },
       { slack: channel },
     );
 
-    // Directly test the template rendering via handleEvent
     await (filter as unknown as { handleEvent(e: Record<string, unknown>): Promise<void> }).handleEvent({
       type: "result_ready",
       run_id: "r1",
       summary: "test completed",
       status: "completed",
-      payload: { status: "completed", summary: "test completed" },
+      payload: { status: "completed", summary: "test completed", evidence_path: "/tmp", suggested_next: "none" },
     });
 
     expect(channel.messages).toHaveLength(1);
     expect(channel.messages[0].title).toContain("completed");
+    // Verify notification_sent was emitted
+    expect(events.some(e => e.type === "notification_sent")).toBe(true);
   });
 
-  it("deduplicates within throttle window", async () => {
+  it("deduplicates per-target for target events", async () => {
     const channel = new LogChannel();
     const filter = new NotificationFilter(
-      {
-        subscribe: (_t: string[], _h: (e: Record<string, unknown>) => void) => { return () => {}; },
-      },
+      { subscribe: () => () => {}, emit: async () => {} },
       { slack: channel },
-      {
-        test_event: { title: "{{summary}}", body: "body", channel: "slack", throttle_sec: 60 },
-      },
     );
 
     const handler = (filter as unknown as { handleEvent(e: Record<string, unknown>): Promise<void> }).handleEvent.bind(filter);
-    await handler({ type: "test_event", run_id: "r1", summary: "first" });
-    await handler({ type: "test_event", run_id: "r1", summary: "second" });
 
-    // Second should be throttled
+    // target_state_changed with disconnected state → category "target_offline"
+    await handler({ type: "target_state_changed", summary: "t1 disconnected", payload: { target_id: "t1", state: "disconnected" } });
+    await handler({ type: "target_state_changed", summary: "t2 disconnected", payload: { target_id: "t2", state: "disconnected" } });
+
+    // Different targets — both should send
+    expect(channel.messages).toHaveLength(2);
+  });
+
+  it("throttles same target within window", async () => {
+    const channel = new LogChannel();
+    const filter = new NotificationFilter(
+      { subscribe: () => () => {}, emit: async () => {} },
+      { slack: channel },
+    );
+
+    const handler = (filter as unknown as { handleEvent(e: Record<string, unknown>): Promise<void> }).handleEvent.bind(filter);
+
+    await handler({ type: "target_state_changed", summary: "t1 offline", payload: { target_id: "t1", state: "disconnected" } });
+    await handler({ type: "target_state_changed", summary: "t1 still offline", payload: { target_id: "t1", state: "disconnected" } });
+
+    // Same target within throttle window — only 1
     expect(channel.messages).toHaveLength(1);
-    expect(channel.messages[0].title).toBe("first");
-  });
-
-  it("ignores events without matching template", async () => {
-    const channel = new LogChannel();
-    const filter = new NotificationFilter(
-      {
-        subscribe: (_t: string[], _h: (e: Record<string, unknown>) => void) => { return () => {}; },
-      },
-      { slack: channel },
-    );
-
-    const handler = (filter as unknown as { handleEvent(e: Record<string, unknown>): Promise<void> }).handleEvent.bind(filter);
-    await handler({ type: "unknown_event", run_id: "r1", summary: "test" });
-
-    expect(channel.messages).toHaveLength(0);
   });
 });

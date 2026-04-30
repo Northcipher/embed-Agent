@@ -1,4 +1,5 @@
 interface EventEmitter {
+  emit(e: Record<string, unknown>): Promise<void>;
   subscribe(types: string[], handler: (e: Record<string, unknown>) => void): () => void;
 }
 
@@ -13,26 +14,44 @@ export interface NotifyTemplate {
   throttle_sec: number;
 }
 
-interface NotifyRule {
-  eventType: string;
-  template: NotifyTemplate;
-  condition?: (event: Record<string, unknown>) => boolean;
-}
+// Semantic categories mapped from raw event types
+type SemanticCategory = "run_result" | "target_offline" | "target_offline_long" | "memory_suggestion" | "target_state_change";
+
+const CATEGORY_MAP: Record<string, { category: SemanticCategory; condition?: (e: Record<string, unknown>) => boolean }> = {
+  result_ready: { category: "run_result" },
+  target_state_changed: {
+    category: "target_offline",
+    condition: (e) => (e.payload as Record<string, unknown>)?.state === "disconnected",
+  },
+  suggestion_generated: { category: "memory_suggestion" },
+};
 
 const DEFAULT_TEMPLATES: Record<string, NotifyTemplate> = {
-  result_ready: {
+  run_result: {
     title: "Run {{status}}",
-    body: "Run {{run_id}}: {{summary}}",
+    body: "Run {{run_id}}: {{summary}}\nEvidence: {{evidence_path}}\nNext: {{suggested_next}}",
     channel: "slack",
     throttle_sec: 60,
   },
-  target_state_changed: {
+  target_offline: {
+    title: "Target Offline",
+    body: "Target disconnected: {{summary}}",
+    channel: "slack",
+    throttle_sec: 300,
+  },
+  target_offline_long: {
+    title: "Target Offline (30+ min)",
+    body: "Target has been offline for 30+ minutes: {{summary}}",
+    channel: "email",
+    throttle_sec: 1800,
+  },
+  target_state_change: {
     title: "Target State Change",
     body: "Target state changed: {{summary}}",
     channel: "log",
     throttle_sec: 300,
   },
-  suggestion_generated: {
+  memory_suggestion: {
     title: "Suggestion",
     body: "{{suggestion}}",
     channel: "slack",
@@ -43,6 +62,7 @@ const DEFAULT_TEMPLATES: Record<string, NotifyTemplate> = {
 export class NotificationFilter {
   private unsub: (() => void) | null = null;
   private sentMap = new Map<string, number>(); // key → last sent timestamp
+  private offlineSince = new Map<string, number>(); // target → first offline timestamp
 
   constructor(
     private eb: EventEmitter,
@@ -62,22 +82,66 @@ export class NotificationFilter {
   }
 
   private async handleEvent(event: Record<string, unknown>): Promise<void> {
-    const tpl = this.templates[event.type as string];
+    const mapping = CATEGORY_MAP[event.type as string];
+    if (!mapping) return;
+
+    // Check semantic condition (e.g., only offline state for target_offline)
+    let category = mapping.category;
+    if (mapping.condition && !mapping.condition(event)) {
+      // Fall back to generic category if the specific condition isn't met
+      if (event.type === "target_state_changed") {
+        category = "target_state_change";
+      } else {
+        return;
+      }
+    }
+
+    const tpl = this.templates[category];
     if (!tpl) return;
 
-    // Dedup by event type + run_id
-    const dedupKey = `${event.type}-${event.run_id ?? "global"}`;
+    // Dedup: per-target for target events, per-run for run events
+    const targetId = (event.payload as Record<string, unknown>)?.target_id as string | undefined;
+    const dedupKey = targetId ? `${category}-${targetId}` : `${category}-${event.run_id ?? "global"}`;
     const last = this.sentMap.get(dedupKey);
     if (last && (Date.now() - last) < tpl.throttle_sec * 1000) return;
 
+    // Track target offline duration for escalation
+    if (category === "target_offline" && targetId) {
+      if (!this.offlineSince.has(targetId)) {
+        this.offlineSince.set(targetId, Date.now());
+      } else if (Date.now() - this.offlineSince.get(targetId)! >= 30 * 60 * 1000) {
+        // Escalate to long offline
+        const longTpl = this.templates["target_offline_long"];
+        if (longTpl) {
+          await this.sendNotification(longTpl, "target_offline_long", dedupKey, event);
+        }
+        return;
+      }
+    } else {
+      this.offlineSince.delete(targetId ?? "");
+    }
+
+    await this.sendNotification(tpl, category, dedupKey, event);
+  }
+
+  private async sendNotification(
+    tpl: NotifyTemplate, category: string, dedupKey: string, event: Record<string, unknown>,
+  ): Promise<void> {
     const title = this.render(tpl.title, event);
     const body = this.render(tpl.body, event);
     const channel = this.channels[tpl.channel];
     if (!channel) return;
 
     try {
-      await channel.send(title, body, { event_type: event.type as string });
+      await channel.send(title, body, { event_type: event.type as string, category });
       this.sentMap.set(dedupKey, Date.now());
+
+      // Emit notification_sent audit event
+      await this.eb.emit({
+        type: "notification_sent", source: "notification_filter",
+        summary: `Notification sent: ${category} — ${title}`,
+        payload: { category, channel: tpl.channel },
+      });
     } catch {
       // notification failure is non-fatal
     }
@@ -85,7 +149,6 @@ export class NotificationFilter {
 
   private render(template: string, event: Record<string, unknown>): string {
     return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => {
-      // Drill into payload for nested values
       if (key in event) return String(event[key] ?? "");
       const payload = event.payload as Record<string, unknown> | undefined;
       if (payload && key in payload) return String(payload[key] ?? "");

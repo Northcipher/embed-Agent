@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+
 interface RunStoreReader {
   get(runId: string): Promise<{ run_id: string; state: string; target_id: string; current_step_id?: string; elapsed_sec: number; last_event_seq: number; evidence_root: string; artifact: { path: string; type: string; version?: string; build_id?: string }; failure_reason?: string; created_at: string; started_at?: string; ended_at?: string } | null>;
   listNonTerminal(): Promise<{ run_id: string; state: string; target_id: string }[]>;
@@ -14,6 +16,8 @@ interface EvidenceStoreReader {
 
 interface TargetStoreReader {
   getState(targetId: string): Promise<{ state: string; serial: string; adb: string; fastboot: string; current_run_id?: string; last_heartbeat_at?: string } | null>;
+  listAll(): Promise<{ target_id: string }[]>;
+  listStates(): Promise<{ target_id: string; state: string; serial: string; adb: string; fastboot: string; current_run_id?: string }[]>;
 }
 
 interface MemoryStoreReader {
@@ -50,7 +54,9 @@ export class Views {
     events: { seq: number; type: string; severity?: string; summary: string; time: string }[];
     next_after_seq: number; has_more: boolean;
   }> {
-    const events = await this.eventStore.read(runId, afterSeq, limit + 1);
+    // Read extra events to compensate for type filtering — avoid empty pages
+    const readLimit = types ? Math.max(limit * 3, 500) : limit + 1;
+    const events = await this.eventStore.read(runId, afterSeq, readLimit);
     const filtered = types ? events.filter(e => types.includes(e.type)) : events;
     const hasMore = filtered.length > limit;
     const sliced = filtered.slice(0, limit);
@@ -74,7 +80,28 @@ export class Views {
     if (!run) return { run_id: runId, state: "unknown", result_available: false };
     const terminal = ["completed", "failed", "cancelled"].includes(run.state);
     if (!terminal) return { run_id: runId, state: run.state, result_available: false };
-    const events = await this.eventStore.read(runId, Math.max(0, run.last_event_seq - 20), 20);
+
+    // Look for result_ready event — the authoritative result
+    const events = await this.eventStore.read(runId, Math.max(0, run.last_event_seq - 50), 50);
+    const resultReady = events.find(e => e.type === "result_ready");
+    if (resultReady) {
+      const p = resultReady.payload as Record<string, unknown>;
+      const result = {
+        run_id: runId, state: run.state, result_available: true as const,
+        summary: (p.summary as string) ?? (resultReady.summary as string),
+      } as {
+        run_id: string; state: string; result_available: boolean;
+        summary?: string; suggested_next?: string; evidence_path?: string;
+        key_evidence?: { summary: string; evidence_refs: string[] }[];
+      };
+      if (p.suggested_next) result.suggested_next = p.suggested_next as string;
+      if (p.evidence_path) result.evidence_path = p.evidence_path as string;
+      const ke = p.key_evidence as { summary: string; evidence_refs: string[] }[] | undefined;
+      if (ke && ke.length > 0) result.key_evidence = ke;
+      return result;
+    }
+
+    // Fallback: no result_ready event found
     const result = {
       run_id: runId, state: run.state, result_available: true as const,
       summary: run.failure_reason ?? `Run ${run.state}`,
@@ -85,20 +112,24 @@ export class Views {
       summary?: string; suggested_next?: string; evidence_path?: string;
       key_evidence?: { summary: string; evidence_refs: string[] }[];
     };
-    const keyEvidence = events.filter(e => e.evidence_refs?.length).map(e => ({
-      summary: e.summary, evidence_refs: e.evidence_refs ?? [],
-    }));
-    if (keyEvidence.length > 0) result.key_evidence = keyEvidence;
     return result;
   }
 
   async evidence(runId: string, ref?: string): Promise<{
     index?: { refs: { ref: string; kind: string; bytes?: number }[]; key_events: { seq: number; summary: string }[] };
-    content?: string; available: boolean;
+    content?: string; filePath?: string; size?: number;
+    available: boolean;
   }> {
     if (ref) {
       const ev = await this.evidenceStore.read(runId, ref);
-      return { available: ev.available };
+      if (!ev.available) return { available: false };
+      // Read evidence content for the ref
+      try {
+        const content = await fs.readFile(ev.filePath, "utf-8");
+        return { content: content.slice(0, 100_000), filePath: ev.filePath, size: ev.size, available: true };
+      } catch {
+        return { filePath: ev.filePath, size: ev.size, available: true };
+      }
     }
     const idx = await this.evidenceStore.getIndex(runId);
     return {
@@ -114,15 +145,21 @@ export class Views {
     };
   }
 
-  async targets(): Promise<{ target_id: string; state: string; current_run_id?: string }[]> {
-    const runs = await this.runStore.listNonTerminal();
-    const results = await Promise.all(runs.map(async r => {
-      const ts = await this.targetStore.getState(r.target_id);
-      const item = { target_id: r.target_id, state: ts?.state ?? "unknown" } as { target_id: string; state: string; current_run_id?: string };
-      if (ts?.current_run_id) item.current_run_id = ts.current_run_id;
+  async targets(): Promise<{ target_id: string; state: string; serial: string; adb: string; fastboot: string; current_run_id?: string }[]> {
+    const [profiles, states] = await Promise.all([
+      this.targetStore.listAll(),
+      this.targetStore.listStates(),
+    ]);
+    const stateMap = new Map(states.map(s => [s.target_id, s]));
+    return profiles.map(p => {
+      const s = stateMap.get(p.target_id);
+      const item = {
+        target_id: p.target_id, state: s?.state ?? "unknown",
+        serial: s?.serial ?? "unknown", adb: s?.adb ?? "unknown", fastboot: s?.fastboot ?? "unknown",
+      } as { target_id: string; state: string; serial: string; adb: string; fastboot: string; current_run_id?: string };
+      if (s?.current_run_id) item.current_run_id = s.current_run_id;
       return item;
-    }));
-    return results;
+    });
   }
 
   async history(targetId: string, limit = 10): Promise<{ episode_id: string; result: string; summary: string }[]> {
