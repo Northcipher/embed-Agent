@@ -171,8 +171,8 @@ export class RunManager {
       return await this.rejectRun(runId, req.target, "Plan rejected: no steps generated");
     }
 
-    // 7. Pre-flight
-    const transports = req.constraints?.no_flash ? ["serial", "adb"] : ["serial", "adb", "fastboot"];
+    // 7. Pre-flight — derive required transports from plan steps
+    const transports = this.requiredTransports(plan.steps, req.constraints?.no_flash ?? false);
     const pf = await this.tm.preflight(req.target, transports, req.artifact.path);
     if (!pf.all_passed) {
       return await this.rejectRun(runId, req.target, "Pre-flight failed", pf.checks.map(c => ({ check: c.check, error: c.error ?? "failed" })));
@@ -295,6 +295,29 @@ export class RunManager {
     if (!run) throw new Error(`Run not found: ${runId}`);
     this.activeExecutors.get(runId)?.interrupt();
     await this.finalize(runId, run.target_id, "failed", reason);
+  }
+
+  // ============================================================
+  // Helpers
+  // ============================================================
+
+  private requiredTransports(steps: Step[], noFlash: boolean): string[] {
+    const needed = new Set<string>();
+    for (const s of steps) {
+      switch (s.capability) {
+        case "serial_output": needed.add("serial"); break;
+        case "shell_exec":
+        case "wait_adb":
+        case "collect_logs":
+        case "adb_logs": needed.add("adb"); break;
+        case "flash": if (!noFlash) needed.add("fastboot"); break;
+        case "ssh_exec": needed.add("ssh"); break;
+        case "local_exec": needed.add("local"); break;
+      }
+    }
+    // Always include serial + adb as fallback if nothing specific
+    if (needed.size === 0) return ["serial", "adb"];
+    return [...needed];
   }
 
   // ============================================================
