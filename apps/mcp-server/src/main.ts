@@ -1,7 +1,7 @@
 // MCP Server stdio entry — boots with query-only Views support
 import { EventStore, EvidenceStore, RunStore, TargetStore, MemoryStore, Logger } from "@embed-agent/stores";
 import { Views } from "@embed-agent/views";
-import { createMcpServer } from "./server.js";
+import { createMcpServer, type McpMessage } from "./server.js";
 
 const dataRoot = process.env["EMBED_AGENT_DATA"] ?? ".embed-agent";
 const log = new Logger({ module: "mcp-server" });
@@ -49,7 +49,7 @@ const handlers: Record<string, (input: any) => Promise<any>> = {
 
 // Simple stdio transport
 const transport = {
-  onmessage: (() => {}) as (msg: { method: string; params?: { name: string; arguments?: Record<string, unknown> }; id?: unknown }) => void,
+  onmessage: (() => {}) as (msg: McpMessage) => void | Promise<void>,
   async start() {
     process.stdin.setEncoding("utf-8");
     let buf = "";
