@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import type { LLMCallManager, LLMMessage } from "./llm.js";
 import type { AgentReply } from "./types.js";
 
@@ -9,6 +11,10 @@ interface EvidenceIndexReader {
   getIndex(runId: string): Promise<{ refs: { ref: string; kind: string; bytes?: number; available: boolean }[]; key_events: { seq: number; summary: string; evidence_refs: string[] }[] }>;
 }
 
+interface RunStoreReader {
+  get(runId: string): Promise<{ target_id: string; artifact: { path: string; type: string; version?: string; build_id?: string }; evidence_root: string } | null>;
+}
+
 interface MemoryWriter {
   writeEpisode(ep: Record<string, unknown>): Promise<void>;
   writeProfile(profile: Record<string, unknown>): Promise<void>;
@@ -16,14 +22,24 @@ interface MemoryWriter {
 }
 
 interface EventEmitter {
-  emit(e: Record<string, unknown>): void;
+  emit(e: Record<string, unknown>): Promise<void>;
 }
+
+interface RunInfo {
+  target_id: string;
+  artifact: { path: string; type: string; version?: string; build_id?: string };
+  task?: string;
+}
+
+// Failure event types that indicate a failed run
+const FAILURE_TYPES = new Set(["step_failed", "run_failed", "decision_made"]);
 
 export class ReplyGenerator {
   constructor(
     private llm: LLMCallManager,
     private eventStore: EventStoreReader,
     private evidenceIndex: EvidenceIndexReader,
+    private runStore: RunStoreReader,
     private memory: MemoryWriter,
     private eb: EventEmitter,
     private dataRoot = ".embed-agent",
@@ -32,14 +48,13 @@ export class ReplyGenerator {
   // --- Normal generation (LLM) ---
 
   async generate(runId: string): Promise<AgentReply> {
-    const [events, evidence] = await Promise.all([
+    const [events, evidence, run] = await Promise.all([
       this.eventStore.read(runId),
       this.evidenceIndex.getIndex(runId),
+      this.runStore.get(runId),
     ]);
 
-    const fatalEvents = events.filter(e => e.severity === "fatal");
-    const warnings = events.filter(e => e.severity === "warning");
-    const status: AgentReply["status"] = fatalEvents.length > 0 ? "failed" : "completed";
+    const status = this.determineStatus(events);
 
     const staticPrompt = `You are an Embed Agent Reply Generator. Given the events and evidence from a validation run, produce a concise summary of findings.
 
@@ -55,8 +70,8 @@ Output JSON:
       { role: "system", content: staticPrompt },
       { role: "user", content: JSON.stringify({
         events: events.slice(0, 100).map(e => ({ type: e.type, severity: e.severity, summary: e.summary })),
-        fatal_count: fatalEvents.length,
-        warning_count: warnings.length,
+        fatal_count: events.filter(e => e.severity === "fatal").length,
+        failure_events: events.filter(e => FAILURE_TYPES.has(e.type)).map(e => e.type),
         key_events: evidence.key_events,
       }, null, 2) },
     ];
@@ -67,7 +82,6 @@ Output JSON:
       const result = await this.llm.call("reply", messages);
 
       if ("status" in result) {
-        // CB4 degraded — rule-based summary
         reply = this.buildMinimal(runId, status, "LLM degraded — rule-based summary");
       } else {
         reply = this.parseReply(runId, status, result.content);
@@ -76,11 +90,14 @@ Output JSON:
       reply = this.buildMinimal(runId, status, "LLM failed — rule-based summary");
     }
 
+    // Persist reply.json before emitting result_ready
+    await this.persistReply(runId, reply);
+
     // Write memory artifacts (always, even on LLM failure)
-    await this.writeArtifacts(runId, reply, events);
+    await this.writeArtifacts(runId, reply, events, run ? { target_id: run.target_id, artifact: run.artifact } : undefined);
 
     // Reply is the ONLY publisher of result_ready
-    this.eb.emit({
+    await this.eb.emit({
       type: "result_ready", run_id: runId, source: "reply_generator",
       summary: reply.summary,
       payload: {
@@ -97,10 +114,11 @@ Output JSON:
 
   // --- Minimal generation (rule-based, for early failures) ---
 
-  async generateMinimal(runId: string, reason: string): Promise<AgentReply> {
+  async generateMinimal(runId: string, reason: string, runInfo?: RunInfo): Promise<AgentReply> {
     const reply = this.buildMinimal(runId, "failed", reason);
-    await this.writeArtifacts(runId, reply, []);
-    this.eb.emit({
+    await this.persistReply(runId, reply);
+    await this.writeArtifacts(runId, reply, [], runInfo);
+    await this.eb.emit({
       type: "result_ready", run_id: runId, source: "reply_generator",
       summary: reply.summary,
       payload: {
@@ -116,7 +134,7 @@ Output JSON:
 
   // --- Cancelled generation (rule-based) ---
 
-  async generateCancelled(runId: string, reason: string): Promise<AgentReply> {
+  async generateCancelled(runId: string, reason: string, runInfo?: RunInfo): Promise<AgentReply> {
     const reply: AgentReply = {
       run_id: runId,
       status: "cancelled",
@@ -126,8 +144,9 @@ Output JSON:
       key_evidence: [],
       confidence: 1.0,
     };
-    await this.writeArtifacts(runId, reply, []);
-    this.eb.emit({
+    await this.persistReply(runId, reply);
+    await this.writeArtifacts(runId, reply, [], runInfo);
+    await this.eb.emit({
       type: "result_ready", run_id: runId, source: "reply_generator",
       summary: reply.summary,
       payload: {
@@ -142,6 +161,13 @@ Output JSON:
   }
 
   // --- Private ---
+
+  private determineStatus(events: { type: string; severity?: string }[]): AgentReply["status"] {
+    const hasFatal = events.some(e => e.severity === "fatal");
+    const hasFailure = events.some(e => FAILURE_TYPES.has(e.type));
+    if (hasFatal || hasFailure) return "failed";
+    return "completed";
+  }
 
   private parseReply(runId: string, status: AgentReply["status"], content: string): AgentReply {
     try {
@@ -174,17 +200,26 @@ Output JSON:
     };
   }
 
+  private async persistReply(runId: string, reply: AgentReply): Promise<void> {
+    try {
+      const dir = path.join(this.dataRoot, "runs", runId, "brain");
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, "reply.json"), JSON.stringify(reply, null, 2), "utf-8");
+    } catch { /* persistence failure is non-fatal */ }
+  }
+
   private async writeArtifacts(
     runId: string,
     reply: AgentReply,
     events: { type: string; severity?: string; summary: string; step_id?: string }[],
+    runInfo?: RunInfo,
   ): Promise<void> {
     const episode = {
       episode_id: `ep-${runId}`,
       run_id: runId,
-      target_id: "", // filled by caller via different path
-      artifact_ref: "",
-      task: "",
+      target_id: runInfo?.target_id ?? "",
+      artifact_ref: runInfo?.artifact?.path ?? "",
+      task: runInfo?.task ?? "",
       result: reply.status,
       summary: reply.summary,
       key_evidence: reply.key_evidence,
@@ -195,8 +230,8 @@ Output JSON:
 
     const profile = {
       run_id: runId,
-      target_id: "",
-      artifact: { path: "", type: "" },
+      target_id: runInfo?.target_id ?? "",
+      artifact: runInfo?.artifact ?? { path: "", type: "" },
       result: reply.status,
       stage_durations: [] as { stage: string; duration: number }[],
       final_metrics: {} as Record<string, number>,

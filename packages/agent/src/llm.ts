@@ -66,11 +66,19 @@ export class LLMCircuitBreaker {
   private failures = 0;
   private degraded = false;
   private degradedSince = 0;
+  private probing = false; // true during a single probe attempt
   private readonly MAX_FAILURES = 3;
   private readonly PROBE_AFTER_MS = 5 * 60 * 1000; // 5 minutes
 
   recordFailure(): void {
     this.failures++;
+    if (this.probing) {
+      // Probe failed — re-enter degraded immediately
+      this.degraded = true;
+      this.degradedSince = Date.now();
+      this.probing = false;
+      return;
+    }
     if (this.failures >= this.MAX_FAILURES) {
       this.degraded = true;
       this.degradedSince = Date.now();
@@ -80,29 +88,37 @@ export class LLMCircuitBreaker {
   recordSuccess(): void {
     this.failures = 0;
     this.degraded = false;
+    this.probing = false;
   }
 
-  isDegraded(): boolean {
-    if (!this.degraded) return false;
-    // Probe recovery after 5 minutes
+  /** Returns true if the breaker allows a call through (either healthy or probe). */
+  allowCall(): boolean {
+    if (!this.degraded) return true;
+    // Allow a single probe after the recovery interval
     if (Date.now() - this.degradedSince >= this.PROBE_AFTER_MS) {
-      this.degraded = false;
-      this.failures = 0;
+      if (!this.probing) {
+        this.probing = true;
+        return true; // allow probe
+      }
+      // Already probing — don't allow another until probe completes
       return false;
     }
-    return true;
+    return false;
   }
+
+  isDegraded(): boolean { return this.degraded && !this.probing; }
 
   reset(): void {
     this.failures = 0;
     this.degraded = false;
+    this.probing = false;
   }
 }
 
 // --- LLMCallManager ---
 
 export class LLMCallManager {
-  private breaker = new LLMCircuitBreaker();
+  private breakers = new Map<string, LLMCircuitBreaker>();
 
   constructor(
     private provider: LLMProvider,
@@ -113,12 +129,19 @@ export class LLMCallManager {
     },
   ) {}
 
+  private breaker(role: string): LLMCircuitBreaker {
+    let b = this.breakers.get(role);
+    if (!b) { b = new LLMCircuitBreaker(); this.breakers.set(role, b); }
+    return b;
+  }
+
   async call(
     role: "planner" | "observer" | "reply",
     messages: LLMMessage[],
   ): Promise<LLMResponse | { status: "degraded"; reason: string }> {
-    if (this.breaker.isDegraded()) {
-      return { status: "degraded", reason: "CB4: LLM service degraded" };
+    const br = this.breaker(role);
+    if (!br.allowCall()) {
+      return { status: "degraded", reason: `CB4: ${role} LLM service degraded` };
     }
 
     const cfg = this.models[role];
@@ -128,13 +151,16 @@ export class LLMCallManager {
         timeout: cfg.timeout,
         maxTokens: cfg.maxTokens ?? 4096,
       });
-      this.breaker.recordSuccess();
+      br.recordSuccess();
       return resp;
     } catch (e) {
-      this.breaker.recordFailure();
+      br.recordFailure();
       throw e;
     }
   }
 
-  isDegraded(): boolean { return this.breaker.isDegraded(); }
+  isDegraded(role?: string): boolean {
+    if (role) return this.breaker(role).isDegraded();
+    return [...this.breakers.values()].some(b => b.isDegraded());
+  }
 }

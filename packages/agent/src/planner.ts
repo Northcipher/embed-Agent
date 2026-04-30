@@ -43,10 +43,18 @@ const FALLBACK_PLAN: Plan = {
   failure_signals: ["kernel panic", "boot loop", "adb offline"],
 };
 
+interface PlanEmitter {
+  emit(e: Record<string, unknown>): Promise<void>;
+}
+
 function generateId(): string { return `plan-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`; }
 
 export class Planner {
-  constructor(private llm: LLMCallManager) {}
+  private eb: PlanEmitter | undefined;
+
+  constructor(private llm: LLMCallManager, eb?: PlanEmitter) {
+    this.eb = eb;
+  }
 
   async call(staticPrompt: string, dynamicContext: PlannerDynamicContext): Promise<PlanResult> {
     const messages: LLMMessage[] = [
@@ -54,18 +62,41 @@ export class Planner {
       { role: "user", content: JSON.stringify(dynamicContext, null, 2) },
     ];
 
+    let result: PlanResult;
+
     try {
-      const result = await this.llm.call("planner", messages);
-      if ("status" in result) {
+      const llmResult = await this.llm.call("planner", messages);
+      if ("status" in llmResult) {
         // CB4 degraded — use fallback
-        return { status: "planned", plan: { ...FALLBACK_PLAN, plan_id: generateId() } };
+        result = { status: "planned", plan: { ...FALLBACK_PLAN, plan_id: generateId() } };
+        this.eb?.emit({ type: "plan_generation_failed", source: "planner", summary: "CB4 degraded — used fallback plan", payload: {} });
+        return result;
       }
 
-      return this.parsePlan(result.content);
+      result = this.parsePlan(llmResult.content);
     } catch {
       // LLM failure — use fallback template
-      return { status: "planned", plan: { ...FALLBACK_PLAN, plan_id: generateId() } };
+      result = { status: "planned", plan: { ...FALLBACK_PLAN, plan_id: generateId() } };
+      this.eb?.emit({ type: "plan_generation_failed", source: "planner", summary: "LLM call failed — used fallback plan", payload: {} });
+      return result;
     }
+
+    // Emit audit event
+    if (result.status === "planned") {
+      this.eb?.emit({
+        type: "plan_generated", source: "planner",
+        summary: `Plan ${result.plan.plan_id} generated with ${result.plan.steps.length} steps`,
+        payload: { plan_id: result.plan.plan_id, step_count: result.plan.steps.length, estimated_duration_sec: result.plan.estimated_duration_sec },
+      });
+    } else {
+      this.eb?.emit({
+        type: "plan_generation_failed", source: "planner",
+        summary: `Clarification needed: ${result.missing_info.join(", ")}`,
+        payload: { missing_info: result.missing_info },
+      });
+    }
+
+    return result;
   }
 
   private parsePlan(content: string): PlanResult {
@@ -74,15 +105,26 @@ export class Planner {
       const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
       const json = jsonMatch ? jsonMatch[1]!.trim() : content.trim();
 
-      const parsed = JSON.parse(json) as Plan;
+      const parsed = JSON.parse(json) as Record<string, unknown>;
+
+      // Detect clarification_needed response from LLM
+      if (parsed.status === "clarification_needed") {
+        return {
+          status: "clarification_needed",
+          missing_info: (parsed.missing_info as string[]) ?? (parsed.missingInfo as string[]) ?? ["LLM requested clarification"],
+          suggested_next: (parsed.suggested_next as string) ?? (parsed.suggestedNext as string) ?? "provide more details",
+        };
+      }
+
+      const plan = parsed as unknown as Plan;
 
       // Validate required fields
-      if (!parsed.steps || !Array.isArray(parsed.steps) || parsed.steps.length === 0) {
+      if (!plan.steps || !Array.isArray(plan.steps) || plan.steps.length === 0) {
         return { status: "clarification_needed", missing_info: ["plan has no steps"], suggested_next: "provide more details about validation steps" };
       }
 
       // Validate each step
-      for (const s of parsed.steps) {
+      for (const s of plan.steps) {
         if (!s.id || !s.action || !s.capability || !s.timeout_sec) {
           return { status: "clarification_needed", missing_info: [`step missing required fields: ${JSON.stringify(s)}`], suggested_next: "specify id, action, capability, and timeout_sec for each step" };
         }
@@ -97,12 +139,12 @@ export class Planner {
       return {
         status: "planned",
         plan: {
-          ...parsed,
-          plan_id: parsed.plan_id ?? generateId(),
-          evidence_policy: parsed.evidence_policy ?? FALLBACK_PLAN.evidence_policy,
-          success_criteria: parsed.success_criteria ?? FALLBACK_PLAN.success_criteria,
-          failure_signals: parsed.failure_signals ?? FALLBACK_PLAN.failure_signals,
-          estimated_duration_sec: parsed.estimated_duration_sec ?? FALLBACK_PLAN.estimated_duration_sec,
+          ...plan,
+          plan_id: plan.plan_id ?? generateId(),
+          evidence_policy: plan.evidence_policy ?? FALLBACK_PLAN.evidence_policy,
+          success_criteria: plan.success_criteria ?? FALLBACK_PLAN.success_criteria,
+          failure_signals: plan.failure_signals ?? FALLBACK_PLAN.failure_signals,
+          estimated_duration_sec: plan.estimated_duration_sec ?? FALLBACK_PLAN.estimated_duration_sec,
         },
       };
     } catch {

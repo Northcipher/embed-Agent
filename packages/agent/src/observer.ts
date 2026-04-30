@@ -60,9 +60,23 @@ export class Observer {
         parsed.confidence = 0.5;
       }
 
+      let decision = parsed.decision;
+      let reason = parsed.reason ?? "no reason provided";
+
+      // CB1: auto-stop disabled — force "suggest" instead of "stop"
+      if (input.circuit_breaker_active && decision === "stop") {
+        decision = "suggest";
+        reason = `[CB1] Auto-stop disabled. Original: ${reason}`;
+      }
+      // CB3: warning escalation — upgrade to suggest with escalation note
+      if (input.warning_escalation && (decision === "continue" || decision === "collect_more")) {
+        decision = "suggest";
+        reason = `[CB3] Warning escalation. Original: ${reason}`;
+      }
+
       const result: Decision = {
-        decision: parsed.decision,
-        reason: parsed.reason ?? "no reason provided",
+        decision,
+        reason,
         confidence: parsed.confidence,
         reasoning_trace: parsed.reasoning_trace ?? "",
         evidence_refs: parsed.evidence_refs ?? [],
