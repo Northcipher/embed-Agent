@@ -3,6 +3,11 @@ interface EventEmitter {
   subscribe(types: string[], handler: (e: Record<string, unknown>) => void): () => void;
 }
 
+export interface NotifyConfig {
+  enabled: boolean;
+  on?: Partial<Record<SemanticCategory, boolean>>;
+}
+
 export interface NotifyChannel {
   send(title: string, body: string, metadata: Record<string, unknown>): Promise<void>;
 }
@@ -21,9 +26,17 @@ const CATEGORY_MAP: Record<string, { category: SemanticCategory; condition?: (e:
   result_ready: { category: "run_result" },
   target_state_changed: {
     category: "target_offline",
-    condition: (e) => (e.payload as Record<string, unknown>)?.state === "disconnected",
+    // Match both target state=offline and transport disconnected states
+    condition: (e) => {
+      const s = (e.payload as Record<string, unknown>)?.state as string;
+      return s === "offline" || s === "disconnected";
+    },
   },
-  suggestion_generated: { category: "memory_suggestion" },
+  suggestion_generated: {
+    category: "memory_suggestion",
+    // Only match memory-sourced suggestions, not Observer general suggestions
+    condition: (e) => (e.payload as Record<string, unknown>)?.source === "memory",
+  },
 };
 
 const DEFAULT_TEMPLATES: Record<string, NotifyTemplate> = {
@@ -31,7 +44,7 @@ const DEFAULT_TEMPLATES: Record<string, NotifyTemplate> = {
     title: "Run {{status}}",
     body: "Run {{run_id}}: {{summary}}\nEvidence: {{evidence_path}}\nNext: {{suggested_next}}",
     channel: "slack",
-    throttle_sec: 60,
+    throttle_sec: 300, // 5 minutes per design
   },
   target_offline: {
     title: "Target Offline",
@@ -63,12 +76,19 @@ export class NotificationFilter {
   private unsub: (() => void) | null = null;
   private sentMap = new Map<string, number>(); // key → last sent timestamp
   private offlineSince = new Map<string, number>(); // target → first offline timestamp
+  private offlineTimers = new Map<string, ReturnType<typeof setTimeout>>(); // escalation timers
+  private config: NotifyConfig;
+  private notifyOn: Partial<Record<string, boolean>>;
 
   constructor(
     private eb: EventEmitter,
     private channels: Record<string, NotifyChannel>,
     private templates: Record<string, NotifyTemplate> = DEFAULT_TEMPLATES,
-  ) {}
+    config?: NotifyConfig,
+  ) {
+    this.config = config ?? { enabled: true };
+    this.notifyOn = this.config.on ?? {};
+  }
 
   start(): void {
     this.unsub = this.eb.subscribe(
@@ -79,9 +99,14 @@ export class NotificationFilter {
 
   stop(): void {
     this.unsub?.();
+    for (const timer of this.offlineTimers.values()) clearTimeout(timer);
+    this.offlineTimers.clear();
   }
 
   private async handleEvent(event: Record<string, unknown>): Promise<void> {
+    // Config gating: globally disabled or category explicitly off
+    if (!this.config.enabled) return;
+
     const mapping = CATEGORY_MAP[event.type as string];
     if (!mapping) return;
 
@@ -96,6 +121,9 @@ export class NotificationFilter {
       }
     }
 
+    // Check if this category is enabled in config
+    if (this.notifyOn[category] === false) return;
+
     const tpl = this.templates[category];
     if (!tpl) return;
 
@@ -109,16 +137,24 @@ export class NotificationFilter {
     if (category === "target_offline" && targetId) {
       if (!this.offlineSince.has(targetId)) {
         this.offlineSince.set(targetId, Date.now());
-      } else if (Date.now() - this.offlineSince.get(targetId)! >= 30 * 60 * 1000) {
-        // Escalate to long offline
-        const longTpl = this.templates["target_offline_long"];
-        if (longTpl) {
-          await this.sendNotification(longTpl, "target_offline_long", dedupKey, event);
-        }
-        return;
+        // Set a 30-minute timer for automatic escalation — fires even without new events
+        const timer = setTimeout(async () => {
+          const longTpl = this.templates["target_offline_long"];
+          if (longTpl) {
+            const longKey = `target_offline_long-${targetId}`;
+            await this.sendNotification(longTpl, "target_offline_long", longKey, event);
+          }
+          this.offlineTimers.delete(targetId);
+        }, 30 * 60 * 1000);
+        this.offlineTimers.set(targetId, timer);
       }
     } else {
       this.offlineSince.delete(targetId ?? "");
+      // Clear escalation timer if target came back
+      if (targetId) {
+        const timer = this.offlineTimers.get(targetId);
+        if (timer) { clearTimeout(timer); this.offlineTimers.delete(targetId); }
+      }
     }
 
     await this.sendNotification(tpl, category, dedupKey, event);

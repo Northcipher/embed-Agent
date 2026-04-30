@@ -81,8 +81,9 @@ export class Views {
     const terminal = ["completed", "failed", "cancelled"].includes(run.state);
     if (!terminal) return { run_id: runId, state: run.state, result_available: false };
 
-    // Look for result_ready event — the authoritative result
-    const events = await this.eventStore.read(runId, Math.max(0, run.last_event_seq - 50), 50);
+    // Look for result_ready event — the authoritative result.
+    // Read from after the run started (seq 0) to catch result_ready wherever it lands.
+    const events = await this.eventStore.read(runId, 0, 1000);
     const resultReady = events.find(e => e.type === "result_ready");
     if (resultReady) {
       const p = resultReady.payload as Record<string, unknown>;
