@@ -5,15 +5,26 @@ import type { CommandHandler } from "@embed-agent/cli";
 type View = "dashboard" | "feed" | "result" | "evidence" | "start-run" | "help";
 
 interface TargetInfo { target_id: string; state: string; serial: string; adb: string; fastboot: string; current_run_id?: string; }
-interface EventInfo { seq: number; type: string; severity?: string; summary: string; time: string; }
+interface EventInfo { seq: number; type: string; severity?: string; summary: string; time: string; step_id?: string; }
 interface RunStatusInfo { run_id: string; state: string; current_step?: { id: string }; elapsed_sec: number; }
 interface ResultInfo { state: string; result_available: boolean; summary?: string; suggested_next?: string; key_evidence?: { summary: string; evidence_refs: string[] }[]; criteria_results?: { criterion: string; status: string; evidence_refs: string[] }[]; confidence?: number; }
-interface EvidenceInfo { available: boolean; content?: string; index?: { refs: { ref: string; kind: string; bytes?: number }[] } }
 
-const EVENTS_OF_INTEREST = new Set([
-  "run_started", "step_started", "step_completed", "step_failed",
-  "rule_matched", "decision_made", "result_ready", "llm_call",
-  "run_paused", "run_resumed", "run_completed", "run_failed", "run_cancelled",
+// Step status derived from events
+interface StepSummary {
+  id: string;
+  command?: string;
+  status: "running" | "ok" | "failed" | "skipped";
+  hasWarning: boolean;
+  hasFatal: boolean;
+  evidenceBytes?: number;
+  reason?: string;
+}
+
+// Only aggregate step-level events; hide noise (llm_call, observation, evidence_collected, target_state_changed)
+const STEP_EVENTS = new Set([
+  "step_started", "step_completed", "step_failed", "rule_matched",
+  "run_started", "run_completed", "run_failed", "run_cancelled",
+  "run_paused", "run_resumed", "result_ready", "decision_made",
 ]);
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -28,6 +39,82 @@ const STATE_COLORS: Record<string, string> = {
 function severityColor(s?: string) { return SEVERITY_COLORS[s ?? "info"] ?? "white"; }
 function stateColor(s?: string) { return STATE_COLORS[s ?? ""] ?? "white"; }
 
+/** Derive step summaries from raw events. */
+function buildStepSummaries(events: EventInfo[]): StepSummary[] {
+  const steps = new Map<string, StepSummary>();
+  // Track evidence size from evidence_collected events
+  const evidenceSizes = new Map<string, number>();
+
+  for (const e of events) {
+    if (e.type === "evidence_collected") {
+      // Parse bytes from summary like "Evidence step-check-ssh:full written (129 bytes)"
+      const m = e.summary.match(/\((\d+) bytes\)/);
+      if (m && e.step_id) evidenceSizes.set(e.step_id, parseInt(m[1]!, 10));
+    }
+  }
+
+  for (const e of events) {
+    if (e.type === "step_started") {
+      const sid = e.step_id ?? e.summary.replace("Step ", "").split(" ")[0] ?? "?";
+      // Extract command from summary: "Step check-ssh started" → "check-ssh"
+      const id = sid;
+      const step: StepSummary = { id, status: "running", hasWarning: false, hasFatal: false };
+      const eb = evidenceSizes.get(sid);
+      if (eb != null) step.evidenceBytes = eb;
+      steps.set(id, step);
+    }
+    if (e.type === "step_completed") {
+      const sid = e.step_id ?? "?";
+      const s = steps.get(sid);
+      if (s) {
+        s.status = "ok";
+        const ebs = evidenceSizes.get(sid);
+        if (ebs != null) s.evidenceBytes = ebs;
+      }
+    }
+    if (e.type === "step_failed") {
+      const sid = e.step_id ?? "?";
+      const s = steps.get(sid);
+      if (s) { s.status = "failed"; s.reason = e.summary; }
+    }
+    if (e.type === "rule_matched" && e.step_id) {
+      const s = steps.get(e.step_id);
+      if (s) {
+        if (e.severity === "fatal") s.hasFatal = true;
+        if (e.severity === "warning") s.hasWarning = true;
+      }
+    }
+  }
+
+  // Mark steps after a failed step as skipped
+  let foundFailed = false;
+  const result: StepSummary[] = [];
+  for (const [, s] of steps) {
+    if (foundFailed && s.status === "running") s.status = "skipped";
+    if (s.status === "failed") foundFailed = true;
+    result.push(s);
+  }
+  return result;
+}
+
+function stepIcon(s: StepSummary): string {
+  if (s.hasFatal) return "🔴";
+  if (s.hasWarning && s.status === "ok") return "⚠";
+  if (s.status === "ok") return "✓";
+  if (s.status === "failed") return "✗";
+  if (s.status === "skipped") return "·";
+  return "◌"; // running
+}
+
+function stepColor(s: StepSummary): string {
+  if (s.hasFatal) return "red";
+  if (s.hasWarning) return "yellow";
+  if (s.status === "ok") return "green";
+  if (s.status === "failed") return "red";
+  if (s.status === "skipped") return "grey";
+  return "white"; // running
+}
+
 function App({ handler }: { handler: CommandHandler }) {
   const [view, setView] = useState<View>("dashboard");
   const [targets, setTargets] = useState<TargetInfo[]>([]);
@@ -39,7 +126,6 @@ function App({ handler }: { handler: CommandHandler }) {
   const afterSeqRef = useRef(0);
   const [runStatus, setRunStatus] = useState<RunStatusInfo | null>(null);
   const [feedMsg, setFeedMsg] = useState("");
-  const [selectedEventIdx, setSelectedEventIdx] = useState(-1);
 
   // Evidence
   const [evidenceTitle, setEvidenceTitle] = useState("");
@@ -64,10 +150,10 @@ function App({ handler }: { handler: CommandHandler }) {
       }
       if (view === "feed" && activeRunId) {
         try {
-          const page = await handler.events(activeRunId, afterSeqRef.current, 100);
+          const page = await handler.events(activeRunId, afterSeqRef.current, 200);
           if (active && page.events.length > 0) {
-            const filtered = page.events.filter(e => EVENTS_OF_INTEREST.has(e.type));
-            setEvents(prev => [...prev, ...filtered].slice(-500));
+            // Collect ALL events (need evidence_collected for byte counts, step events for aggregation)
+            setEvents(prev => [...prev, ...page.events].slice(-1000));
             afterSeqRef.current = page.next_after_seq;
           }
           const s = await handler.status(activeRunId);
@@ -82,7 +168,6 @@ function App({ handler }: { handler: CommandHandler }) {
 
   // --- Input ---
   useInput((char, key) => {
-    // Form mode: text input
     if (view === "start-run") {
       if (key.escape) { setView("dashboard"); clearForm(); return; }
       if (key.tab) { setFormField(((formField + 1) % 3) as 0|1|2); return; }
@@ -100,49 +185,27 @@ function App({ handler }: { handler: CommandHandler }) {
       }
       return;
     }
-
-    // Global
     if (char === "q") process.exit(0);
     if (char === "h") { setView("help"); return; }
     if (key.escape) { setView("dashboard"); return; }
-
-    // Dashboard
     if (view === "dashboard") {
       if (key.upArrow) setSelectedIdx(i => Math.max(0, i - 1));
       if (key.downArrow) setSelectedIdx(i => Math.min(targets.length - 1, i + 1));
-      if (key.return && targets[selectedIdx]?.current_run_id) {
-        enterFeed(targets[selectedIdx]!.current_run_id!);
-      }
-      if (char === "s") {
-        setFormTarget(targets[selectedIdx]?.target_id ?? "");
-        setView("start-run");
-      }
+      if (key.return && targets[selectedIdx]?.current_run_id) enterFeed(targets[selectedIdx]!.current_run_id!);
+      if (char === "s") { setFormTarget(targets[selectedIdx]?.target_id ?? ""); setView("start-run"); }
       return;
     }
-
-    // Feed
     if (view === "feed") {
-      if (char === "p") {
-        handler.pause(activeRunId, "manual").then(() => setFeedMsg("Paused"), (e) => setFeedMsg(`Pause failed: ${(e as Error).message}`));
-      }
-      if (char === "c") {
-        handler.cancel(activeRunId, "manual").then(() => setFeedMsg("Cancelled"), (e) => setFeedMsg(`Cancel failed: ${(e as Error).message}`));
-      }
-      if (char === "x") {
-        handler.resume(activeRunId).then(() => setFeedMsg("Resumed"), (e) => setFeedMsg(`Resume failed: ${(e as Error).message}`));
-      }
+      if (char === "p") handler.pause(activeRunId, "manual").then(() => setFeedMsg("Paused"), (e) => setFeedMsg(`Pause failed: ${(e as Error).message}`));
+      if (char === "c") handler.cancel(activeRunId, "manual").then(() => setFeedMsg("Cancelled"), (e) => setFeedMsg(`Cancel failed: ${(e as Error).message}`));
+      if (char === "x") handler.resume(activeRunId).then(() => setFeedMsg("Resumed"), (e) => setFeedMsg(`Resume failed: ${(e as Error).message}`));
       if (char === "r") showResult();
       if (char === "e") peekEvidence();
-      if (key.upArrow) setSelectedEventIdx(i => Math.max(0, i - 1));
-      if (key.downArrow) setSelectedEventIdx(i => Math.min(events.length - 1, i + 1));
       return;
     }
   });
 
-  async function enterFeed(runId: string) {
-    setView("feed"); setActiveRunId(runId); setEvents([]); afterSeqRef.current = 0;
-    setSelectedEventIdx(-1); setRunStatus(null); setFeedMsg("");
-  }
+  async function enterFeed(runId: string) { setView("feed"); setActiveRunId(runId); setEvents([]); afterSeqRef.current = 0; setRunStatus(null); setFeedMsg(""); }
   function clearForm() { setFormTarget(""); setFormPath(""); setFormExpected(""); setFormField(0); setFormMsg(""); }
   async function submitRun() {
     if (!formTarget || !formPath) { setFormMsg("Target and path required"); return; }
@@ -159,16 +222,14 @@ function App({ handler }: { handler: CommandHandler }) {
     setResult(r as ResultInfo); setView("result");
   }
   async function peekEvidence() {
-    const ev = events[selectedEventIdx];
-    if (!ev) { setEvidenceTitle("(no event selected)"); setEvidenceText("Select an event with ↑↓ first"); setView("evidence"); return; }
     const idx = await handler.evidence(activeRunId);
-    setEvidenceTitle(`Evidence for: [${ev.type}] ${ev.summary}`);
     if (idx.available && idx.index?.refs?.length) {
-      const firstRef = idx.index.refs[0]!.ref;
-      const content = await handler.evidence(activeRunId, firstRef);
+      const ref = idx.index.refs[0]!.ref;
+      const content = await handler.evidence(activeRunId, ref);
+      setEvidenceTitle(`Evidence: ${ref}`);
       setEvidenceText(content.content ?? "(empty)");
     } else {
-      setEvidenceText("No evidence available for this run.");
+      setEvidenceTitle("No evidence"); setEvidenceText("No evidence available for this run.");
     }
     setView("evidence");
   }
@@ -225,40 +286,66 @@ function App({ handler }: { handler: CommandHandler }) {
 
   if (view === "help") {
     return React.createElement(Box, { flexDirection: "column", padding: 1 },
-      React.createElement(Text, { bold: true, color: "cyan" }, "Keyboard Shortcuts"),
-      React.createElement(Text, {}, "  ↑↓      — Navigate  /  enter — Select"),
-      React.createElement(Text, {}, "  s       — Start run"),
-      React.createElement(Text, {}, "  e       — Evidence peek (in feed)"),
-      React.createElement(Text, {}, "  p       — Pause run / c — Cancel"),
-      React.createElement(Text, {}, "  r       — Show result"),
-      React.createElement(Text, {}, "  h       — Help  /  esc — Back"),
-      React.createElement(Text, {}, "  q       — Quit"),
+      React.createElement(Text, { bold: true, color: "cyan" }, "Embed Agent TUI"),
+      React.createElement(Text, {}, "  ↑↓     — Navigate"),
+      React.createElement(Text, {}, "  enter  — View run / s — Start run"),
+      React.createElement(Text, {}, "  p      — Pause  /  x — Resume  /  c — Cancel"),
+      React.createElement(Text, {}, "  r      — Result  /  e — Evidence"),
+      React.createElement(Text, {}, "  esc    — Back  /  q — Quit"),
     );
   }
 
+  // ============================================================
+  // FEED — step-level summary with colors
+  // ============================================================
   if (view === "feed") {
-    const recent = events.slice(-50);
-    const hasTerminal = runStatus && ["completed", "failed", "cancelled"].includes(runStatus.state);
+    const steps = buildStepSummaries(events);
+    const terminal = ["completed", "failed", "cancelled"].includes(runStatus?.state ?? "");
+    const passedCount = steps.filter(s => s.status === "ok").length;
+    const bar = steps.map(s => {
+      if (s.hasFatal) return "▇";
+      if (s.status === "ok") return "▇";
+      if (s.status === "failed") return "▇";
+      if (s.status === "running") return "▇";
+      return "·";
+    }).join("");
+
     return React.createElement(Box, { flexDirection: "column", padding: 1 },
+      // Header
       React.createElement(Text, { bold: true, color: "cyan" }, `Run ${activeRunId}`),
       React.createElement(Text, { color: stateColor(runStatus?.state) },
         `${runStatus?.state ?? "?"}  ${runStatus?.elapsed_sec ?? 0}s${runStatus?.current_step ? `  step=${runStatus.current_step.id}` : ""}`),
-      hasTerminal && React.createElement(Text, { color: "yellow", bold: true }, "Run finished. Press r for result."),
+      React.createElement(Box, { marginTop: 1 }),
+
+      // Step summary — the main view
+      ...steps.map(s => React.createElement(Text, { key: s.id, color: stepColor(s) },
+        `${stepIcon(s)} ${s.id.slice(0, 28).padEnd(28)} ${(s.command ?? "").slice(0, 24).padEnd(24)} ${s.status === "failed" ? (s.reason ?? "").slice(0, 40) : s.evidenceBytes ? `${s.evidenceBytes}B evidence` : ""}`,
+      )),
+      steps.length === 0 && React.createElement(Text, { dimColor: true }, "Waiting for steps..."),
+
+      // Progress bar
+      steps.length > 0 && React.createElement(Box, { marginTop: 1, flexDirection: "row" },
+        React.createElement(Text, { color: terminal ? stateColor(runStatus?.state) : "white" },
+          `${bar}  ${passedCount}/${steps.length} passed`),
+      ),
+
+      // Transient events (only rule_matched, decision_made, run_paused/resumed)
+      React.createElement(Box, { marginTop: 1 }),
+      ...events.filter(e => ["rule_matched", "decision_made", "run_paused", "run_resumed", "result_ready"].includes(e.type)).slice(-3).map(e =>
+        React.createElement(Text, { key: e.seq, color: severityColor(e.severity), dimColor: e.type === "result_ready" },
+          `  [${e.type}] ${e.summary.slice(0, 80)}`),
+      ),
+
+      terminal && React.createElement(Text, { color: stateColor(runStatus?.state), bold: true }, "Run finished. Press r for result."),
       feedMsg && React.createElement(Text, { color: "green" }, feedMsg),
       React.createElement(Box, { marginTop: 1 }),
-      ...recent.map((e, i) => {
-        const isSelected = i === (selectedEventIdx >= 0 ? selectedEventIdx - (events.length - recent.length) : -1);
-        const prefix = isSelected ? "▶" : " ";
-        return React.createElement(Text, { key: e.seq, color: severityColor(e.severity) },
-          `${prefix} seq=${e.seq}  [${e.type}] ${e.summary.slice(0, 80)}`);
-      }),
-      recent.length === 0 && React.createElement(Text, { dimColor: true }, "Waiting for events..."),
-      React.createElement(Box, { marginTop: 1 }),
-      React.createElement(Text, { dimColor: true }, "↑↓:select  e:evidence  p:pause  x:resume  c:cancel  r:result  esc:back"),
+      React.createElement(Text, { dimColor: true }, "e:evidence  p:pause  x:resume  c:cancel  r:result  esc:back"),
     );
   }
 
-  // Dashboard
+  // ============================================================
+  // DASHBOARD
+  // ============================================================
   const busyCount = targets.filter(t => !!t.current_run_id).length;
   return React.createElement(Box, { flexDirection: "column", padding: 1 },
     React.createElement(Text, { bold: true, color: "cyan" }, `Embed Agent  —  ${targets.length} targets, ${busyCount} active`),
