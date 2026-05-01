@@ -99,8 +99,13 @@ export class Ssh2Connection implements Connection {
   // --- exec ---
 
   async exec(cmd: string, timeout: number): Promise<ExecResult> {
+    // Auto-reconnect on transient drop (network idle timeout, server restart)
     if (!this.client || this._state !== "connected") {
-      throw new Error("SSH not connected");
+      if (this._state === "disconnected" || this._state === "error") {
+        try { await this.connect(); } catch { throw new Error("SSH not connected"); }
+      } else {
+        throw new Error("SSH not connected");
+      }
     }
     const policy = this.config.commandPolicy ?? DEFAULT_SSH_COMMAND_POLICY;
     if (cmd.length > policy.max_command_length) {
@@ -205,6 +210,7 @@ export class Ssh2Connection implements Connection {
       keepaliveCountMax: 3,
     };
     if (this.config.username) cfg.username = this.config.username;
+    if (this.config.password) cfg.password = this.config.password;
 
     // Private key: prefer keyPath, then inline key
     if (this.config.privateKeyPath) {

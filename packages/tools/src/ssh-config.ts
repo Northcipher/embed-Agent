@@ -41,6 +41,8 @@ export interface SshConnectionConfig {
   host: string;
   port: number;
   username?: string;
+  /** Password for password-based authentication. */
+  password?: string;
   /** Private key as string or path to key file. */
   privateKey?: string;
   /** Path to private key file. Takes precedence over privateKey inline string. */

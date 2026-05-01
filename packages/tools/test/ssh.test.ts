@@ -49,9 +49,17 @@ describe("Ssh2Connection", () => {
     await expect(conn.exec("rm -rf /", 5)).rejects.toThrow("blocked by policy");
   });
 
-  it("exec throws when not connected", async () => {
-    const { conn } = createFakeConnection();
-    await expect(conn.exec("uname -a", 5)).rejects.toThrow("not connected");
+  it("auto-reconnects and executes when connection dropped", async () => {
+    const { conn, fake } = createFakeConnection();
+    fake.mockExec("uname", { exitCode: 0, stdout: "reconnected", stderr: "" });
+    await conn.connect();
+    // Simulate unexpected disconnect
+    fake.simulateClose();
+    expect(conn.state()).toBe("disconnected");
+    // exec should auto-reconnect and succeed
+    const r = await conn.exec("uname -a", 5);
+    expect(r.stdout).toBe("reconnected");
+    expect(conn.state()).toBe("connected");
   });
 
   it("connect rejects on client error", async () => {
