@@ -131,6 +131,10 @@ function App({ handler }: { handler: CommandHandler }) {
   const [evidenceTitle, setEvidenceTitle] = useState("");
   const [evidenceText, setEvidenceText] = useState("");
 
+  // Live log — tail of current stream step's evidence
+  const [liveLog, setLiveLog] = useState<string[]>([]);
+  const [liveLogRef, setLiveLogRef] = useState("");
+
   // Result
   const [result, setResult] = useState<ResultInfo | null>(null);
 
@@ -157,14 +161,30 @@ function App({ handler }: { handler: CommandHandler }) {
             afterSeqRef.current = page.next_after_seq;
           }
           const s = await handler.status(activeRunId);
-          if (active && s) setRunStatus(s);
+          if (active && s) {
+            setRunStatus(s);
+            // If current step is a stream, tail its evidence for live log
+            if (s.current_step?.id) {
+              const ref = `step-${s.current_step.id}:full`;
+              if (ref !== liveLogRef) { setLiveLog([]); setLiveLogRef(ref); }
+              try {
+                const ev = await handler.evidence(activeRunId, ref);
+                if (ev.available && ev.content) {
+                  const lines = ev.content.split("\n").filter(Boolean);
+                  setLiveLog(lines.slice(-15)); // last 15 lines
+                }
+              } catch { /* evidence not ready yet */ }
+            } else {
+              setLiveLog([]); setLiveLogRef("");
+            }
+          }
         } catch { /* run gone */ }
       }
     };
     poll();
     const timer = setInterval(poll, view === "feed" ? 1000 : 5000);
     return () => { active = false; clearInterval(timer); };
-  }, [view, activeRunId]);
+  }, [view, activeRunId, liveLogRef]);
 
   // --- Input ---
   useInput((char, key) => {
@@ -205,7 +225,7 @@ function App({ handler }: { handler: CommandHandler }) {
     }
   });
 
-  async function enterFeed(runId: string) { setView("feed"); setActiveRunId(runId); setEvents([]); afterSeqRef.current = 0; setRunStatus(null); setFeedMsg(""); }
+  async function enterFeed(runId: string) { setView("feed"); setActiveRunId(runId); setEvents([]); afterSeqRef.current = 0; setRunStatus(null); setFeedMsg(""); setLiveLog([]); setLiveLogRef(""); }
   function clearForm() { setFormTarget(""); setFormPath(""); setFormExpected(""); setFormField(0); setFormMsg(""); }
   async function submitRun() {
     if (!formTarget || !formPath) { setFormMsg("Target and path required"); return; }
@@ -327,6 +347,20 @@ function App({ handler }: { handler: CommandHandler }) {
       steps.length > 0 && React.createElement(Box, { marginTop: 1, flexDirection: "row" },
         React.createElement(Text, { color: terminal ? stateColor(runStatus?.state) : "white" },
           `${bar}  ${passedCount}/${steps.length} passed`),
+      ),
+
+      // Live log: tail of current stream step's evidence
+      liveLog.length > 0 && React.createElement(Box, { flexDirection: "column", marginTop: 1 },
+        React.createElement(Text, { dimColor: true, bold: true }, `── log tail (${liveLog.length} lines) ──`),
+        ...liveLog.map((line, i) => {
+          const isWarning = /warn|error|fail|panic|oom|fatal/i.test(line);
+          const isFatal = /panic|fatal|kernel bug/i.test(line);
+          return React.createElement(Text, {
+            key: i,
+            color: isFatal ? "red" : isWarning ? "yellow" : "white",
+            dimColor: !isWarning,
+          }, line.slice(0, 120));
+        }),
       ),
 
       // Transient events (only rule_matched, decision_made, run_paused/resumed)
