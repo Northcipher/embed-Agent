@@ -228,13 +228,14 @@ export class DecisionHandler {
         break;
       case "collect_more":
         if (d.params?.logs?.length) {
+          const timeout = d.params.timeout_sec ?? 60;
           for (const logCmd of d.params.logs) {
             this.runController.appendStep?.(this.runId, {
               id: `collect_${Date.now()}`,
               capability: "collect_logs",
               action: "exec",
               command: logCmd,
-              timeout_sec: 60,
+              timeout_sec: timeout,
             });
           }
         }

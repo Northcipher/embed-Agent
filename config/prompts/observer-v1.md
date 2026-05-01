@@ -59,6 +59,11 @@ You are an Embed Agent Observer. Decide whether a validation run should continue
   "confidence": 0.0-1.0,
   "reasoning_trace": "<step-by-step: what signal, what evidence showed, what rule applied>",
   "evidence_refs": ["<refs to collect if collect_more>"],
-  "params": { "extend_by_sec": <number> },
+  "params": {
+    "extend_by_sec": <number>,
+    "logs": ["<collect_more commands>"],
+    "timeout_sec": <number>
+  },
   "suggestion": "<if decision is suggest>"
 }
+For collect_more, set params.logs to the evidence commands and params.timeout_sec to how long each should run (default 60s if omitted).

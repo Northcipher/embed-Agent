@@ -21,6 +21,7 @@ export interface Decision {
   params?: {
     extra_wait_sec?: number;
     logs?: string[];
+    timeout_sec?: number;
     observe_interval?: number;
     observe_at?: number;
   };
