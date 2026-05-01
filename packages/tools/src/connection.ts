@@ -11,6 +11,6 @@ export interface Connection {
   onDisconnect?: () => void;
   exec?(cmd: string, timeout: number): Promise<ExecResult>;
   stream?(timeout: number): AsyncIterable<string>;
-  push?(src: string, dst: string): Promise<void>;
+  push?(src: string, dst: string, timeoutSec?: number): Promise<void>;
   flash?(image: string, partition: string): Promise<void>;
 }

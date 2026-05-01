@@ -95,9 +95,9 @@ export class AdbConnection implements Connection {
 
   // --- push ---
 
-  async push(src: string, dst: string): Promise<void> {
+  async push(src: string, dst: string, timeoutSec = 120): Promise<void> {
     try {
-      await this.client.run(["-s", this.deviceId, "push", src, dst], 60000);
+      await this.client.run(["-s", this.deviceId, "push", src, dst], timeoutSec * 1000);
     } catch (e) {
       if (e instanceof AdbError) throw e;
       throw new Error(`ADB push failed for ${this.deviceId}: ${src} -> ${dst}: ${(e as Error).message}`);
@@ -112,7 +112,7 @@ export class AdbConnection implements Connection {
 
     // First: explicit wait-for-device
     try {
-      await this.client.run(["-s", this.deviceId, "wait-for-device"], Math.min(timeoutSec * 1000, 30000));
+      await this.client.run(["-s", this.deviceId, "wait-for-device"], Math.min(timeoutSec * 1000, 120000));
     } catch {
       // wait-for-device may fail quickly; fall through to polling
     }

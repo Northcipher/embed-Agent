@@ -236,7 +236,7 @@ export class StepExecutor {
           if (!conn.push) return { success: false, error: "push not supported", failureType: "unsupported" };
           const [src, dst] = (step.command ?? ":").split(":");
           if (!src || !dst) return { success: false, error: "push requires src:dst", failureType: "invalid_args" };
-          await conn.push(src, dst);
+          await conn.push(src, dst, timeout);
           return { success: true };
         }
 
