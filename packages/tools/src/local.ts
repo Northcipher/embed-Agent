@@ -13,7 +13,12 @@ export interface SecurityPolicy {
 
 const DEFAULT_POLICY: SecurityPolicy = {
   allowed_commands: [],
-  blocked_push_paths: ["/etc", "/boot", "/System", "C:\\Windows"],
+  // Both Unix and Windows forms — path.normalize on Windows converts / to \
+  blocked_push_paths: [
+    "/etc", "/boot", "/System",
+    "\\etc", "\\boot", "\\Windows",
+    "C:\\Windows",
+  ],
 };
 
 export class LocalConnection implements Connection {

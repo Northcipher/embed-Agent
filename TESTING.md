@@ -272,6 +272,7 @@ Everything. All device connections have injectable fakes:
 3. **`target_busy` on second run**: previous run still holding the lock. Wait 5s and retry.
 4. **SSE stream hangs**: the `connected` event is sent immediately. If you get 0 events, increase `after_seq` poll interval or check run hasn't started yet.
 5. **TUI shows "No targets"**: `targets.yml` not found or empty. Add at least one target.
+6. **MiMo-V2.5 / reasoning models return empty content**: models that put output in `reasoning_content` instead of `content` are not compatible with the standard OpenAI-compatible provider. Use models that return text in `content` (e.g. `gpt-4.1`, `claude-sonnet-4-6`, `deepseek-v4`).
 
 ## Running with a Real Device
 

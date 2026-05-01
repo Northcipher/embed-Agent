@@ -99,7 +99,7 @@ export const SystemConfigSchema = z.object({
       run_result_sec: z.number(),
       target_offline_sec: z.number(),
       memory_suggestion_sec: z.number(),
-    }),
+    }).optional(),
   }),
   security: z.object({
     allowed_shell_commands: z.string().array(),
