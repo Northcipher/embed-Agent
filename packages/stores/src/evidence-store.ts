@@ -137,6 +137,30 @@ export class EvidenceStore {
     }
   }
 
+  /** Read evidence content with optional size cap. Returns tail of file when capped. */
+  async readContent(runId: string, ref: string, maxBytes?: number): Promise<string | null> {
+    validateId(runId, "runId");
+    validateRef(ref);
+    const filePath = path.join(this.runDir(runId), this.refToFile(ref));
+    try {
+      const stat = await fs.stat(filePath);
+      if (maxBytes && stat.size > maxBytes) {
+        // Read tail of large files — most recent output is most relevant
+        const fd = await fs.open(filePath, "r");
+        const buf = Buffer.alloc(maxBytes);
+        await fd.read(buf, 0, maxBytes, stat.size - maxBytes);
+        await fd.close();
+        const text = buf.toString("utf-8");
+        // Skip partial first line (likely truncated mid-line)
+        const newlineIdx = text.indexOf("\n");
+        return newlineIdx >= 0 ? `[...truncated ${stat.size - maxBytes} bytes...]\n${text.slice(newlineIdx + 1)}` : text;
+      }
+      return await fs.readFile(filePath, "utf-8");
+    } catch {
+      return null;
+    }
+  }
+
   // --- Index ---
 
   async getIndex(runId: string): Promise<EvidenceIndex> {

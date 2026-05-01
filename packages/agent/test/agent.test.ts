@@ -93,16 +93,28 @@ describe("Planner", () => {
     });
     const planner = new Planner(mgr);
 
-    const result = await planner.call(staticPrompt, {
-      target_id: "t1",
-      task: "test",
-      expected: "device boots",
-      target_hints: {},
-      artifact: { path: "/tmp/test.img", type: "firmware" },
-      recent_episodes: [],
-      relevant_facts: [],
-      pitfalls: [],
-    });
+    const formattedContext = [
+      "## Goal",
+      "**Task**: test",
+      "**Expected**: device boots",
+      "",
+      "## Target",
+      "**Target ID**: t1",
+      "**Artifact**: /tmp/test.img (type: firmware)",
+      "",
+      "## Safety Constraints",
+      "- **allow_flash**: true",
+      "- **allow_shell_exec**: true",
+      "",
+      "## History",
+      "### Recent Episodes",
+      "",
+      "### Pitfalls to Avoid",
+      "",
+      "### Known Facts",
+    ].join("\n");
+
+    const result = await planner.call(staticPrompt, formattedContext);
 
     expect(result.status).toBe("planned");
     if (result.status === "planned") {
@@ -121,16 +133,17 @@ describe("Planner", () => {
     });
     const planner = new Planner(mgr);
 
-    const result = await planner.call(staticPrompt, {
-      target_id: "t1",
-      task: "test",
-      expected: "device boots",
-      target_hints: {},
-      artifact: { path: "/tmp/test.img", type: "firmware" },
-      recent_episodes: [],
-      relevant_facts: [],
-      pitfalls: [],
-    });
+    const formattedContext = [
+      "## Goal",
+      "**Task**: test",
+      "**Expected**: device boots",
+      "",
+      "## Target",
+      "**Target ID**: t1",
+      "**Artifact**: /tmp/test.img (type: firmware)",
+    ].join("\n");
+
+    const result = await planner.call(staticPrompt, formattedContext);
 
     // Should fallback (either clarification_needed or planned with fallback)
     expect(["planned", "clarification_needed"]).toContain(result.status);
@@ -159,12 +172,36 @@ describe("Observer", () => {
     });
     const observer = new Observer(mgr);
 
-    const decision = await observer.decide(staticPrompt, {
-      run: { state: "running", elapsed_sec: 60 },
-      triggering_event: { type: "checkpoint", severity: "info", summary: "periodic" },
-      memory: { working_memory: [], known_issues: [] },
-      constraints: { remaining_sec: 500, allowed_capabilities: ["shell_exec"] },
-    });
+    const formattedContext = [
+      "## Run State",
+      "**State**: running",
+      "**Elapsed**: 60s",
+      "",
+      "## Triggering Event",
+      "**Type**: checkpoint",
+      "**Severity**: info",
+      "**Summary**: periodic",
+      "",
+      "## Recent Signals",
+      "No warning or fatal signals in recent window.",
+      "",
+      "## Evidence Windows",
+      "No evidence windows captured for this event.",
+      "",
+      "## Checkpoint History",
+      "No checkpoint data available for this run.",
+      "",
+      "## Memory",
+      "No working memory or known issues.",
+      "",
+      "## Constraints",
+      "**Remaining Time**: 500s",
+      "**Allowed Capabilities**: shell_exec",
+      "**Circuit Breaker Active**: no",
+      "**Warning Escalation**: no",
+    ].join("\n");
+
+    const decision = await observer.decide(staticPrompt, formattedContext, undefined, "periodic", "checkpoint", "info");
 
     expect(decision.decision).toBe("continue");
     expect(decision.confidence).toBe(0.9);
@@ -181,12 +218,36 @@ describe("Observer", () => {
     });
     const observer = new Observer(mgr);
 
-    const decision = await observer.decide(staticPrompt, {
-      run: { state: "running", elapsed_sec: 60 },
-      triggering_event: { type: "rule_matched", severity: "fatal", summary: "kernel panic" },
-      memory: { working_memory: [], known_issues: [] },
-      constraints: { remaining_sec: 500, allowed_capabilities: ["shell_exec"] },
-    });
+    const formattedContext = [
+      "## Run State",
+      "**State**: running",
+      "**Elapsed**: 60s",
+      "",
+      "## Triggering Event",
+      "**Type**: rule_matched",
+      "**Severity**: fatal",
+      "**Summary**: kernel panic",
+      "",
+      "## Recent Signals",
+      "- [fatal] rule_matched: kernel panic",
+      "",
+      "## Evidence Windows",
+      "No evidence windows captured for this event.",
+      "",
+      "## Checkpoint History",
+      "No checkpoint data available for this run.",
+      "",
+      "## Memory",
+      "No working memory or known issues.",
+      "",
+      "## Constraints",
+      "**Remaining Time**: 500s",
+      "**Allowed Capabilities**: shell_exec",
+      "**Circuit Breaker Active**: no",
+      "**Warning Escalation**: no",
+    ].join("\n");
+
+    const decision = await observer.decide(staticPrompt, formattedContext, undefined, "kernel panic", "rule_matched", "fatal");
 
     expect(decision.decision).toBe("stop");
     expect(decision.confidence).toBe(0.3); // fallback confidence

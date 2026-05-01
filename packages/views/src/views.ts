@@ -75,6 +75,7 @@ export class Views {
     run_id: string; state: string; result_available: boolean;
     summary?: string; suggested_next?: string; evidence_path?: string;
     key_evidence?: { summary: string; evidence_refs: string[] }[];
+    criteria_results?: { criterion: string; status: string; evidence_refs: string[] }[];
   }> {
     const run = await this.runStore.get(runId);
     if (!run) return { run_id: runId, state: "unknown", result_available: false };
@@ -94,11 +95,14 @@ export class Views {
         run_id: string; state: string; result_available: boolean;
         summary?: string; suggested_next?: string; evidence_path?: string;
         key_evidence?: { summary: string; evidence_refs: string[] }[];
+        criteria_results?: { criterion: string; status: string; evidence_refs: string[] }[];
       };
       if (p.suggested_next) result.suggested_next = p.suggested_next as string;
       if (p.evidence_path) result.evidence_path = p.evidence_path as string;
       const ke = p.key_evidence as { summary: string; evidence_refs: string[] }[] | undefined;
       if (ke && ke.length > 0) result.key_evidence = ke;
+      const cr = p.criteria_results as { criterion: string; status: string; evidence_refs: string[] }[] | undefined;
+      if (cr && cr.length > 0) result.criteria_results = cr;
       return result;
     }
 
@@ -112,6 +116,7 @@ export class Views {
       run_id: string; state: string; result_available: boolean;
       summary?: string; suggested_next?: string; evidence_path?: string;
       key_evidence?: { summary: string; evidence_refs: string[] }[];
+      criteria_results?: { criterion: string; status: string; evidence_refs: string[] }[];
     };
     return result;
   }

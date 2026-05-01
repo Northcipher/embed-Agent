@@ -120,7 +120,9 @@ const handlers = {
       data: {
         run_id: runId, verdict, state, confidence: verdict === "pass" ? 0.9 : 0.5,
         summary: r.summary ?? "", suggested_next: r.suggested_next ?? "check evidence", result_available: r.result_available,
-        checks: (r.key_evidence ?? []).map((ke: { summary: string; evidence_refs: string[] }, i: number) => ({ id: `check-${i}`, title: ke.summary, status: verdict === "pass" ? "pass" as const : "fail" as const, reason: ke.summary, evidence_refs: ke.evidence_refs })),
+        checks: (r.criteria_results as { criterion: string; status: string; evidence_refs: string[] }[] | undefined)?.length
+          ? (r.criteria_results as { criterion: string; status: string; evidence_refs: string[] }[]).map((cr, i) => ({ id: `check-${i}`, title: cr.criterion, status: cr.status as "pass" | "fail" | "unknown", reason: cr.status === "pass" ? "Criterion met" : cr.status === "fail" ? "Criterion not met" : "Insufficient evidence", evidence_refs: cr.evidence_refs }))
+          : (r.key_evidence ?? []).map((ke: { summary: string; evidence_refs: string[] }, i: number) => ({ id: `check-${i}`, title: ke.summary, status: verdict === "pass" ? "pass" as const : "fail" as const, reason: ke.summary, evidence_refs: ke.evidence_refs })),
         key_evidence: r.key_evidence ?? [],
       },
     };

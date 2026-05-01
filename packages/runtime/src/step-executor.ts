@@ -177,6 +177,14 @@ export class StepExecutor {
     conn: Connection,
   ): Promise<{ success: boolean; error?: string; failureType?: string }> {
     const pipe = this.pipeFactory?.(step.id) ?? null;
+    if (!pipe) {
+      console.warn(`[StepExecutor] No pipeFactory configured — step ${step.id} runs blind (no output capture, no rule detection, no evidence collection)`);
+      this.eb.emit({
+        type: "observation", run_id: this.runId, source: "step_executor", severity: "warning",
+        summary: `Step ${step.id} executing without output pipe — diagnostics unavailable`,
+        payload: { step_id: step.id },
+      });
+    }
     if (pipe) pipe.setConnection?.(conn);
     const timeout = step.timeout_sec + this._timeoutExtension;
 

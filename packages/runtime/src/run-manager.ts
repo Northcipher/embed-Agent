@@ -30,7 +30,7 @@ interface PlanCallResult {
 }
 
 interface PlannerCaller {
-  call(staticPrompt: string, dynamicContext: Record<string, unknown>, runId?: string): Promise<PlanCallResult>;
+  call(staticPrompt: string, formattedContext: string, runId?: string): Promise<PlanCallResult>;
 }
 
 interface AgentReply {
@@ -40,6 +40,7 @@ interface AgentReply {
   suggested_next: string;
   evidence_path: string;
   key_evidence: { summary: string; evidence_refs: string[] }[];
+  criteria_results?: { criterion: string; status: "pass" | "fail" | "unknown"; evidence_refs: string[] }[];
 }
 
 interface ReplyCaller {
@@ -66,6 +67,10 @@ export interface ValidateRequest {
   target: string;
   expected: string;
   concerns?: string[];
+  /** User-specified success criteria — the ground truth for verdict evaluation. */
+  success_criteria?: string[];
+  /** User-specified failure criteria — signals that mean automatic failure. */
+  failure_criteria?: string[];
   test_hint?: { kind: string; command: string; timeout_sec?: number; expected_exit_code?: number };
   constraints?: {
     max_duration_sec?: number;
@@ -222,17 +227,18 @@ export class RunManager {
     }
 
     // 5. ContextAssembler → Planner → Plan
+    const taskInfo: { task: string; expected: string; concerns?: string[]; constraints?: Record<string, unknown>; test_hint?: unknown } = {
+      task: `Validate ${req.artifact.type} on ${req.target}`,
+      expected: req.expected,
+      constraints: req.constraints as unknown as Record<string, unknown>,
+      test_hint: req.test_hint,
+    };
+    if (req.concerns) taskInfo.concerns = req.concerns;
+
     let planResult: PlanCallResult;
     try {
-      const taskInfo: { task: string; expected: string; concerns?: string[]; constraints?: Record<string, unknown>; test_hint?: unknown } = {
-        task: `Validate ${req.artifact.type} on ${req.target}`,
-        expected: req.expected,
-        constraints: req.constraints as unknown as Record<string, unknown>,
-        test_hint: req.test_hint,
-      };
-      if (req.concerns) taskInfo.concerns = req.concerns;
       const ctx = await this.contextAssembler.assemblePlannerContext(runId, taskInfo);
-      planResult = await this.planner.call(ctx.staticPrompt, ctx.dynamicContext, runId);
+      planResult = await this.planner.call(ctx.staticPrompt, ctx.formattedContext, runId);
     } catch (e) {
       return await this.rejectRun(runId, req.target, `Plan generation failed: ${(e as Error).message}`, "plan_rejected");
     }
@@ -271,12 +277,21 @@ export class RunManager {
     }
 
     // 8. Emit RunStarted FIRST (await — event must land before state advances)
+    // Merge user-specified criteria with plan-generated ones. User takes precedence.
+    const mergedSuccessCriteria = req.success_criteria?.length
+      ? req.success_criteria
+      : plan.success_criteria;
+    const mergedFailureSignals = [
+      ...(plan.failure_signals ?? []),
+      ...(req.failure_criteria ?? []),
+    ];
     await this.eb.emit({
       type: "run_started", run_id: runId, source: "run_manager",
       summary: `Run ${runId} started on target ${req.target}`,
       payload: {
         plan_id: plan.plan_id, target_id: req.target, estimated_duration_sec: plan.estimated_duration_sec,
-        success_criteria: plan.success_criteria, failure_signals: plan.failure_signals,
+        task: taskInfo.task, expected: req.expected,
+        success_criteria: mergedSuccessCriteria, failure_signals: mergedFailureSignals,
         evidence_policy: plan.evidence_policy,
       },
     });

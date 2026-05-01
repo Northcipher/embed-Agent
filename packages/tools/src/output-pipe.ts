@@ -32,6 +32,12 @@ export class OutputPipe {
 
   async feedStream(chunk: string): Promise<void> {
     this.buf += chunk;
+    // Guard against unbounded growth on binary/long-line input
+    const maxBuf = 256 * 1024; // 256KB max for a single partial line
+    if (this.buf.length > maxBuf) {
+      this.ew.append(this.buf.slice(0, maxBuf) + "\n[TRUNCATED]\n");
+      this.buf = this.buf.slice(-4096); // keep trailing 4KB for context
+    }
     const lines = this.buf.split("\n");
     this.buf = lines.pop() ?? "";
 

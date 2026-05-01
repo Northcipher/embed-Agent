@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { LLMCallManager, LLMMessage } from "./llm.js";
+import type { LLMCallManager } from "./llm.js";
 import type { AgentReply } from "./types.js";
+import { Agent, type AgentConfig } from "./agent.js";
 
 interface EventStoreReader {
   read(runId: string, afterSeq?: number, limit?: number): Promise<{ type: string; severity?: string; summary: string; step_id?: string; payload: Record<string, unknown>; evidence_refs?: string[] }[]>;
@@ -9,6 +10,7 @@ interface EventStoreReader {
 
 interface EvidenceIndexReader {
   getIndex(runId: string): Promise<{ refs: { ref: string; kind: string; bytes?: number; available: boolean }[]; key_events: { seq: number; summary: string; evidence_refs: string[] }[] }>;
+  readContent?(runId: string, ref: string, maxBytes?: number): Promise<string | null>;
 }
 
 interface RunStoreReader {
@@ -35,7 +37,22 @@ interface RunInfo {
 // decision_made is NOT a failure signal — it's an audit event for any Observer decision
 const FAILURE_TYPES = new Set(["step_failed", "run_failed"]);
 
+const DEFAULT_REPLY_PROMPT = `You are an Embed Agent Reply Generator. The run status (completed/failed/cancelled) is PRE-DETERMINED by the system — you do NOT output it. Your job is the narrative: summary, key evidence, per-criterion evaluation, and suggested next steps.
+
+Evaluate each success criterion against the events and evidence content. Be honest: if evidence contradicts a criterion, mark it fail.
+
+Output JSON:
+{
+  "summary": "<2-4 sentences: what was expected, what happened, key findings>",
+  "suggested_next": "<concrete next action>",
+  "key_evidence": [{ "summary": "<finding>", "evidence_refs": ["ref1"] }],
+  "criteria_results": [{ "criterion": "<exact criterion>", "status": "pass|fail|unknown", "evidence_refs": ["ref"] }],
+  "confidence": 0.0-1.0
+}`;
+
 export class ReplyGenerator {
+  private replyPrompt: string;
+
   constructor(
     private llm: LLMCallManager,
     private eventStore: EventStoreReader,
@@ -44,7 +61,10 @@ export class ReplyGenerator {
     private memory: MemoryWriter,
     private eb: EventEmitter,
     private dataRoot = ".embed-agent",
-  ) {}
+    replyPrompt?: string,
+  ) {
+    this.replyPrompt = replyPrompt ?? DEFAULT_REPLY_PROMPT;
+  }
 
   // --- Normal generation (LLM) ---
 
@@ -57,56 +77,81 @@ export class ReplyGenerator {
 
     const status = this.determineStatus(events);
 
-    const staticPrompt = `You are an Embed Agent Reply Generator. Given the events and evidence from a validation run, produce a concise summary of findings.
-
-Output JSON:
-{
-  "summary": "<2-3 sentence summary of key findings>",
-  "suggested_next": "<what to do next>",
-  "key_evidence": [{ "summary": "<finding>", "evidence_refs": ["ref1"] }],
-  "confidence": 0.0-1.0
-}`;
-
     // Select most relevant events for LLM: last 50 + all fatal/warning/decision events
     const importantEvents = events.filter(e => e.severity === "fatal" || e.severity === "warning" || e.type === "decision_made" || e.type === "result_ready");
     const recentEvents = events.slice(-50);
-    const combined = new Map<string, { type: string; severity?: string; summary: string }>();
+    const combined = new Map<string, { type: string; severity?: string; summary: string; step_id?: string }>();
     for (const e of [...importantEvents, ...recentEvents]) {
-      const item: { type: string; severity?: string; summary: string } = { type: e.type, summary: e.summary };
+      const item: { type: string; severity?: string; summary: string; step_id?: string } = { type: e.type, summary: e.summary };
       if (e.severity) item.severity = e.severity;
-      combined.set(`${e.type}-${e.summary}`, item);
+      if (e.step_id) item.step_id = e.step_id;
+      // Include step_id in dedup key to avoid merging events from different steps
+      combined.set(`${e.type}-${e.summary}-${e.step_id ?? ""}`, item);
     }
 
-    // Extract success criteria from plan_generated event
+    // Extract success criteria from run_started event
     const planEvent = events.find(e => e.type === "run_started");
     const planPayload = (planEvent?.payload ?? {}) as Record<string, unknown>;
 
-    const messages: LLMMessage[] = [
-      { role: "system", content: staticPrompt },
-      { role: "user", content: JSON.stringify({
-        events: [...combined.values()],
-        fatal_count: events.filter(e => e.severity === "fatal").length,
-        failure_events: events.filter(e => FAILURE_TYPES.has(e.type)).map(e => e.type),
-        key_events: evidence.key_events,
-        success_criteria: planPayload.success_criteria ?? [],
-        failure_signals: planPayload.failure_signals ?? [],
-      }, null, 2) },
+    // Build structured context with primacy/recency ordering:
+    // Criteria first (rubric) → Goal → Events → Evidence last (ground truth)
+    const context = [
+      "## Success Criteria",
+      ...( (planPayload.success_criteria as string[])?.map(c => `- ${c}`) ?? ["- (none specified)"] ),
+      "",
+      "## Failure Signals",
+      ...( (planPayload.failure_signals as string[])?.map(s => `- ${s}`) ?? ["- (none specified)"] ),
+      "",
+      "## Goal",
+      `Task: validate artifact on device`,
+      `Expected: ${(planPayload.expected as string) ?? "device operates normally"}`,
+      "",
+      "## Run Events",
+      `Total: ${events.length}  Fatal: ${events.filter(e => e.severity === "fatal").length}  Failures: ${events.filter(e => FAILURE_TYPES.has(e.type)).map(e => e.type).join(", ") || "none"}`,
+      "",
+      ...([...combined.values()].map(e => `- [${e.severity ?? "info"}] ${e.type}: ${e.summary}`)),
+      "",
+      ...(evidence.key_events.length > 0 ? ["## Decision Timeline", ...evidence.key_events.map(ke => `- seq=${ke.seq}: ${ke.summary}`), ""] : []),
+      "## Available Evidence",
+      ...(evidence.refs.filter(r => r.available).map(r => `- ${r.ref} (${r.kind}, ${r.bytes ?? "?"} bytes)`)),
     ];
 
-    let reply: AgentReply;
-
-    try {
-      const result = await this.llm.call("reply", messages);
-
-      if ("status" in result) {
-        reply = this.buildMinimal(runId, status, "LLM degraded — rule-based summary");
-      } else {
-        reply = this.parseReply(runId, status, result.content);
+    // Read evidence content samples for the most important refs
+    if (this.evidenceIndex.readContent) {
+      // Prioritize: serial output, then dmesg, then logcat — up to 3 samples, 2500 chars each
+      const priorityKinds = ["serial", "dmesg", "logcat"];
+      const availableRefs = evidence.refs.filter(r => r.available);
+      const sampleRefs = priorityKinds
+        .flatMap(kind => availableRefs.filter(r => r.kind === kind))
+        .slice(0, 3);
+      if (sampleRefs.length === 0 && availableRefs.length > 0) {
+        sampleRefs.push(availableRefs[0]!);
       }
-    } catch (e) {
-      console.error(`[ReplyGenerator] LLM call failed for ${runId}:`, (e as Error).message);
-      reply = this.buildMinimal(runId, status, "LLM failed — rule-based summary");
+
+      if (sampleRefs.length > 0) {
+        context.push("", "## Evidence Content Samples");
+        for (const ref of sampleRefs) {
+          const content = await this.evidenceIndex.readContent(runId, ref.ref, 2500);
+          if (content) {
+            context.push(`### ${ref.ref} (${ref.kind})`);
+            context.push("```");
+            context.push(content);
+            context.push("```");
+            context.push("");
+          }
+        }
+      }
     }
+
+    const formattedContext = context.join("\n");
+
+    // Use unified Agent for LLM call — handles parse, fallback, audit
+    const replyConfig: AgentConfig<AgentReply> = {
+      parse: (content: string) => this.parseReply(runId, status, content),
+      fallback: (reason: string) => this.buildMinimal(runId, status, reason),
+    };
+    const replyAgent = new Agent("reply", this.llm, replyConfig, this.eb);
+    const reply = await replyAgent.run(this.replyPrompt, formattedContext, runId);
 
     // Persist reply.json before emitting result_ready
     await this.persistReply(runId, reply);
@@ -115,16 +160,18 @@ Output JSON:
     await this.writeArtifacts(runId, reply, events, run ? { target_id: run.target_id, artifact: run.artifact } : undefined);
 
     // Reply is the ONLY publisher of result_ready
+    const payload: Record<string, unknown> = {
+      status: reply.status, summary: reply.summary,
+      suggested_next: reply.suggested_next,
+      evidence_path: reply.evidence_path,
+      key_evidence: reply.key_evidence,
+      confidence: reply.confidence,
+    };
+    if (reply.criteria_results) payload.criteria_results = reply.criteria_results;
     await this.eb.emit({
       type: "result_ready", run_id: runId, source: "reply_generator",
       summary: reply.summary,
-      payload: {
-        status: reply.status, summary: reply.summary,
-        suggested_next: reply.suggested_next,
-        evidence_path: reply.evidence_path,
-        key_evidence: reply.key_evidence,
-        confidence: reply.confidence,
-      },
+      payload,
     });
 
     return reply;
@@ -192,7 +239,7 @@ Output JSON:
       const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
       const json = jsonMatch ? jsonMatch[1]!.trim() : content.trim();
       const parsed = JSON.parse(json);
-      return {
+      const reply: AgentReply = {
         run_id: runId,
         status,
         summary: parsed.summary ?? "Validation completed",
@@ -201,13 +248,17 @@ Output JSON:
         key_evidence: parsed.key_evidence ?? [],
         confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.7,
       };
+      if (parsed.criteria_results && Array.isArray(parsed.criteria_results)) {
+        reply.criteria_results = parsed.criteria_results;
+      }
+      return reply;
     } catch {
       return this.buildMinimal(runId, status, "Failed to parse LLM reply");
     }
   }
 
   private buildMinimal(runId: string, status: AgentReply["status"], reason: string): AgentReply {
-    return {
+    const reply: AgentReply = {
       run_id: runId,
       status,
       summary: reason,
@@ -216,6 +267,7 @@ Output JSON:
       key_evidence: [],
       confidence: 0.5,
     };
+    return reply;
   }
 
   private async persistReply(runId: string, reply: AgentReply): Promise<void> {

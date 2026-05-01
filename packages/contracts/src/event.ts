@@ -40,6 +40,7 @@ export type EvidenceEventType = "evidence_collected";
 export type HookEventType = "hook_executed";
 export type TaskEventType = "skipped_run";
 export type NotifyEventType = "notification_sent";
+export type AuditEventType = "llm_call";
 
 export type EventType =
   | LifecycleEventType
@@ -51,7 +52,8 @@ export type EventType =
   | EvidenceEventType
   | HookEventType
   | TaskEventType
-  | NotifyEventType;
+  | NotifyEventType
+  | AuditEventType;
 
 export type EventSeverity = "fatal" | "warning" | "info";
 
@@ -103,6 +105,18 @@ export interface ObservationPayload {
   lines?: number;
 }
 
+export interface LLMCallPayload {
+  role: "planner" | "observer" | "reply";
+  input_chars: number;
+  output_chars: number;
+  token_input?: number;
+  token_output?: number;
+  degraded: boolean;
+  fallback: boolean;
+  model?: string;
+  error?: string;
+}
+
 export type EventPayload =
   | ResultReadyPayload
   | RuleMatchedPayload
@@ -112,6 +126,7 @@ export type EventPayload =
   | StepFailedPayload
   | CheckpointPayload
   | ObservationPayload
+  | LLMCallPayload
   | Record<string, unknown>;
 
 // --- Event ---

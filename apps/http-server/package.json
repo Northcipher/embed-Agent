@@ -1,0 +1,23 @@
+{
+  "name": "@embed-agent/http-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --pretty false"
+  },
+  "dependencies": {
+    "@embed-agent/cli": "workspace:*",
+    "fastify": "^5.8.5",
+    "@fastify/sse": "^0.4.0"
+  },
+  "devDependencies": {
+    "@embed-agent/runtime": "workspace:*",
+    "@embed-agent/agent": "workspace:*",
+    "@embed-agent/stores": "workspace:*",
+    "@embed-agent/tools": "workspace:*",
+    "@embed-agent/views": "workspace:*",
+    "vitest": "^4.0.15"
+  }
+}

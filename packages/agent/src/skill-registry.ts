@@ -38,12 +38,32 @@ export class SkillRegistry {
     }));
   }
 
-  /** Load full skill steps for the matched skills to include in Planner context. */
+  /** Load full skill steps for the matched skills to include in Planner context.
+   *  Substitutes {{param_name}} placeholders in step commands with default values. */
   loadMatchedSteps(task: string, n = 3): (Skill & { steps: NonNullable<Skill["steps"]> })[] {
     return this.match(task).slice(0, n)
       .map(s => this.get(s.name))
       .filter((s): s is Skill => s != null)
-      .filter(s => s.steps && s.steps.length > 0) as (Skill & { steps: NonNullable<Skill["steps"]> })[];
+      .filter(s => s.steps && s.steps.length > 0)
+      .map(s => {
+        // Build param lookup table from skill defaults
+        const defaults = new Map<string, string>();
+        if (s.params) {
+          for (const p of s.params) {
+            if (p.default != null) defaults.set(p.name, String(p.default));
+          }
+        }
+        // Substitute {{param}} in step commands
+        const steps = s.steps!.map(step => {
+          if (!step.command || !step.command.includes("{{")) return step;
+          let cmd = step.command;
+          for (const [name, value] of defaults) {
+            cmd = cmd.replace(new RegExp(`\\{\\{${name}\\}\\}`, "g"), value);
+          }
+          return { ...step, command: cmd };
+        });
+        return { ...s, steps } as Skill & { steps: NonNullable<Skill["steps"]> };
+      });
   }
 
   /** Create a new skill from a successful Plan. */

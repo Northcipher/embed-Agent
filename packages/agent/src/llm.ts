@@ -1,3 +1,8 @@
+import { generateText, type ToolSet } from "ai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+
 export interface LLMMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -9,41 +14,117 @@ export interface LLMResponse {
   usage?: { input_tokens: number; output_tokens: number };
 }
 
-export interface LLMProvider {
-  call(messages: LLMMessage[], options: { model: string; timeout: number; maxTokens: number }): Promise<LLMResponse>;
+export interface LLMCallOptions {
+  model: string;
+  timeout: number;
+  maxTokens: number;
+  tools?: ToolSet;
+  maxSteps?: number;
 }
 
-// --- Anthropic Provider ---
+export interface LLMProvider {
+  call(messages: LLMMessage[], options: LLMCallOptions): Promise<LLMResponse>;
+}
 
-export class AnthropicProvider implements LLMProvider {
-  constructor(private apiKey: string, private baseUrl?: string) {}
+// Shared helper: call generateText and normalize the response
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function callAI(req: any, modelName: string, tools?: ToolSet, maxSteps?: number): Promise<LLMResponse> {
+  if (tools) req.tools = tools;
+  if (maxSteps != null) req.maxSteps = maxSteps;
+  const result = await generateText(req);
+  const usage = result.usage;
+  const resp: LLMResponse = {
+    content: result.text,
+    model: result.response?.modelId ?? modelName,
+  };
+  if (usage && typeof usage.inputTokens === "number" && typeof usage.outputTokens === "number") {
+    resp.usage = { input_tokens: usage.inputTokens, output_tokens: usage.outputTokens };
+  }
+  return resp;
+}
 
-  async call(messages: LLMMessage[], options: { model: string; timeout: number; maxTokens: number }): Promise<LLMResponse> {
-    // Dynamic import to avoid requiring the SDK at module load
+// ============================================================
+// AI SDK Anthropic Provider
+// ============================================================
+
+export class AIAnthropicProvider implements LLMProvider {
+  constructor(private apiKey: string, private baseURL?: string) {}
+
+  async call(messages: LLMMessage[], options: LLMCallOptions): Promise<LLMResponse> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const Anthropic = (await import("@anthropic-ai/sdk") as any).default;
-    const client = new Anthropic({ apiKey: this.apiKey, baseURL: this.baseUrl, timeout: options.timeout * 1000 });
-
+    const anthropicOpts: any = { apiKey: this.apiKey };
+    if (this.baseURL) anthropicOpts.baseURL = this.baseURL;
+    const model = createAnthropic(anthropicOpts)(options.model);
     const systemMsg = messages.find(m => m.role === "system");
-    const userMsgs = messages.filter(m => m.role !== "system");
+    const nonSystem = messages.filter(m => m.role !== "system") as { role: "user" | "assistant"; content: string }[];
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const req: any = {
-      model: options.model,
-      max_tokens: options.maxTokens,
-      messages: userMsgs.map(m => ({ role: m.role, content: m.content })),
+      model,
+      messages: nonSystem,
+      maxOutputTokens: options.maxTokens,
+      abortSignal: AbortSignal.timeout(options.timeout * 1000),
     };
-    if (systemMsg?.content) req.system = systemMsg.content;
+    if (systemMsg) req.system = systemMsg.content;
 
-    const resp = await client.messages.create(req);
-    const textBlock = resp.content?.find?.((b: { type: string }) => b.type === "text");
-    const result: LLMResponse = { content: textBlock?.text ?? "", model: resp.model as string };
-    if (resp.usage) result.usage = { input_tokens: resp.usage.input_tokens, output_tokens: resp.usage.output_tokens };
-    return result;
+    return callAI(req, options.model, options.tools, options.maxSteps);
   }
 }
 
-// --- Mock Provider for testing ---
+// ============================================================
+// AI SDK OpenAI Provider
+// ============================================================
+
+export class AIOpenAIProvider implements LLMProvider {
+  constructor(private apiKey: string, private baseURL?: string) {}
+
+  async call(messages: LLMMessage[], options: LLMCallOptions): Promise<LLMResponse> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const openaiOpts: any = { apiKey: this.apiKey };
+    if (this.baseURL) openaiOpts.baseURL = this.baseURL;
+    const model = createOpenAI(openaiOpts)(options.model);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const req: any = {
+      model,
+      messages: messages as { role: string; content: string }[],
+      maxOutputTokens: options.maxTokens,
+      abortSignal: AbortSignal.timeout(options.timeout * 1000),
+    };
+
+    return callAI(req, options.model, options.tools, options.maxSteps);
+  }
+}
+
+// ============================================================
+// AI SDK OpenAI-Compatible Provider (LiteLLM, proxies, gateways)
+// ============================================================
+
+export class AIOpenAICompatibleProvider implements LLMProvider {
+  constructor(private baseURL: string, private apiKey: string) {}
+
+  async call(messages: LLMMessage[], options: LLMCallOptions): Promise<LLMResponse> {
+    const model = createOpenAICompatible({
+      baseURL: this.baseURL,
+      name: "openai-compatible",
+      apiKey: this.apiKey,
+    })(options.model);
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const req: any = {
+      model,
+      messages: messages as { role: string; content: string }[],
+      maxOutputTokens: options.maxTokens,
+      abortSignal: AbortSignal.timeout(options.timeout * 1000),
+    };
+
+    return callAI(req, options.model, options.tools, options.maxSteps);
+  }
+}
+
+// ============================================================
+// Mock Provider (unchanged — for tests)
+// ============================================================
 
 export class MockProvider implements LLMProvider {
   private responses: string[] = [];
@@ -60,20 +141,21 @@ export class MockProvider implements LLMProvider {
   }
 }
 
-// --- CB4: LLM Circuit Breaker ---
+// ============================================================
+// CB4: LLM Circuit Breaker (unchanged)
+// ============================================================
 
 export class LLMCircuitBreaker {
   private failures = 0;
   private degraded = false;
   private degradedSince = 0;
-  private probing = false; // true during a single probe attempt
+  private probing = false;
   private readonly MAX_FAILURES = 3;
-  private readonly PROBE_AFTER_MS = 5 * 60 * 1000; // 5 minutes
+  private readonly PROBE_AFTER_MS = 5 * 60 * 1000;
 
   recordFailure(): void {
     this.failures++;
     if (this.probing) {
-      // Probe failed — re-enter degraded immediately
       this.degraded = true;
       this.degradedSince = Date.now();
       this.probing = false;
@@ -91,16 +173,13 @@ export class LLMCircuitBreaker {
     this.probing = false;
   }
 
-  /** Returns true if the breaker allows a call through (either healthy or probe). */
   allowCall(): boolean {
     if (!this.degraded) return true;
-    // Allow a single probe after the recovery interval
     if (Date.now() - this.degradedSince >= this.PROBE_AFTER_MS) {
       if (!this.probing) {
         this.probing = true;
-        return true; // allow probe
+        return true;
       }
-      // Already probing — don't allow another until probe completes
       return false;
     }
     return false;
@@ -115,7 +194,9 @@ export class LLMCircuitBreaker {
   }
 }
 
-// --- LLMCallManager ---
+// ============================================================
+// LLMCallManager (unchanged)
+// ============================================================
 
 export class LLMCallManager {
   private breakers = new Map<string, LLMCircuitBreaker>();
@@ -145,6 +226,7 @@ export class LLMCallManager {
   async call(
     role: "planner" | "observer" | "reply",
     messages: LLMMessage[],
+    opts?: { tools?: ToolSet; maxSteps?: number },
   ): Promise<LLMResponse | { status: "degraded"; reason: string }> {
     const br = this.breaker(role);
     if (!br.allowCall()) {
@@ -160,29 +242,62 @@ export class LLMCallManager {
           model: cfg.model,
           timeout: cfg.timeout,
           maxTokens: cfg.maxTokens ?? 4096,
+          ...(opts?.tools ? { tools: opts.tools } : {}),
+          ...(opts?.maxSteps != null ? { maxSteps: opts.maxSteps } : {}),
         });
         br.recordSuccess();
         return resp;
       } catch (e) {
         lastError = e;
+        if (this.isAbortError(e)) {
+          // Timeouts are often transient — retry once before recording failure
+          if (attempt >= 1) {
+            br.recordFailure();
+            throw e;
+          }
+        }
         const isRetryable = this.isRetryableError(e);
         if (!isRetryable || attempt >= this.retryConfig.maxRetries) {
           br.recordFailure();
           throw e;
         }
-        // Retry with backoff
         const delay = this.retryConfig.backoffMs[attempt] ?? this.retryConfig.backoffMs[this.retryConfig.backoffMs.length - 1]!;
         await new Promise(r => setTimeout(r, delay));
       }
     }
 
-    // Should not reach here
     throw lastError;
+  }
+
+  /** Call without circuit breaker — used for auto-degrade retries. */
+  async callBypassBreaker(
+    role: "planner" | "observer" | "reply",
+    messages: LLMMessage[],
+    opts?: { tools?: ToolSet; maxSteps?: number },
+  ): Promise<LLMResponse | { status: "degraded"; reason: string }> {
+    const cfg = this.models[role];
+
+    try {
+      const resp = await this.provider.call(messages, {
+        model: cfg.model,
+        timeout: cfg.timeout,
+        maxTokens: cfg.maxTokens ?? 4096,
+        ...(opts?.tools ? { tools: opts.tools } : {}),
+        ...(opts?.maxSteps != null ? { maxSteps: opts.maxSteps } : {}),
+      });
+      return resp;
+    } catch (e) {
+      return { status: "degraded", reason: `Bypass call failed: ${(e as Error).message}` };
+    }
+  }
+
+  private isAbortError(e: unknown): boolean {
+    const msg = (e as Error).message ?? String(e);
+    return msg.includes("abort") || msg.includes("Abort") || msg.includes("timeout") || msg.includes("Timeout");
   }
 
   private isRetryableError(e: unknown): boolean {
     const msg = (e as Error).message ?? String(e);
-    // Retry on rate limits, server errors, network issues; not on auth/validation
     if (msg.includes("429") || msg.includes("rate") || msg.includes("Rate")) return true;
     if (msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("504")) return true;
     if (msg.includes("ETIMEDOUT") || msg.includes("ECONNRESET") || msg.includes("socket")) return true;

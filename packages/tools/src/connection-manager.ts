@@ -3,7 +3,7 @@ import { LocalConnection, type SecurityPolicy } from "./local.js";
 import { SerialConnection } from "./serial.js";
 import { AdbConnection } from "./adb.js";
 import { FastbootConnection } from "./fastboot.js";
-import { SshConnection } from "./ssh.js";
+import { Ssh2Connection } from "./ssh.js";
 
 export type Transport = "serial" | "adb" | "fastboot" | "ssh" | "local";
 
@@ -39,8 +39,8 @@ export class ConnectionManager {
     switch (transport) {
       case "local": conn = new LocalConnection(this.securityPolicy); break;
       case "serial": {
-        const s = target.connections.serial as { port: string; baud: number } | undefined;
-        if (s) conn = new SerialConnection({ port: s.port, baudRate: s.baud });
+        const s = target.connections.serial as import("./serial.js").SerialConfig | undefined;
+        if (s) conn = new SerialConnection(s);
         break;
       }
       case "adb": {
@@ -54,8 +54,8 @@ export class ConnectionManager {
         break;
       }
       case "ssh": {
-        const s = target.connections.ssh as { host: string; port?: number; username?: string } | undefined;
-        if (s) conn = new SshConnection(s.host, s.port, s.username);
+        const s = target.connections.ssh as import("./ssh-config.js").SshConnectionConfig | undefined;
+        if (s) conn = new Ssh2Connection(s);
         break;
       }
     }
@@ -68,10 +68,16 @@ export class ConnectionManager {
   }
 
   getForStep(target: { target_id: string; connections: Record<string, unknown> }, action: string, capability: string): Connection | null {
-    if (action === "stream") return this.get(target, "serial");
+    if (action === "stream") {
+      if (capability === "adb_logs") return this.get(target, "adb");
+      return this.get(target, "serial");
+    }
     if (action === "flash") return this.get(target, "fastboot");
     if (action === "push") return this.get(target, "adb") ?? this.get(target, "ssh");
     if (capability === "wait_adb" || capability === "collect_logs") return this.get(target, "adb");
+    if (capability === "ssh_exec") {
+      return this.get(target, "ssh");
+    }
     if (capability === "shell_exec") {
       // Require whitelist — reject if none configured
       if (!this.shellAllowed || this.shellAllowed.size === 0) return null;

@@ -20,8 +20,7 @@
   "dependencies": {
     "@types/react": "^19.2.14",
     "ink": "^7.0.1",
-    "@embed-agent/stores": "workspace:*",
-    "@embed-agent/views": "workspace:*",
+    "@embed-agent/cli": "workspace:*",
     "react": "^19.2.5"
   },
   "bin": {

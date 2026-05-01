@@ -1,11 +1,5 @@
 interface Emitter { emit(e: Record<string, unknown>): void; }
 
-interface Baseline {
-  avg_lines_per_sec: number;
-  avg_silence_count: number;
-  typical_stage_order: string[];
-}
-
 export class Aggregator {
   private stage = "unknown";
   private count = 0;
@@ -17,7 +11,6 @@ export class Aggregator {
   private stageOrder: string[] = [];
   // Cross-source state
   private execResults: { stepId: string; exitCode: number; source: string }[] = [];
-  private baseline: Baseline | null = null;
   private runId?: string;
 
   constructor(private eb: Emitter, private interval = 300) {}
@@ -30,9 +23,6 @@ export class Aggregator {
   }
 
   setMarkers(m: { text: string; stage: string }[]): void { this.markers = m; }
-
-  /** Set baseline from a previous run for comparison. */
-  setBaseline(b: Baseline | null): void { this.baseline = b; }
 
   feed(line: string): void {
     this.count++;
@@ -74,7 +64,7 @@ export class Aggregator {
     }
   }
 
-  /** Periodic checkpoint with pattern detection and baseline comparison. */
+  /** Periodic checkpoint with pattern detection. */
   async checkpoint(): Promise<Record<string, unknown>> {
     const linesPerSec = this.interval > 0 ? Math.round(this.count / this.interval) : 0;
 
@@ -95,33 +85,6 @@ export class Aggregator {
       },
     };
     this.emit(cp);
-
-    // Baseline comparison
-    if (this.baseline) {
-      const deviation = this.baseline.avg_lines_per_sec > 0
-        ? Math.abs(linesPerSec - this.baseline.avg_lines_per_sec) / this.baseline.avg_lines_per_sec
-        : 0;
-      if (deviation > 0.5) {
-        this.emit({
-          type: "baseline_diff", source: "aggregator", severity: "warning",
-          summary: `Lines/sec deviation: ${Math.round(deviation * 100)}% from baseline (${this.baseline.avg_lines_per_sec})`,
-          payload: {
-            current: linesPerSec, baseline: this.baseline.avg_lines_per_sec, deviation_pct: Math.round(deviation * 100),
-          },
-        });
-      }
-      // Stage order drift
-      if (this.stageOrder.length > 0 && this.baseline.typical_stage_order.length > 0) {
-        const match = this.stageOrder.every((s, i) => s === this.baseline!.typical_stage_order[i]);
-        if (!match && this.stageOrder.length >= this.baseline.typical_stage_order.length) {
-          this.emit({
-            type: "baseline_diff", source: "aggregator", severity: "warning",
-            summary: "Stage order diverges from baseline",
-            payload: { current_order: this.stageOrder, baseline_order: this.baseline.typical_stage_order },
-          });
-        }
-      }
-    }
 
     this.prevCount = this.count;
     this.count = 0;

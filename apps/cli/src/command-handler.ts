@@ -9,10 +9,19 @@ interface RunManagerLike {
   onOverride?(runId: string): void;
 }
 
+interface MemoryStoreLike {
+  writeFact(fact: { scope: string; scope_id: string; category: string; statement: string }): Promise<void>;
+  deleteFact(factId: string): Promise<void>;
+}
+interface SkillStoreLike {
+  list(): { name: string; description: string }[];
+  get(name: string): { name: string; description: string; steps: { action: string; capability: string; command?: string; timeout_sec: number }[] } | undefined;
+}
+
 interface ViewsLike {
   status(runId: string): Promise<{ run_id: string; state: string; current_step?: { id: string }; elapsed_sec: number } | null>;
   events(runId: string, afterSeq?: number, limit?: number, types?: string[]): Promise<{ events: { seq: number; type: string; severity?: string; summary: string; time: string }[]; next_after_seq: number; has_more: boolean }>;
-  result(runId: string): Promise<{ run_id: string; state: string; result_available: boolean; summary?: string; suggested_next?: string; evidence_path?: string; key_evidence?: { summary: string; evidence_refs: string[] }[] }>;
+  result(runId: string): Promise<{ run_id: string; state: string; result_available: boolean; summary?: string; suggested_next?: string; evidence_path?: string; key_evidence?: { summary: string; evidence_refs: string[] }[]; criteria_results?: { criterion: string; status: string; evidence_refs: string[] }[] }>;
   evidence(runId: string, ref?: string): Promise<{ available: boolean; index?: { refs: { ref: string; kind: string }[] }; content?: string }>;
   targets(): Promise<{ target_id: string; state: string; serial: string; adb: string; fastboot: string; current_run_id?: string }[]>;
   history(targetId: string, limit?: number): Promise<{ episode_id: string; result: string; summary: string }[]>;
@@ -29,6 +38,8 @@ export class CommandHandler {
   constructor(
     private rm: RunManagerLike,
     private views: ViewsLike,
+    private memoryStore?: MemoryStoreLike,
+    private skillStore?: SkillStoreLike,
   ) {}
 
   // --- Validation & Execution ---
@@ -39,7 +50,7 @@ export class CommandHandler {
 
   /** MCP adapter: converts MCP validate_artifact input to ValidateRequest. */
   async validateFromMcp(mcpInput: {
-    context: { task: string; expected: string; concerns?: string[]; what_changed?: string; test_hint?: { kind: string; command: string; timeout_sec?: number; expected_exit_code?: number } };
+    context: { task: string; expected: string; concerns?: string[]; what_changed?: string; success_criteria?: string[]; failure_criteria?: string[]; test_hint?: { kind: string; command: string; timeout_sec?: number; expected_exit_code?: number } };
     artifact: { path: string; type: string; version?: string; build_id?: string };
     target: string;
     constraints?: { max_duration_sec?: number; allow_flash?: boolean; no_flash?: boolean; continuous?: boolean };
@@ -50,6 +61,8 @@ export class CommandHandler {
       expected: mcpInput.context.expected,
     } as ValidateRequest;
     if (mcpInput.context.concerns) req.concerns = mcpInput.context.concerns;
+    if (mcpInput.context.success_criteria) req.success_criteria = mcpInput.context.success_criteria;
+    if (mcpInput.context.failure_criteria) req.failure_criteria = mcpInput.context.failure_criteria;
     if (mcpInput.context.test_hint) req.test_hint = mcpInput.context.test_hint as NonNullable<typeof mcpInput.context.test_hint>;
     if (mcpInput.constraints) req.constraints = mcpInput.constraints;
     const result = await this.rm.createRun(req);
@@ -141,12 +154,31 @@ export class CommandHandler {
 
   async taskList() { return { tasks: [] as { name: string; skill: string }[], status: "ok" }; }
   async taskShow(_name: string) { return { status: "error", error_code: "unsupported_action", message: "Not yet implemented" } as const; }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async memoryList(_targetId?: string, _category?: string) { return { entries: [] as { fact_id: string; category: string; statement: string }[], status: "ok" }; }
-  async memoryAdd(_targetId: string, _category: string, _statement: string) { return { status: "error", error_code: "unsupported_action", message: "Requires Memory wiring" } as const; }
-  async memoryConfirm(_factId: string) { return { status: "error", error_code: "unsupported_action", message: "Requires Memory wiring" } as const; }
-  async memoryDelete(_factId: string) { return { status: "error", error_code: "unsupported_action", message: "Requires Memory wiring" } as const; }
-  async skillList() { return { skills: [] as { name: string; description: string }[], status: "ok" }; }
-  async skillShow(_name: string) { return { status: "error", error_code: "unsupported_action", message: "Not yet implemented" } as const; }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async memoryConfirm(_factId?: string) { return { status: "error", error_code: "unsupported_action", message: "Fact verification not supported via CLI" } as const; }
+  async memoryAdd(targetId: string, category: string, statement: string) {
+    if (!this.memoryStore) return { status: "error", error_code: "unsupported_action", message: "Memory store not available" } as const;
+    await this.memoryStore.writeFact({ scope: "target", scope_id: targetId, category, statement });
+    return { status: "ok" };
+  }
+  async memoryDelete(factId: string) {
+    if (!this.memoryStore) return { status: "error", error_code: "unsupported_action", message: "Memory store not available" } as const;
+    await this.memoryStore.deleteFact(factId);
+    return { status: "ok" };
+  }
+  async skillList() {
+    if (!this.skillStore) return { skills: [] as { name: string; description: string }[], status: "ok" };
+    const skills = this.skillStore.list();
+    return { skills, status: "ok" };
+  }
+  async skillShow(name: string) {
+    if (!this.skillStore) return { status: "error", error_code: "unsupported_action", message: "Skill store not available" } as const;
+    const s = this.skillStore.get(name);
+    if (!s) return { status: "error", error_code: "not_found", message: `Skill not found: ${name}` } as const;
+    return { skill: s, status: "ok" };
+  }
   async hookList() { return { hooks: [] as { name: string; on: string }[], status: "ok" }; }
   async hookShow(_name: string) { return { status: "error", error_code: "unsupported_action", message: "Not yet implemented" } as const; }
 }

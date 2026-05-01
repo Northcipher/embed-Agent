@@ -7,7 +7,7 @@ interface EventEmitter {
 }
 
 interface ObserverCaller {
-  decide(staticPrompt: string, input: Record<string, unknown>): Promise<Decision>;
+  decide(staticPrompt: string, formattedContext: string, runId?: string, triggerSummary?: string, triggerType?: string, triggerSeverity?: string, cbActive?: boolean, warnEsc?: boolean, knownIssues?: { fact_id: string; category: string; statement: string; extended_pattern?: string }[]): Promise<Decision>;
 }
 
 interface RunController {
@@ -28,7 +28,7 @@ interface ContextProvider {
     triggeringEvent: Record<string, unknown>,
     circuitBreakerActive: boolean,
     warningEscalation: boolean,
-  ): Promise<{ staticPrompt: string; input: Record<string, unknown> }>;
+  ): Promise<{ staticPrompt: string; formattedContext: string; knownIssues?: { fact_id: string; category: string; statement: string; extended_pattern?: string }[] }>;
 }
 
 export type DecisionResult = Decision;
@@ -156,7 +156,16 @@ export class DecisionHandler {
         this.overrideBreaker.isActive(),
         this.warningAccum.isEscalated(),
       );
-      const decision = await this.observer.decide(ctx.staticPrompt, ctx.input);
+      const decision = await this.observer.decide(
+        ctx.staticPrompt, ctx.formattedContext,
+        this.runId,
+        (event.summary as string) ?? "",
+        (event.type as string) ?? "",
+        (event.severity as string) ?? "info",
+        this.overrideBreaker.isActive(),
+        this.warningAccum.isEscalated(),
+        ctx.knownIssues,
+      );
       await this.executeDecision(decision);
     } catch (e) {
       this.eb.emit({

@@ -1,7 +1,7 @@
 import { ConfigLoader, Logger, PromptLoader, EventStore, EvidenceStore, RunStore, TargetStore, MemoryStore, SkillStore } from "@embed-agent/stores";
 import { EventBus, ContextAssembler, RunManager, HookManager, StepExecutor, DecisionHandler } from "@embed-agent/runtime";
 import { ConnectionManager, TargetManager, OutputPipe, RingBuffer, RuleDetector, Aggregator } from "@embed-agent/tools";
-import { LLMCallManager, MockProvider, AnthropicProvider, Planner, Observer, ReplyGenerator, Memory, SkillRegistry } from "@embed-agent/agent";
+import { LLMCallManager, MockProvider, AIAnthropicProvider, AIOpenAIProvider, AIOpenAICompatibleProvider, type LLMProvider, Planner, Observer, ReplyGenerator, Memory, SkillRegistry, createPlannerTools } from "@embed-agent/agent";
 import { NotificationFilter, LogChannel } from "@embed-agent/notify";
 import { Views } from "@embed-agent/views";
 import { SystemConfigSchema, LLMConfigSchema, HookConfigSchema, TargetProfileSchema } from "@embed-agent/contracts";
@@ -71,35 +71,54 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   const evidenceStore = new EvidenceStore(dataRoot, { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } });
   eventStore.subscribeToBus(eventBus, runStore, evidenceStore);
 
-  // 4. Create LLM (Anthropic if key set, Mock for dev)
-  const apiKey = process.env["ANTHROPIC_API_KEY"];
-  const baseUrl = process.env["ANTHROPIC_BASE_URL"];
-  const llmProvider = apiKey
-    ? new AnthropicProvider(apiKey, baseUrl)
-    : new MockProvider();
-  if (!apiKey) {
-    (llmProvider as MockProvider).setResponse(JSON.stringify({
+  // 4. Create LLM provider — config-driven, fallback to MockProvider for dev
+  const llmCfg = llmConfigs["llm"] as Record<string, unknown> | undefined;
+  const providers = llmCfg?.providers as Record<string, Record<string, unknown>> | undefined;
+  const defaultProvider = llmCfg?.default_provider as string ?? "mock";
+  const providerCfg = providers?.[defaultProvider];
+  const providerType = (providerCfg?.type as string) ?? "mock";
+  const providerApiKeyEnv = providerCfg?.api_key_env as string | undefined;
+  const providerBaseUrl = providerCfg?.base_url as string | undefined;
+  const providerApiKey = providerApiKeyEnv ? (process.env[providerApiKeyEnv] ?? "") : "";
+
+  let llmProvider: LLMProvider;
+  if (providerType === "mock" || !providerCfg || !providerApiKey) {
+    const mock = new MockProvider();
+    mock.setResponse(JSON.stringify({
       plan_id: "default", estimated_duration_sec: 300,
       steps: [{ id: "check", capability: "shell_exec", action: "exec", command: "uname -a", timeout_sec: 60 }],
       evidence_policy: { always: ["serial:full"], on_failure: ["logcat"] },
       success_criteria: ["device responds to shell"], failure_signals: ["kernel panic"],
     }));
-    log.warn("No ANTHROPIC_API_KEY set — using MockProvider for LLM calls");
-  }
-
-  // Read model names from LLM config — required, no defaults
-  const llmCfg = llmConfigs["llm"] as Record<string, unknown> | undefined;
-  const providers = llmCfg?.providers as Record<string, Record<string, unknown>> | undefined;
-  const defaultProvider = llmCfg?.default_provider as string ?? "anthropic";
-  const providerCfg = providers?.[defaultProvider];
-  if (!providerCfg?.models) {
-    logger.error("LLM models not configured. Set providers.<name>.models in llm.yml");
+    llmProvider = mock;
+    if (providerType !== "mock" && !providerApiKey) {
+      log.warn(`${providerApiKeyEnv} not set — using MockProvider`);
+    }
+  } else if (providerType === "anthropic") {
+    llmProvider = new AIAnthropicProvider(providerApiKey, providerBaseUrl);
+    const am = (providerCfg?.models as Record<string, string> | undefined);
+    log.info(`LLM: Anthropic (${am?.["planner"] ?? "?"})${providerBaseUrl ? ` @ ${providerBaseUrl}` : ""}`);
+  } else if (providerType === "openai") {
+    llmProvider = new AIOpenAIProvider(providerApiKey, providerBaseUrl);
+    const om = (providerCfg?.models as Record<string, string> | undefined);
+    log.info(`LLM: OpenAI (${om?.["planner"] ?? "?"})`);
+  } else if (providerType === "openai-compatible") {
+    if (!providerBaseUrl) {
+      logger.error("openai-compatible provider requires base_url in llm.yml");
+      process.exit(1);
+    }
+    llmProvider = new AIOpenAICompatibleProvider(providerBaseUrl, providerApiKey);
+    log.info(`LLM: OpenAI-compatible @ ${providerBaseUrl}`);
+  } else {
+    logger.error(`Unknown LLM provider type: ${providerType}`);
     process.exit(1);
   }
+
+  // Read model names and timeouts from LLM config
   const models = {
-    planner: { model: (providerCfg.models as Record<string, string>).planner!, timeout: 120 },
-    observer: { model: (providerCfg.models as Record<string, string>).observer!, timeout: 60 },
-    reply: { model: (providerCfg.models as Record<string, string>).reply!, timeout: 60 },
+    planner: { model: (providerCfg?.models as Record<string, string> | undefined)?.["planner"] ?? "claude-sonnet-4-6", timeout: (providerCfg?.timeout as Record<string, number> | undefined)?.["planner"] ?? 120 },
+    observer: { model: (providerCfg?.models as Record<string, string> | undefined)?.["observer"] ?? "claude-haiku-4-5", timeout: (providerCfg?.timeout as Record<string, number> | undefined)?.["observer"] ?? 60 },
+    reply: { model: (providerCfg?.models as Record<string, string> | undefined)?.["reply"] ?? "claude-sonnet-4-6", timeout: (providerCfg?.timeout as Record<string, number> | undefined)?.["reply"] ?? 60 },
   };
 
   // Wire observer CB4 config from system.yml
@@ -110,22 +129,43 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   };
   const llm = new LLMCallManager(llmProvider, models, llmRetry);
 
-  // 5. Load prompts
+  // 5. Load prompts — version from config, fallback to "1"
+  const promptVersion = (systemConfig?.prompt_version as string) ?? "1";
   const promptLoader = new PromptLoader(`config/prompts`);
-  let prompts: { planner?: string; observer?: string } | undefined;
+  let prompts: { planner?: string; observer?: string; reply?: string } | undefined;
   try {
-    const set = await promptLoader.loadAll("1");
+    const set = await promptLoader.loadAll(promptVersion);
     const pp = set.get("planner")?.system;
     const op = set.get("observer")?.system;
-    if (pp || op) { prompts = {}; if (pp) prompts.planner = pp; if (op) prompts.observer = op; }
-  } catch { /* use built-in defaults */ }
+    const rp = set.get("reply")?.system;
+    if (pp || op || rp) { prompts = {}; if (pp) prompts.planner = pp; if (op) prompts.observer = op; if (rp) prompts.reply = rp; }
+    log.info(`Prompts loaded: version=${promptVersion}, roles=${[...set.keys()].join(",")}`);
+  } catch {
+    // Fallback: try v1
+    try {
+      const set = await promptLoader.loadAll("1");
+      const pp = set.get("planner")?.system;
+      const op = set.get("observer")?.system;
+      const rp = set.get("reply")?.system;
+      if (pp || op || rp) { prompts = {}; if (pp) prompts.planner = pp; if (op) prompts.observer = op; if (rp) prompts.reply = rp; }
+      log.warn(`Prompt version "${promptVersion}" not found, fell back to v1`);
+    } catch { /* use built-in defaults */ }
+  }
 
   // 6. Agent layer
   const memory = new Memory(memoryStore);
-  const planner = new Planner(llm, { emit: async (e) => { await eventBus.emit(e); } });
+
+  // Planner tools: device inspection queries (FREE, no LLM calls)
+  const plannerTools = createPlannerTools({
+    targets: { getState: (id) => targetStore.getState?.(id) ?? null },
+    memory: memoryStore,
+  });
+
+  const planner = new Planner(llm, { emit: async (e) => { await eventBus.emit(e); } }, plannerTools, 5);
   const reply = new ReplyGenerator(llm, eventStore, evidenceStore, runStore,
     memoryStore as never /* MemoryStore satisfies MemoryWriter at runtime */,
     { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } }, dataRoot,
+    prompts?.reply,
   );
 
   // 7. Tool layer — pass security policy from system config
@@ -151,12 +191,12 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   await skillRegistry.loadAll().catch(() => {});
 
   // Wire Observer Memory
-  const observerInst = new Observer(llm, memory);
+  const observerInst = new Observer(llm, memory, { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } });
 
-  const contextAssembler = new ContextAssembler(runStore, eventStore, targetStore, memoryStore, skillRegistry, prompts);
+  const contextAssembler = new ContextAssembler(runStore, eventStore, targetStore, memoryStore, evidenceStore, skillRegistry, prompts);
 
   // Adapters: bridge Agent types to RunManager's DI interfaces
-  const plannerAdapter = { call: async (sp: string, dc: Record<string, unknown>, runId?: string) => planner.call(sp, dc as never, runId) };
+  const plannerAdapter = { call: async (sp: string, fc: string, runId?: string) => planner.call(sp, fc, runId) };
   const replyAdapter = {
     generate: (rid: string) => reply.generate(rid),
     generateMinimal: (rid: string, reason: string) => reply.generateMinimal(rid, reason),
@@ -217,11 +257,13 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
     const obsDebounceSec = (obsCfg?.debounce_sec as number) ?? 30;
     return new DecisionHandler(
       eventBus, hm,
-      { decide: async (sp: string, input: Record<string, unknown>) => observerInst.decide(sp, input as never, runId) },
+      { decide: async (sp: string, fc: string, rid?: string, ts?: string, tt?: string, tsev?: string, cb?: boolean, we?: boolean, ki?: { fact_id: string; category: string; statement: string; extended_pattern?: string }[]) => observerInst.decide(sp, fc, rid, ts, tt, tsev, cb, we, ki) },
       { pause: (rid, r) => rm.pause(rid, r), cancel: (rid, r) => rm.cancel(rid, r), stopRun: (rid, r) => rm.stopRun(rid, r), appendStep: (rid, s) => rm.appendStep(rid, s) },
       { assembleObserverContext: async (rid: string, event: Record<string, unknown>, cbActive: boolean, warnEsc: boolean) => {
         const ctx = await contextAssembler.assembleObserverContext(rid, event as never, cbActive, warnEsc);
-        return { staticPrompt: ctx.staticPrompt, input: ctx.input as Record<string, unknown> };
+        const result: { staticPrompt: string; formattedContext: string; knownIssues?: { fact_id: string; category: string; statement: string; extended_pattern?: string }[] } = { staticPrompt: ctx.staticPrompt, formattedContext: ctx.formattedContext };
+        if (ctx.knownIssues) result.knownIssues = ctx.knownIssues;
+        return result;
       }},
       obsDebounceSec,
     );
@@ -239,7 +281,7 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   notifyFilter.start();
 
   // 11. CommandHandler — fully wired
-  const handler = new CommandHandler(rm, views);
+  const handler = new CommandHandler(rm, views, memoryStore, skillStore as never);
 
   // Recover from previous crash — stale runs + lock cleanup
   rm.setEventReader?.({ read: (rid: string, afterSeq?: number, limit?: number) => eventStore.read(rid, afterSeq, limit) });

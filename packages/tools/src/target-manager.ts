@@ -45,9 +45,17 @@ export class TargetManager {
       const fbConn = this.cm.get(t, "fastboot");
       if (fbConn?.flash) {
         try {
-          const [image, partition] = t.recovery.stable_artifact.split(":");
-          if (image && partition) await fbConn.flash(image, partition);
-        } catch { /* flash failed — continue */ }
+          const parts = t.recovery.stable_artifact.split(":");
+          const image = parts[0];
+          const partition = parts[1];
+          if (image && partition) {
+            await fbConn.flash(image, partition);
+          } else {
+            console.warn(`[TargetManager] Invalid stable_artifact format "${t.recovery.stable_artifact}" — expected "image:partition"`);
+          }
+        } catch (e) {
+          console.warn(`[TargetManager] Recovery flash failed for ${t.target_id}: ${(e as Error).message}`);
+        }
       }
     }
 

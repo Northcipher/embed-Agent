@@ -18,8 +18,11 @@
     "vitest": "^4.0.15"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.91.1",
+    "@ai-sdk/anthropic": "^3.0.73",
+    "@ai-sdk/openai": "^3.0.55",
+    "@ai-sdk/openai-compatible": "^2.0.43",
     "@embed-agent/contracts": "workspace:*",
-    "@embed-agent/stores": "workspace:*"
+    "@embed-agent/stores": "workspace:*",
+    "ai": "^6.0.171"
   }
 }

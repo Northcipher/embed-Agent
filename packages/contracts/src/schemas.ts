@@ -41,8 +41,9 @@ export const TargetProfileSchema = z.object({
 export const LLMConfigSchema = z.object({
   default_provider: z.string(),
   providers: z.record(z.string(), z.object({
-    type: z.string(),
+    type: z.enum(["anthropic", "openai", "openai-compatible"]),
     api_key_env: z.string(),
+    base_url: z.string().optional(),
     models: z.object({
       planner: z.string(),
       observer: z.string(),
@@ -52,13 +53,8 @@ export const LLMConfigSchema = z.object({
       planner: z.number(),
       observer: z.number(),
       reply: z.number(),
-    }),
+    }).optional(),
   })),
-  observer_policy: z.object({
-    debounce_sec: z.number(),
-    max_concurrent_per_run: z.number(),
-    default_checkpoint_interval: z.number(),
-  }),
 });
 
 // System Config Schema
@@ -123,6 +119,7 @@ export const SystemConfigSchema = z.object({
       window_sec: z.number(),
     }),
   }),
+  prompt_version: z.string().optional(),
 });
 
 // System config type

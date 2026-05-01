@@ -119,4 +119,6 @@ export interface AgentReply {
   suggested_next: string;
   evidence_path: string;
   confidence: number;
+  /** Per-criterion evaluation: one entry per success_criterion from the plan. */
+  criteria_results?: { criterion: string; status: "pass" | "fail" | "unknown"; evidence_refs: string[] }[];
 }
