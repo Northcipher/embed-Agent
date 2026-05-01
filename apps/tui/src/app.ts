@@ -18,6 +18,7 @@ interface StepSummary {
   hasFatal: boolean;
   evidenceBytes?: number;
   reason?: string;
+  observerDecisions: { decision: string; reason: string }[];
 }
 
 // Only aggregate step-level events; hide noise (llm_call, observation, evidence_collected, target_state_changed)
@@ -58,7 +59,7 @@ function buildStepSummaries(events: EventInfo[]): StepSummary[] {
       const sid = e.step_id ?? e.summary.replace("Step ", "").split(" ")[0] ?? "?";
       // Extract command from summary: "Step check-ssh started" → "check-ssh"
       const id = sid;
-      const step: StepSummary = { id, status: "running", hasWarning: false, hasFatal: false };
+      const step: StepSummary = { id, status: "running", hasWarning: false, hasFatal: false, observerDecisions: [] };
       const eb = evidenceSizes.get(sid);
       if (eb != null) step.evidenceBytes = eb;
       steps.set(id, step);
@@ -82,6 +83,16 @@ function buildStepSummaries(events: EventInfo[]): StepSummary[] {
       if (s) {
         if (e.severity === "fatal") s.hasFatal = true;
         if (e.severity === "warning") s.hasWarning = true;
+      }
+    }
+    // Attach Observer decisions to the current step
+    if (e.type === "decision_made" && e.step_id) {
+      const s = steps.get(e.step_id);
+      if (s) {
+        s.observerDecisions.push({
+          decision: e.summary.split(" ")[0] ?? "?",
+          reason: e.summary,
+        });
       }
     }
   }
@@ -338,9 +349,22 @@ function App({ handler }: { handler: CommandHandler }) {
       React.createElement(Box, { marginTop: 1 }),
 
       // Step summary — the main view
-      ...steps.map(s => React.createElement(Text, { key: s.id, color: stepColor(s) },
-        `${stepIcon(s)} ${s.id.slice(0, 28).padEnd(28)} ${(s.command ?? "").slice(0, 24).padEnd(24)} ${s.status === "failed" ? (s.reason ?? "").slice(0, 40) : s.evidenceBytes ? `${s.evidenceBytes}B evidence` : ""}`,
-      )),
+      ...steps.flatMap(s => {
+        const row = React.createElement(Text, { key: s.id, color: stepColor(s) },
+          `${stepIcon(s)} ${s.id.slice(0, 28).padEnd(28)} ${(s.command ?? "").slice(0, 24).padEnd(24)} ${s.status === "failed" ? (s.reason ?? "").slice(0, 40) : s.evidenceBytes ? `${s.evidenceBytes}B evidence` : ""}`,
+        );
+        // Observer decisions as annotated sub-lines
+        const decRows = s.observerDecisions.map((d, di) => {
+          // Parse decision type: "stop", "continue", "collect_more", "extend_wait", "pause", "suggest"
+          const decType = d.decision;
+          const decColor = decType === "stop" ? "red" : decType === "collect_more" ? "yellow" : decType === "suggest" ? "yellow" : decType === "pause" ? "yellow" : "green";
+          const symbol = decType === "stop" ? "🛑" : decType === "collect_more" ? "🔍" : decType === "extend_wait" ? "⏳" : decType === "pause" ? "⏸" : decType === "suggest" ? "💡" : "✓";
+          return React.createElement(Text, { key: `${s.id}-dec-${di}`, color: decColor, dimColor: decType === "continue" },
+            `     ${symbol} Observer: ${d.reason.slice(0, 70)}`,
+          );
+        });
+        return [row, ...decRows];
+      }),
       steps.length === 0 && React.createElement(Text, { dimColor: true }, "Waiting for steps..."),
 
       // Progress bar
@@ -363,11 +387,11 @@ function App({ handler }: { handler: CommandHandler }) {
         }),
       ),
 
-      // Transient events (only rule_matched, decision_made, run_paused/resumed)
+      // LLM call indicators (small, dim — shows when Observer/Planner/Reply consulted LLM)
       React.createElement(Box, { marginTop: 1 }),
-      ...events.filter(e => ["rule_matched", "decision_made", "run_paused", "run_resumed", "result_ready"].includes(e.type)).slice(-3).map(e =>
-        React.createElement(Text, { key: e.seq, color: severityColor(e.severity), dimColor: e.type === "result_ready" },
-          `  [${e.type}] ${e.summary.slice(0, 80)}`),
+      ...events.filter(e => e.type === "llm_call").slice(-2).map(e =>
+        React.createElement(Text, { key: e.seq, dimColor: true },
+          `  llm: ${e.summary.slice(0, 80)}`),
       ),
 
       terminal && React.createElement(Text, { color: stateColor(runStatus?.state), bold: true }, "Run finished. Press r for result."),
