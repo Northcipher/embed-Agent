@@ -51,12 +51,16 @@ export class TargetStore {
 
   async add(profile: TargetProfile): Promise<void> {
     await writeAtomic(path.join(this.dir(profile.target_id), "profile.json"), JSON.stringify(profile, null, 2));
-    const initState: TargetRuntimeState = {
-      target_id: profile.target_id, state: "idle",
-      serial: "disconnected", adb: "disconnected", fastboot: "disconnected",
-      updated_at: new Date().toISOString(),
-    };
-    await this.writeState(profile.target_id, initState);
+    // Only write initial state if no runtime state exists (preserve crash recovery data)
+    const existing = await this.getState(profile.target_id).catch(() => null);
+    if (!existing) {
+      const initState: TargetRuntimeState = {
+        target_id: profile.target_id, state: "idle",
+        serial: "disconnected", adb: "disconnected", fastboot: "disconnected",
+        updated_at: new Date().toISOString(),
+      };
+      await this.writeState(profile.target_id, initState);
+    }
   }
 
   async get(targetId: string): Promise<TargetProfile | null> {

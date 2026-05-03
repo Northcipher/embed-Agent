@@ -4,11 +4,18 @@ export class EventBus {
   private subs = new Map<string, Set<Handler>>();
   /** Per-run queues: serialize event delivery within each run_id for ordering guarantees. */
   private runQueues = new Map<string, Promise<void>>();
+  /** Reentrancy guard: tracks which run_ids are currently being delivered. */
+  private delivering = new Set<string>();
 
   async emit(event: Record<string, unknown>): Promise<void> {
     const runId = event.run_id as string | undefined;
 
     if (runId) {
+      // Detect nested emit with same run_id — deliver immediately to avoid deadlock
+      if (this.delivering.has(runId)) {
+        await this.deliver(event);
+        return;
+      }
       // Serialize within this run_id — chain behind the previous emit for the same run
       const prev = this.runQueues.get(runId) ?? Promise.resolve();
       const next = prev.then(() => this.deliver(event));
@@ -23,12 +30,18 @@ export class EventBus {
   }
 
   private async deliver(event: Record<string, unknown>): Promise<void> {
-    for (const [pattern, handlers] of this.subs) {
-      if (pattern === "*" || pattern === event.type) {
-        for (const h of handlers) {
-          try { await h(event); } catch (e) { console.error(`[EventBus] Subscriber error for ${event.type}:`, (e as Error).message); }
+    const runId = event.run_id as string | undefined;
+    if (runId) this.delivering.add(runId);
+    try {
+      for (const [pattern, handlers] of this.subs) {
+        if (pattern === "*" || pattern === event.type) {
+          for (const h of handlers) {
+            try { await h(event); } catch (e) { console.error(`[EventBus] error for ${event.type}:`, (e as Error).message); }
+          }
         }
       }
+    } finally {
+      if (runId) this.delivering.delete(runId);
     }
   }
 

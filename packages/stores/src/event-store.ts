@@ -65,13 +65,18 @@ export class EventStore {
     return next;
   }
 
+  // Per-file last seq cache — avoids O(n²) re-reading of event logs
+  private lastSeqCache = new Map<string, number>();
+
   async append(runId: string, event: AppendEvent): Promise<{ seq: number }> {
     const file = this.runEventsPath(runId);
     let seq = 0;
 
     await this.serialized(file, async () => {
       await fs.mkdir(path.dirname(file), { recursive: true });
-      seq = (await readLastSeq(file)) + 1;
+      const cached = this.lastSeqCache.get(file);
+      seq = (cached ?? await readLastSeq(file)) + 1;
+      this.lastSeqCache.set(file, seq);
       await fs.appendFile(file, JSON.stringify({ ...event, seq, time: new Date().toISOString() }) + "\n", "utf-8");
     });
 
@@ -128,6 +133,7 @@ export class EventStore {
         const entry = event as unknown as AppendEvent;
         if (event.run_id) {
           const { seq } = await this.append(event.run_id as string, entry);
+          (event as Record<string, unknown>).seq = seq; // write back for downstream handlers
           if (runStore) {
             await runStore.updateLastEventSeq(event.run_id as string, seq).catch(() => {});
           }

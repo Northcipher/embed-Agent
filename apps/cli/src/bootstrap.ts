@@ -1,14 +1,14 @@
 import { ConfigLoader, Logger, PromptLoader, EventStore, EvidenceStore, RunStore, TargetStore, MemoryStore, SkillStore } from "@embed-agent/stores";
 import { EventBus, ContextAssembler, RunManager, HookManager, StepExecutor, DecisionHandler } from "@embed-agent/runtime";
 import { ConnectionManager, TargetManager, OutputPipe, RingBuffer, RuleDetector, Aggregator } from "@embed-agent/tools";
-import { LLMCallManager, MockProvider, AIAnthropicProvider, AIOpenAIProvider, AIOpenAICompatibleProvider, type LLMProvider, Planner, Observer, ReplyGenerator, Memory, SkillRegistry, createPlannerTools } from "@embed-agent/agent";
+import { LLMCallManager, MockProvider, AIAnthropicProvider, AIOpenAIProvider, AIOpenAICompatibleProvider, DeepSeekProvider, DeepSeekOpenAIProvider, type LLMProvider, Planner, Observer, ReplyGenerator, Memory, SkillRegistry, createPlannerTools } from "@embed-agent/agent";
 import { NotificationFilter, LogChannel } from "@embed-agent/notify";
 import { Views } from "@embed-agent/views";
 import { SystemConfigSchema, LLMConfigSchema, HookConfigSchema, TargetProfileSchema } from "@embed-agent/contracts";
 import { CommandHandler } from "./command-handler.js";
 import { runCli } from "./cli.js";
 
-interface BootstrapResult {
+export interface BootstrapResult {
   handler: CommandHandler;
   logger: Logger;
   shutdown: () => Promise<void>;
@@ -109,6 +109,12 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
     }
     llmProvider = new AIOpenAICompatibleProvider(providerBaseUrl, providerApiKey);
     log.info(`LLM: OpenAI-compatible @ ${providerBaseUrl}`);
+  } else if (providerType === "deepseek") {
+    llmProvider = new DeepSeekProvider(providerApiKey, providerBaseUrl);
+    log.info(`LLM: DeepSeek Anthropic-compatible${providerBaseUrl ? ` @ ${providerBaseUrl}` : ""}`);
+  } else if (providerType === "deepseek-openai") {
+    llmProvider = new DeepSeekOpenAIProvider(providerApiKey, providerBaseUrl);
+    log.info(`LLM: DeepSeek OpenAI-compatible${providerBaseUrl ? ` @ ${providerBaseUrl}` : ""}`);
   } else {
     logger.error(`Unknown LLM provider type: ${providerType}`);
     process.exit(1);
@@ -124,10 +130,11 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   // Wire observer CB4 config from system.yml
   const obsCfg = (systemConfig?.observer as Record<string, unknown>);
   const cb4Cfg = obsCfg?.circuit_breaker as Record<string, unknown> | undefined;
-  const llmRetry = {
-    maxRetries: (cb4Cfg?.max_failures as number) ?? 3,
+  const cbConfig = {
+    maxFailures: (cb4Cfg?.max_failures as number) ?? 3,
+    probeAfterSec: (cb4Cfg?.probe_after_sec as number) ?? 300,
   };
-  const llm = new LLMCallManager(llmProvider, models, llmRetry);
+  const llm = new LLMCallManager(llmProvider, models, { maxRetries: 2 }, cbConfig);
 
   // 5. Load prompts — version from config, fallback to "1"
   const promptVersion = (systemConfig?.prompt_version as string) ?? "1";
@@ -156,9 +163,12 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   const memory = new Memory(memoryStore);
 
   // Planner tools: device inspection queries (FREE, no LLM calls)
+  // SkillStore must be created before plannerTools for searchSkills tool
+  const skillStore = new SkillStore(dataRoot);
   const plannerTools = createPlannerTools({
-    targets: { getState: (id) => targetStore.getState?.(id) ?? null },
+    targets: { getState: (id) => targetStore.getState?.(id) ?? null, get: (id) => targetStore.get(id) },
     memory: memoryStore,
+    skills: skillStore,
   });
 
   const planner = new Planner(llm, { emit: async (e) => { await eventBus.emit(e); } }, plannerTools, 5);
@@ -185,8 +195,7 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   const hooks = (hooksConfig?.hooks ?? []) as never[];
   const hm = new HookManager(hooks as never, { emit: async (e: Record<string, unknown>) => { await eventBus.emit(e); } });
 
-  // Create SkillRegistry + load skills
-  const skillStore = new SkillStore(dataRoot);
+  // Create SkillRegistry + load skills (skillStore created above for plannerTools)
   const skillRegistry = new SkillRegistry(skillStore);
   await skillRegistry.loadAll().catch(() => {});
 
@@ -214,6 +223,11 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
     const ag = new Aggregator(eventBus);
     ag.setRunId(runId);
 
+    // Start periodic checkpoint timer (DecisionHandler subscribes to checkpoint events)
+    const checkpointMs = ((systemConfig?.observer as Record<string, unknown>)?.default_checkpoint_interval_sec as number ?? 300) * 1000;
+    const checkpointTimer = setInterval(() => { ag.checkpoint().catch(() => {}); }, checkpointMs);
+    rm.checkpointTimers.set(runId, checkpointTimer);
+
     // Per-step OutputPipe factory: creates RuleDetector + RingBuffer per step, shares Aggregator
     const pipeFactory = (stepId: string) => {
       const ringCfg = (systemConfig?.runtime as Record<string, unknown>)?.ring_buffer as Record<string, unknown> | undefined;
@@ -233,9 +247,7 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
       );
 
       const ew = {
-        append: (d: string) => {
-          evidenceStore.write(runId, `step-${stepId}:full`, d).catch(() => {});
-        },
+        append: (d: string) => evidenceStore.append(runId, `step-${stepId}:full`, d),
       };
 
       const silenceMs = ((sysRules?.silence_timeout_sec as number) ?? 60) * 1000;
@@ -255,9 +267,12 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   });
   rm.setDecisionHandlerFactory((runId: string) => {
     const obsDebounceSec = (obsCfg?.debounce_sec as number) ?? 30;
+    // Share ignored rules across DecisionHandler instances within the same run
+    let ignoredRules = rm.ignoredRules.get(runId);
+    if (!ignoredRules) { ignoredRules = new Set(); rm.ignoredRules.set(runId, ignoredRules); }
     return new DecisionHandler(
       eventBus, hm,
-      { decide: async (sp: string, fc: string, rid?: string, ts?: string, tt?: string, tsev?: string, cb?: boolean, we?: boolean, ki?: { fact_id: string; category: string; statement: string; extended_pattern?: string }[]) => observerInst.decide(sp, fc, rid, ts, tt, tsev, cb, we, ki) },
+      { decide: async (sp: string, fc: string, rid?: string) => observerInst.decide(sp, fc, rid) },
       { pause: (rid, r) => rm.pause(rid, r), cancel: (rid, r) => rm.cancel(rid, r), stopRun: (rid, r) => rm.stopRun(rid, r), appendStep: (rid, s) => rm.appendStep(rid, s) },
       { assembleObserverContext: async (rid: string, event: Record<string, unknown>, cbActive: boolean, warnEsc: boolean) => {
         const ctx = await contextAssembler.assembleObserverContext(rid, event as never, cbActive, warnEsc);
@@ -266,6 +281,7 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
         return result;
       }},
       obsDebounceSec,
+      ignoredRules,
     );
   });
 
@@ -281,7 +297,7 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   notifyFilter.start();
 
   // 11. CommandHandler — fully wired
-  const handler = new CommandHandler(rm, views, memoryStore, skillStore as never);
+  const handler = new CommandHandler(rm, views, memoryStore, skillStore as never, eventBus);
 
   // Recover from previous crash — stale runs + lock cleanup
   rm.setEventReader?.({ read: (rid: string, afterSeq?: number, limit?: number) => eventStore.read(rid, afterSeq, limit) });

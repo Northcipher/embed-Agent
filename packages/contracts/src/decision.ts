@@ -2,15 +2,12 @@ export type DecisionType =
   | "stop"
   | "continue"
   | "collect_more"
+  | "collect_evidence"
   | "extend_wait"
   | "pause"
-  | "resume"
-  | "cancel"
-  | "ignore_rule"
   | "suggest"
   | "observe_more_frequent"
-  | "observe_again_at"
-  | "override_decision";
+  | "observe_again_at";
 
 export interface Decision {
   decision: DecisionType;
@@ -21,6 +18,7 @@ export interface Decision {
   params?: {
     extra_wait_sec?: number;
     logs?: string[];
+    commands?: string[];
     timeout_sec?: number;
     observe_interval?: number;
     observe_at?: number;

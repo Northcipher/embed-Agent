@@ -168,7 +168,13 @@ function App({ handler }: { handler: CommandHandler }) {
           const page = await handler.events(activeRunId, afterSeqRef.current, 200);
           if (active && page.events.length > 0) {
             // Collect ALL events (need evidence_collected for byte counts, step events for aggregation)
-            setEvents(prev => [...prev, ...page.events].slice(-1000));
+            // Keep all step events for correct summary derivation, cap display events
+            setEvents(prev => {
+              const combined = [...prev, ...page.events];
+              const stepEvents = combined.filter(e => e.type.startsWith("step_"));
+              const others = combined.filter(e => !e.type.startsWith("step_")).slice(-500);
+              return [...stepEvents, ...others].slice(-2000);
+            });
             afterSeqRef.current = page.next_after_seq;
           }
           const s = await handler.status(activeRunId);

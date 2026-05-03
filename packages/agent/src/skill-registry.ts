@@ -38,10 +38,18 @@ export class SkillRegistry {
     }));
   }
 
-  /** Load full skill steps for the matched skills to include in Planner context.
-   *  Substitutes {{param_name}} placeholders in step commands with default values. */
-  loadMatchedSteps(task: string, n = 3): (Skill & { steps: NonNullable<Skill["steps"]> })[] {
-    return this.match(task).slice(0, n)
+  /**
+   * Load skill steps with random perturbation.
+   *
+   * Fetches up to `candidatePool` matches, then randomly samples `n` from the pool
+   * using reservoir sampling. This prevents the model from memorizing and lazily
+   * copying a fixed top-N — each Planner call sees different (but relevant) examples.
+   */
+  loadMatchedSteps(task: string, n = 3, candidatePool = 20): (Skill & { steps: NonNullable<Skill["steps"]> })[] {
+    const candidates = this.match(task).slice(0, candidatePool);
+    const sampled = reservoirSample(candidates, Math.min(n, candidates.length));
+
+    return sampled
       .map(s => this.get(s.name))
       .filter((s): s is Skill => s != null)
       .filter(s => s.steps && s.steps.length > 0)
@@ -86,4 +94,19 @@ export class SkillRegistry {
     };
     await this.store.create(name, skill);
   }
+}
+
+/**
+ * Reservoir sampling — randomly select k items from a stream.
+ * Ensures each item has equal probability of being selected.
+ * Used to perturb few-shot examples so the model doesn't memorize a fixed top-N.
+ */
+function reservoirSample<T>(items: T[], k: number): T[] {
+  if (items.length <= k) return [...items];
+  const result = items.slice(0, k);
+  for (let i = k; i < items.length; i++) {
+    const j = Math.floor(Math.random() * (i + 1));
+    if (j < k) result[j] = items[i]!;
+  }
+  return result;
 }

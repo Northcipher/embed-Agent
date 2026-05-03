@@ -86,6 +86,16 @@ export class ConnectionManager {
     return this.get(target, "adb") ?? this.get(target, "ssh") ?? this.get(target, "local");
   }
 
+  /** Check if a shell command is in the whitelist. "*" means allow all. */
+  isShellCommandAllowed(command: string): boolean {
+    if (!this.shellAllowed || this.shellAllowed.size === 0) return false;
+    if (this.shellAllowed.has("*")) return true;
+    for (const allowed of this.shellAllowed) {
+      if (command === allowed || command.startsWith(allowed + " ")) return true;
+    }
+    return false;
+  }
+
   private wireDisconnect(targetId: string, transport: Transport, conn: Connection): void {
     if (!this.eb) return;
     const prev = conn.onDisconnect;

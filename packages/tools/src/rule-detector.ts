@@ -61,8 +61,8 @@ export class RuleDetector {
   detect(line: string, lineIdx: number): void {
     for (const r of this.active) {
       if (r.kind === "pattern" && r.pattern?.test(line)) {
-        const after = r.capture?.after_lines ?? 80;
-        const ref = r.capture?.ref ?? "serial:last-window";
+        const after = r.capture?.after_lines ?? (r.severity === "fatal" ? 0 : 80);
+        const ref = r.capture?.ref ?? `serial:last-window:${r.id}`;
         this.pending.push({ rule: r, lineIdx, ref, remaining: after });
       }
     }

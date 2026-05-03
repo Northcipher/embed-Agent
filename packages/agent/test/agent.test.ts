@@ -201,7 +201,7 @@ describe("Observer", () => {
       "**Warning Escalation**: no",
     ].join("\n");
 
-    const decision = await observer.decide(staticPrompt, formattedContext, undefined, "periodic", "checkpoint", "info");
+    const decision = await observer.decide(staticPrompt, formattedContext);
 
     expect(decision.decision).toBe("continue");
     expect(decision.confidence).toBe(0.9);
@@ -247,9 +247,12 @@ describe("Observer", () => {
       "**Warning Escalation**: no",
     ].join("\n");
 
-    const decision = await observer.decide(staticPrompt, formattedContext, undefined, "kernel panic", "rule_matched", "fatal");
+    const decision = await observer.decide(staticPrompt, formattedContext);
 
-    expect(decision.decision).toBe("stop");
+    // v2: Observer no longer has hard-wired severity→decision fallback.
+    // Fallback for garbled LLM output returns "continue" (safe default).
+    // DecisionHandler applies post-LLM overrides for fatal severity.
+    expect(decision.decision).toBe("continue");
     expect(decision.confidence).toBe(0.3); // fallback confidence
   });
 });

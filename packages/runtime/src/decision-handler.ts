@@ -1,3 +1,13 @@
+/**
+ * DecisionHandler v2 — event → Observer (always LLM) → post-LLM safety net → execution.
+ *
+ * Changes from v1:
+ *   - No fatal bypass: fatal events go through Observer like everything else.
+ *   - No info skip: all severities are evaluated by Observer.
+ *   - No CB1 pre-LLM early return: CB1/CB3 are post-LLM safety nets in executeDecision.
+ *   - OnStopDecision hook fires in executeDecision for 'stop' decisions (post-Observer).
+ *   - Observer interface simplified: decide(staticPrompt, formattedContext, runId).
+ */
 import type { Decision } from "@embed-agent/contracts";
 import type { HookManager } from "./hook-manager.js";
 
@@ -7,7 +17,7 @@ interface EventEmitter {
 }
 
 interface ObserverCaller {
-  decide(staticPrompt: string, formattedContext: string, runId?: string, triggerSummary?: string, triggerType?: string, triggerSeverity?: string, cbActive?: boolean, warnEsc?: boolean, knownIssues?: { fact_id: string; category: string; statement: string; extended_pattern?: string }[]): Promise<Decision>;
+  decide(staticPrompt: string, formattedContext: string, runId?: string): Promise<Decision>;
 }
 
 interface RunController {
@@ -33,6 +43,10 @@ interface ContextProvider {
 
 export type DecisionResult = Decision;
 
+// ============================================================
+// CB1: ObserverOverrideBreaker
+// ============================================================
+
 export class ObserverOverrideBreaker {
   private overrides = 0;
   private readonly MAX = 3;
@@ -44,6 +58,10 @@ export class ObserverOverrideBreaker {
   reset(): void { this.overrides = 0; }
 }
 
+// ============================================================
+// CB3: WarningAccumulator
+// ============================================================
+
 export class WarningAccumulator {
   private rules = new Set<string>();
 
@@ -53,6 +71,10 @@ export class WarningAccumulator {
 
   reset(): void { this.rules.clear(); }
 }
+
+// ============================================================
+// DecisionHandler
+// ============================================================
 
 export class DecisionHandler {
   private overrideBreaker = new ObserverOverrideBreaker();
@@ -70,6 +92,7 @@ export class DecisionHandler {
     private runController: RunController,
     private contextProvider: ContextProvider,
     private debounceSec = 30,
+    private ignoredRules?: Set<string>, // shared across DH instances per run
   ) {}
 
   /** Begin watching a run. CB1/CB3 persist across steps — only reset on first attach per run. */
@@ -87,7 +110,7 @@ export class DecisionHandler {
 
     this.unsub?.();
     this.unsub = this.eb.subscribe(
-      ["rule_matched", "checkpoint", "correlated", "baseline_diff", "human_note", "target_state_changed"],
+      ["rule_matched", "checkpoint", "correlated", "baseline_diff", "human_note", "target_state_changed", "rule_ignored"],
       e => { this.handleEvent(e); },
     );
   }
@@ -95,7 +118,6 @@ export class DecisionHandler {
   detach(): void {
     this.unsub?.();
     this.unsub = null;
-    // Don't reset initialized — breakers persist across steps in same run
   }
 
   /** Human override — CB1 counter */
@@ -104,52 +126,37 @@ export class DecisionHandler {
     this.eb.emit({ type: "decision_overridden", run_id: this.runId, source: "decision_handler", summary: "Human override" });
   }
 
+  // ============================================================
+  // Event handling — all events go through Observer (no bypasses)
+  // ============================================================
+
   private async handleEvent(event: Record<string, unknown>): Promise<void> {
-    // Cross-run isolation: ignore events from other runs
+    // Cross-run isolation
     if (event.run_id !== this.runId) return;
 
     const severity = (event.severity as string) ?? "info";
-    // Derive specific trigger key: rule_id preferred, then type+entity for non-rule events
-    const ruleId = (event.rule_id as string) ?? `${event.type}-${(event.payload as Record<string, unknown>)?.stage ?? (event.payload as Record<string, unknown>)?.sources ?? (event.payload as Record<string, unknown>)?.metric ?? ""}`;
+    const ruleId = (event.rule_id as string) ??
+      `${event.type}-${(event.payload as Record<string, unknown>)?.stage ?? (event.payload as Record<string, unknown>)?.sources ?? (event.payload as Record<string, unknown>)?.metric ?? ""}`;
 
-    // fatal → stop (failed path, not cancelled). Bypasses CB1/CB3.
-    if (severity === "fatal") {
-      const hookResult = await this.hm.execute("OnStopDecision", {
-        run_id: this.runId, rule_id: ruleId, event_type: event.type, severity,
-      });
-      if (hookResult.decision === "block") {
-        await this.runController.pause(this.runId, `OnStopDecision hook blocked: ${hookResult.reason ?? "no reason"}`);
-        return;
-      }
-      return this.executeDecision({
-        decision: "stop",
-        reason: `Fatal rule "${ruleId}" matched`,
-        confidence: 1.0,
-        reasoning_trace: `Rule ${ruleId} severity is fatal`,
-        evidence_refs: (event.evidence_refs as string[]) ?? [],
-      });
-    }
-
-    // CB1: active → only suggest (never stop/pause)
-    if (this.overrideBreaker.isActive()) {
-      this.eb.emit({
-        type: "suggestion_generated", run_id: this.runId, source: "decision_handler",
-        summary: `Auto-stop disabled (CB1). Rule "${ruleId}" severity=${severity}`,
-        payload: { rule_id: ruleId },
-      });
+    // Handle rule_ignored events — add to skip set, no Observer call needed
+    if (event.type === "rule_ignored") {
+      const rid = (event.payload as Record<string, unknown>)?.rule_id as string;
+      if (rid) this.ignoredRules?.add(rid);
       return;
     }
 
-    // debounce by rule_id
+    // Skip if this rule was explicitly ignored by a human operator
+    if (this.ignoredRules?.has(ruleId)) return;
+
+    // Debounce by rule_id — prevent duplicate Observer calls for the same trigger
     if (this.isDebounced(ruleId)) return;
 
-    // info → skip Observer (don't accumulate in CB3)
-    if (severity === "info") return;
-
     // CB3: accumulate distinct warnings (only warning+ severity)
-    this.warningAccum.record(ruleId);
+    if (severity === "warning" || severity === "fatal") {
+      this.warningAccum.record(ruleId);
+    }
 
-    // warning → call Observer
+    // All events → Observer (no bypasses for fatal/info/CB1)
     try {
       const ctx = await this.contextProvider.assembleObserverContext(
         this.runId, event,
@@ -159,14 +166,8 @@ export class DecisionHandler {
       const decision = await this.observer.decide(
         ctx.staticPrompt, ctx.formattedContext,
         this.runId,
-        (event.summary as string) ?? "",
-        (event.type as string) ?? "",
-        (event.severity as string) ?? "info",
-        this.overrideBreaker.isActive(),
-        this.warningAccum.isEscalated(),
-        ctx.knownIssues,
       );
-      await this.executeDecision(decision);
+      await this.executeDecision(decision, event);
     } catch (e) {
       this.eb.emit({
         type: "decision_rejected", run_id: this.runId, source: "decision_handler",
@@ -184,8 +185,13 @@ export class DecisionHandler {
     return false;
   }
 
+  // ============================================================
+  // Decision validation + post-LLM safety nets + execution
+  // ============================================================
+
   private readonly VALID_DECISIONS = new Set<string>([
-    "stop", "continue", "collect_more", "extend_wait", "pause", "suggest", "observe_more_frequent", "observe_again_at",
+    "stop", "continue", "collect_more", "collect_evidence", "extend_wait",
+    "pause", "suggest", "observe_more_frequent", "observe_again_at",
   ]);
 
   private validateDecision(d: DecisionResult): boolean {
@@ -195,7 +201,7 @@ export class DecisionHandler {
     return true;
   }
 
-  private async executeDecision(d: DecisionResult): Promise<void> {
+  private async executeDecision(d: DecisionResult, event: Record<string, unknown>): Promise<void> {
     // Validate before accepting
     if (!this.validateDecision(d)) {
       this.eb.emit({
@@ -206,47 +212,137 @@ export class DecisionHandler {
       return;
     }
 
+    // ============================================================
+    // Post-LLM safety nets — applied AFTER Observer returns
+    // ============================================================
+
+    let effectiveDecision = d.decision;
+    let effectiveReason = d.reason;
+
+    // CB1: Override breaker active → downgrade "stop" to "suggest"
+    if (this.overrideBreaker.isActive() && effectiveDecision === "stop") {
+      effectiveDecision = "suggest";
+      effectiveReason = `[CB1] Auto-stop disabled. Original: ${d.reason}`;
+    }
+
+    // CB3: Warning escalation active + decision is "stop" (non-fatal event) → downgrade to "suggest"
+    if (
+      this.warningAccum.isEscalated() &&
+      effectiveDecision === "stop" &&
+      (event.severity as string) !== "fatal"
+    ) {
+      effectiveDecision = "suggest";
+      effectiveReason = `[CB3] Warning escalation. Original: ${d.reason}`;
+    }
+
+    // Fatal safety net: Observer returned a non-stop decision for a fatal signal.
+    // Fatal events (kernel panic, hardware fault) must stop the run.
+    // Only "stop" and "pause" (human investigation) are valid responses.
+    const isFatal = (event.severity as string) === "fatal";
+    const nonStopping = ["continue", "collect_more", "collect_evidence", "extend_wait", "suggest", "observe_more_frequent", "observe_again_at"];
+    if (isFatal && nonStopping.includes(effectiveDecision)) {
+      effectiveDecision = "stop";
+      effectiveReason = `[FATAL] Fatal signal requires stop. Observer returned "${d.decision}". Original: ${d.reason}`;
+    }
+
+    // Build the effective decision for emission
+    const effective: Decision = {
+      decision: effectiveDecision,
+      reason: effectiveReason,
+      confidence: d.confidence,
+      reasoning_trace: d.reasoning_trace,
+      evidence_refs: d.evidence_refs ?? [],
+    };
+    if (d.params != null) effective.params = d.params;
+    if (d.suggestion != null) effective.suggestion = d.suggestion;
+
+    // ============================================================
+    // Emit decision_made event
+    // ============================================================
+    const source = effectiveDecision === "stop" && effective.confidence === 1.0 ? "rule_reflex" : "observer";
     this.eb.emit({
-      type: "decision_made", source: d.decision === "stop" && d.confidence === 1.0 ? "rule_reflex" : "observer",
+      type: "decision_made", source,
       run_id: this.runId,
-      summary: d.reason,
-      payload: { decision: d.decision, confidence: d.confidence, reasoning_trace: d.reasoning_trace },
-      evidence_refs: d.evidence_refs,
+      step_id: event.step_id as string | undefined,
+      summary: effectiveDecision === d.decision ? d.reason : effectiveReason,
+      payload: {
+        decision: effectiveDecision,
+        confidence: effective.confidence,
+        reasoning_trace: effective.reasoning_trace,
+        ...(effectiveDecision !== d.decision ? { original_decision: d.decision } : {}),
+      },
+      evidence_refs: effective.evidence_refs,
     });
 
-    switch (d.decision) {
-      case "stop":
-        await this.runController.stopRun(this.runId, d.reason);
+    // ============================================================
+    // Execute
+    // ============================================================
+
+    switch (effectiveDecision) {
+      case "stop": {
+        // OnStopDecision hook — fires post-Observer, pre-stop
+        const hookResult = await this.hm.execute("OnStopDecision", {
+          run_id: this.runId,
+          rule_id: (event.rule_id as string) ?? event.type,
+          decision_reason: effectiveReason,
+          event_type: event.type,
+          severity: event.severity,
+        });
+        if (hookResult.decision === "block") {
+          await this.runController.pause(this.runId, `OnStopDecision hook blocked stop: ${hookResult.reason ?? "no reason"}`);
+          break;
+        }
+        await this.runController.stopRun(this.runId, effectiveReason);
         break;
+      }
       case "pause":
-        await this.runController.pause(this.runId, d.reason);
+        await this.runController.pause(this.runId, effectiveReason);
         break;
       case "extend_wait":
-        if (d.params?.extra_wait_sec) {
-          this.stepExecutor?.extendTimeout(d.params.extra_wait_sec);
+        if (effective.params?.extra_wait_sec) {
+          this.stepExecutor?.extendTimeout(effective.params.extra_wait_sec);
         }
         break;
       case "collect_more":
-        if (d.params?.logs?.length) {
-          const timeout = d.params.timeout_sec ?? 60;
-          for (const logCmd of d.params.logs) {
+      case "collect_evidence": {
+        const cmds = effective.params?.logs ?? effective.params?.commands;
+        if (cmds?.length) {
+          const timeout = effective.params?.timeout_sec ?? 60;
+          let idx = 0;
+          for (const cmd of cmds) {
             this.runController.appendStep?.(this.runId, {
-              id: `collect_${Date.now()}`,
+              id: `collect_${Date.now()}_${idx++}`,
               capability: "collect_logs",
               action: "exec",
-              command: logCmd,
+              command: cmd,
               timeout_sec: timeout,
             });
           }
         }
-        break;
+        break; }
       case "suggest":
         this.eb.emit({
           type: "suggestion_generated", source: "observer", run_id: this.runId,
-          summary: d.suggestion ?? d.reason, payload: { suggestion: d.suggestion },
+          summary: effective.suggestion ?? effectiveReason, payload: { suggestion: effective.suggestion },
         });
         break;
-      // continue, observe_more_frequent, observe_again_at → no immediate action
+      case "observe_more_frequent":
+        // Halve debounce to increase Observer responsiveness
+        this.debounceSec = Math.max(5, Math.floor(this.debounceSec / 2));
+        this.eb.emit({
+          type: "observation", run_id: this.runId, source: "decision_handler", severity: "info",
+          summary: `Observation frequency increased (debounce now ${this.debounceSec}s)`,
+          payload: { new_debounce_sec: this.debounceSec },
+        });
+        break;
+      case "observe_again_at":
+        this.eb.emit({
+          type: "observation", run_id: this.runId, source: "decision_handler", severity: "info",
+          summary: `Observer scheduled re-check at +${effective.params?.observe_at ?? "?"}s`,
+          payload: { observe_at: effective.params?.observe_at },
+        });
+        break;
+      // continue → no immediate action
       default:
         break;
     }

@@ -1,7 +1,15 @@
+/**
+ * Planner v2 — exploration-first plan generation with tool-calling output.
+ *
+ * Primary path: model explores device state, capabilities, and skill patterns
+ *   using injected tools, then submits the plan via the submitPlan tool.
+ * Fallback: text output parsed via parsePlan (retained for degraded scenarios).
+ */
 import type { ToolSet } from "ai";
 import type { Step, Plan } from "@embed-agent/contracts";
 import { Agent, type AgentConfig } from "./agent.js";
 import type { LLMCallManager } from "./llm.js";
+import { submitPlanTool, type SubmitPlanInput } from "./output-tools.js";
 
 export type { Plan };
 
@@ -30,6 +38,10 @@ interface PlanEmitter {
   emit(e: Record<string, unknown>): Promise<void>;
 }
 
+// ============================================================
+// Fallback: parse plan from text (used when tool path unavailable)
+// ============================================================
+
 function parsePlan(content: string): PlanResult {
   try {
     const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -44,7 +56,9 @@ function parsePlan(content: string): PlanResult {
       };
     }
 
-    const plan = parsed as unknown as Plan;
+    // Handle common LLM wrappers: {"plan": {...}} or top-level plan
+    const planData = (parsed.plan as Record<string, unknown>) ?? parsed;
+    const plan = planData as unknown as Plan;
     if (!plan.steps || !Array.isArray(plan.steps) || plan.steps.length === 0) {
       return { status: "clarification_needed", missing_info: ["plan has no steps"], suggested_next: "provide more details about validation steps" };
     }
@@ -64,7 +78,7 @@ function parsePlan(content: string): PlanResult {
       plan: {
         ...plan,
         plan_id: plan.plan_id ?? generateId(),
-        evidence_policy: plan.evidence_policy ?? FALLBACK_PLAN.evidence_policy,
+        evidence_policy: (plan.evidence_policy ?? (planData as any).evidence) ?? FALLBACK_PLAN.evidence_policy,
         success_criteria: plan.success_criteria ?? FALLBACK_PLAN.success_criteria,
         failure_signals: plan.failure_signals ?? FALLBACK_PLAN.failure_signals,
         estimated_duration_sec: plan.estimated_duration_sec ?? FALLBACK_PLAN.estimated_duration_sec,
@@ -75,17 +89,92 @@ function parsePlan(content: string): PlanResult {
   }
 }
 
+// ============================================================
+// Tool handler: submitPlan args → PlanResult
+// ============================================================
+
+function toolArgsToPlan(args: SubmitPlanInput): PlanResult {
+  const plan: Plan = {
+    plan_id: args.plan_id,
+    estimated_duration_sec: args.estimated_duration_sec,
+    steps: args.steps.map(s => {
+      const step: Step = {
+        id: s.id,
+        action: s.action,
+        capability: s.capability,
+        timeout_sec: s.timeout_sec,
+      };
+      if (s.command != null) step.command = s.command;
+      if (s.condition != null) step.condition = s.condition;
+      if (s.on_failure != null) step.on_failure = s.on_failure;
+      if (s.observe != null) step.observe = s.observe as any;
+      if (s.retry_policy != null) step.retry_policy = s.retry_policy as any;
+      if (s.src != null) step.src = s.src;
+      if (s.dst != null) step.dst = s.dst;
+      return step;
+    }),
+    evidence_policy: args.evidence_policy,
+    success_criteria: args.success_criteria,
+    failure_signals: args.failure_signals,
+  };
+  return { status: "planned", plan };
+}
+
+// ============================================================
+// Planner
+// ============================================================
+
 export class Planner {
   private agent: Agent<PlanResult>;
   private eb: PlanEmitter | undefined;
 
-  constructor(llm: LLMCallManager, eb?: PlanEmitter, tools?: ToolSet, maxSteps = 1) {
+  constructor(llm: LLMCallManager, eb?: PlanEmitter, tools?: ToolSet, stepCount = 8) {
     const config: AgentConfig<PlanResult> = {
       parse: parsePlan,
       fallback: () => ({ status: "planned", plan: { ...FALLBACK_PLAN, plan_id: generateId() } }),
+      outputTool: {
+        name: "submitPlan",
+        schema: submitPlanTool.inputSchema,
+        handler: (args: Record<string, unknown>) => toolArgsToPlan(args as SubmitPlanInput),
+      },
+      stepCount,
+      textFallbackPrefix: [
+        "You are an Embed Agent Task Planner in text-only mode (no tools available).",
+        "Create a concrete validation plan for an embedded device. Output ONLY a JSON plan — no explanation, no natural language, no markdown outside the JSON.",
+        "",
+        "## Valid Capability × Action combinations:",
+        "- serial_output → stream (serial console output)",
+        "- shell_exec → exec (device shell via ADB)",
+        "- adb_logs → stream or exec (logcat -d dump)",
+        "- wait_adb → wait (wait for device ready)",
+        "- flash → flash (format: image_path:partition)",
+        "- push → push (format: src:dst)",
+        "- collect_logs → exec (dmesg, logcat)",
+        "- local_exec → exec (host machine command)",
+        "- ssh_exec → exec (device shell via SSH)",
+        "",
+        "## Typical execution order:",
+        "1. stream serial_output (observe boot, 60-180s timeout)",
+        "2. wait_adb (wait for device, 30-120s timeout)",
+        "3. shell_exec (verify with commands, 15-30s timeout)",
+        "4. collect_logs (collect dmesg/logcat, 15-60s timeout)",
+        "",
+        "## Output format (inside ```json code block):",
+        "{",
+        '  "plan_id": "<unique-id>",',
+        '  "estimated_duration_sec": <number>,',
+        '  "steps": [',
+        '    {"id": "<kebab>", "action": "<from-above>", "capability": "<from-above>", "command": "<only for exec/flash/push>", "timeout_sec": <number>}',
+        "  ],",
+        '  "evidence_policy": {"always": ["serial:full", "dmesg"], "on_failure": ["serial:last-window", "logcat"]},',
+        '  "success_criteria": ["<concrete>"],',
+        '  "failure_signals": ["<concrete>"]',
+        "}",
+        "",
+        "NOW OUTPUT THE PLAN:",
+      ].join("\n"),
     };
     if (tools) config.tools = tools;
-    if (maxSteps > 1) config.maxSteps = maxSteps;
     this.agent = new Agent("planner", llm, config, eb as unknown as { emit(e: Record<string, unknown>): Promise<void> } | undefined);
     this.eb = eb;
   }

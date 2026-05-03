@@ -68,7 +68,7 @@ const handlers = {
   get_run_status: async (input: Record<string, unknown>) => {
     const s = await handler.status((input.run_id as string) ?? "");
     if (!s) return { summary: `Run "${input.run_id}" not found`, data: { run_id: input.run_id as string, state: "unknown", elapsed_sec: 0, last_event_seq: 0, evidence_path: "" } };
-    return { summary: `${s.run_id}: ${s.state}, ${s.elapsed_sec}s elapsed${s.current_step ? `, step: ${s.current_step.id}` : ""}`, data: { run_id: s.run_id, state: s.state, current_step: s.current_step, elapsed_sec: s.elapsed_sec, last_event_seq: 0, evidence_path: "" } };
+    return { summary: `${s.run_id}: ${s.state}, ${s.elapsed_sec}s elapsed${s.current_step ? `, step: ${s.current_step.id}` : ""}`, data: { run_id: s.run_id, state: s.state, current_step: s.current_step, elapsed_sec: s.elapsed_sec, last_event_seq: s.last_event_seq ?? 0, evidence_path: s.evidence_path ?? "" } };
   },
 
   watch_run: async (input: Record<string, unknown>) => {

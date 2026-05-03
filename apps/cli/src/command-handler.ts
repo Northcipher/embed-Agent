@@ -1,8 +1,13 @@
 import type { ValidateRequest } from "@embed-agent/runtime";
 
+interface EventEmitterLike {
+  emit(e: Record<string, unknown>): Promise<void>;
+}
+
 interface RunManagerLike {
   createRun(req: ValidateRequest): Promise<{ status: string; run_id?: string; reasons?: string[]; failed_checks?: { check: string; error: string }[] }>;
   pause(runId: string, reason: string): Promise<void>;
+  onOverride?(runId: string): void;
   resume(runId: string): Promise<void>;
   cancel(runId: string, reason: string): Promise<void>;
   stopRun?(runId: string, reason: string): Promise<void>;
@@ -10,7 +15,8 @@ interface RunManagerLike {
 }
 
 interface MemoryStoreLike {
-  writeFact(fact: { scope: string; scope_id: string; category: string; statement: string }): Promise<void>;
+  writeFact(fact: { scope: string; scope_id: string; category: string; statement: string; fact_id: string; source: string; evidence_refs: string[]; verified: boolean; created_at: string }): Promise<void>;
+  updateFact(factId: string, patch: Record<string, unknown>): Promise<void>;
   deleteFact(factId: string): Promise<void>;
 }
 interface SkillStoreLike {
@@ -19,8 +25,8 @@ interface SkillStoreLike {
 }
 
 interface ViewsLike {
-  status(runId: string): Promise<{ run_id: string; state: string; current_step?: { id: string }; elapsed_sec: number } | null>;
-  events(runId: string, afterSeq?: number, limit?: number, types?: string[]): Promise<{ events: { seq: number; type: string; severity?: string; summary: string; time: string }[]; next_after_seq: number; has_more: boolean }>;
+  status(runId: string): Promise<{ run_id: string; state: string; current_step?: { id: string }; elapsed_sec: number; last_event_seq: number; evidence_path: string } | null>;
+  events(runId: string, afterSeq?: number, limit?: number, types?: string[]): Promise<{ events: { seq: number; type: string; severity?: string; summary: string; time: string; step_id?: string; payload?: Record<string, unknown>; evidence_refs?: string[] }[]; next_after_seq: number; has_more: boolean }>;
   result(runId: string): Promise<{ run_id: string; state: string; result_available: boolean; summary?: string; suggested_next?: string; evidence_path?: string; key_evidence?: { summary: string; evidence_refs: string[] }[]; criteria_results?: { criterion: string; status: string; evidence_refs: string[] }[] }>;
   evidence(runId: string, ref?: string): Promise<{ available: boolean; index?: { refs: { ref: string; kind: string }[] }; content?: string }>;
   targets(): Promise<{ target_id: string; state: string; serial: string; adb: string; fastboot: string; current_run_id?: string }[]>;
@@ -40,6 +46,7 @@ export class CommandHandler {
     private views: ViewsLike,
     private memoryStore?: MemoryStoreLike,
     private skillStore?: SkillStoreLike,
+    private eb?: EventEmitterLike,
   ) {}
 
   // --- Validation & Execution ---
@@ -123,14 +130,12 @@ export class CommandHandler {
   }
 
   async addInstruction(runId: string, instruction: string): Promise<{ accepted: boolean; run_id: string; event_seq?: number } | ErrorResult> {
-    // Records human instruction as human_note event for Observer context
-    // Note: full event emission requires EventBus wired into CommandHandler
+    if (this.eb) { await this.eb.emit({ type: "human_note", run_id: runId, source: "human", severity: "info", summary: instruction, payload: { instruction } }); }
     return { accepted: true, run_id: runId };
   }
 
   async ignoreRule(runId: string, ruleId: string): Promise<{ accepted: boolean; run_id: string } | ErrorResult> {
-    // Marks a rule as ignored for the current run — affects DecisionHandler routing
-    // Note: full rule_ignored event requires EventBus wired into CommandHandler
+    if (this.eb) { await this.eb.emit({ type: "rule_ignored", run_id: runId, source: "human", summary: `Rule ${ruleId} ignored`, payload: { rule_id: ruleId } }); }
     return { accepted: true, run_id: runId };
   }
 
@@ -157,10 +162,21 @@ export class CommandHandler {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async memoryList(_targetId?: string, _category?: string) { return { entries: [] as { fact_id: string; category: string; statement: string }[], status: "ok" }; }
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async memoryConfirm(_factId?: string) { return { status: "error", error_code: "unsupported_action", message: "Fact verification not supported via CLI" } as const; }
+  async memoryConfirm(factId?: string) {
+    if (!this.memoryStore || !factId) return { status: "error", error_code: "unsupported_action", message: "Fact verification requires fact_id" } as const;
+    try {
+      await this.memoryStore.updateFact(factId, { verified: true, source: "human_confirmed" });
+      return { status: "ok" };
+    } catch { return { status: "error", error_code: "not_found", message: "Fact not found" } as const; }
+  }
   async memoryAdd(targetId: string, category: string, statement: string) {
     if (!this.memoryStore) return { status: "error", error_code: "unsupported_action", message: "Memory store not available" } as const;
-    await this.memoryStore.writeFact({ scope: "target", scope_id: targetId, category, statement });
+    await this.memoryStore.writeFact({
+      scope: "target", scope_id: targetId, category, statement,
+      fact_id: `fact-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      source: "human_confirmed", evidence_refs: [], verified: false,
+      created_at: new Date().toISOString(),
+    });
     return { status: "ok" };
   }
   async memoryDelete(factId: string) {

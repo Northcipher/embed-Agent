@@ -47,13 +47,21 @@ export async function runCli(handler: CommandHandler, argv: string[] = process.a
   try {
     switch (command) {
       case "validate": {
-        const concernsVal = typeof args.concerns === "string" ? args.concerns.split(",") : undefined;
         const req = {
-          artifact: { path: args.artifact as string, type: args.type as string },
+          artifact: { path: args.artifact as string, type: args.type as string, version: args.version as string | undefined, build_id: args["build-id"] as string | undefined },
           target: args.target as string,
           expected: args.expected as string,
         } as Parameters<typeof handler.validate>[0];
-        if (concernsVal) req.concerns = concernsVal;
+        if (args.concerns) req.concerns = (args.concerns as string).split(",");
+        if (args["success-criteria"]) req.success_criteria = (args["success-criteria"] as string).split(",");
+        if (args["failure-criteria"]) req.failure_criteria = (args["failure-criteria"] as string).split(",");
+        if (args["test-hint"]) req.test_hint = { kind: "adb_shell", command: args["test-hint"] as string };
+        const constraints: Record<string, unknown> = {};
+        if (args["max-duration"]) constraints.max_duration_sec = Number(args["max-duration"]);
+        if (args["allow-flash"] !== undefined) constraints.allow_flash = args["allow-flash"] === "true";
+        if (args["allow-shell-exec"] !== undefined) constraints.allow_shell_exec = args["allow-shell-exec"] === "true";
+        if (args["no-flash"] !== undefined) constraints.no_flash = true;
+        if (Object.keys(constraints).length > 0) req.constraints = constraints as any;
         const result = await handler.validate(req);
         print(result, format);
         break;
@@ -206,28 +214,105 @@ export async function runCli(handler: CommandHandler, argv: string[] = process.a
       }
 
       default:
-        print(`Usage: embedagent <command> [options]
+        print(`embedagent — Embedded Device Validation Agent CLI
 
-Commands:
-  validate     --artifact <path> --type <type> --target <id> --expected <desc>
-  status       --run-id <id>
-  events       --run-id <id> [--after <seq>] [--limit <n>] [--types <list>]
-  watch        --run-id <id> [--after <seq>] [--wait <sec>]
-  result       --run-id <id>
-  evidence     --run-id <id> [--ref <ref>]
-  pause        --run-id <id> [--reason <text>]
-  resume       --run-id <id>
-  cancel       --run-id <id> [--reason <text>]
-  intervene    --run-id <id> --action <action> [--instruction <text>] [--rule-id <id>] [--decision <c>]
-  targets
-  target       --show <id>
-  history      --target <id> [--limit <n>]
-  task         --list | --show <name>
-  memory       --add <statement> --target <id> --category <cat> | --ls [--target <id>] [--category <cat>] | --confirm <id> | --delete <id>
-  skill        --list | --show <name>
-  hook         --list | --show <name>
+GLOBAL FLAGS
 
-Options: --json   Output as JSON`, format);
+  --server <url>              Runtime HTTP URL (default: http://127.0.0.1:8787)
+  --local-runtime             Development only: run an embedded Runtime in this CLI process
+
+COMMANDS
+
+  validate   Start a validation run on a target device.
+             --artifact <path>            Path to firmware/APK/binary file (required)
+             --type <type>                Artifact type: firmware, apk, binary, config (required)
+             --target <id>                Target device ID (required)
+             --expected <desc>            What should happen, e.g. "Device boots to shell" (required)
+             --version <str>              Artifact version string
+             --build-id <str>             Build identifier
+             --concerns <a,b,c>           Comma-separated list of specific concerns to watch for
+             --success-criteria <a,b,c>   Comma-separated explicit pass conditions
+             --failure-criteria <a,b,c>   Comma-separated known failure signals
+             --test-hint <cmd>            Shell command to use as a test hint, e.g. "ping -c1 8.8.8.8"
+             --max-duration <sec>         Maximum run duration in seconds
+             --allow-flash true|false     Allow flashing the device (default: true)
+             --allow-shell-exec true|false Allow shell commands on device (default: true)
+             --no-flash                   Forbid flashing entirely
+             Example:
+               embedagent validate --artifact fw.bin --type firmware --target esp32 \\
+                 --expected "Device boots and responds to ping" --max-duration 120 --allow-flash false
+
+  status     Get current state, progress, and step info for a run.
+             --run-id <id>               Run ID (required)
+
+  events     List events for a run, with optional pagination and type filtering.
+             --run-id <id>               Run ID (required)
+             --after <seq>               Only return events after this sequence number (default: 0)
+             --limit <n>                 Max events to return (default: 100)
+             --types <a,b,c>             Comma-separated event types to filter (e.g. "step_started,decision_made")
+
+  watch      Watch a run for new events. Polls until new events arrive or timeout.
+             --run-id <id>               Run ID (required)
+             --after <seq>               Start watching after this sequence number (default: 0)
+             --wait <sec>                Max seconds to wait for new events (default: 30)
+
+  result     Get the final evaluation result for a completed run.
+             --run-id <id>               Run ID (required)
+
+  evidence   Get evidence from a run. Without --ref, returns the evidence index.
+             --run-id <id>               Run ID (required)
+             --ref <ref>                 Specific evidence reference, e.g. "serial:last-window"
+
+  pause      Pause a running validation. The run can be resumed later.
+             --run-id <id>               Run ID (required)
+             --reason <text>             Why the run is being paused
+
+  resume     Resume a paused validation run.
+             --run-id <id>               Run ID (required)
+
+  cancel     Cancel a running or paused validation.
+             --run-id <id>               Run ID (required)
+             --reason <text>             Why the run is being cancelled
+
+  intervene  Intervene in a running validation with a specific action.
+             --run-id <id>               Run ID (required)
+             --action <action>           One of: pause, resume, cancel, add_instruction, ignore_rule, override
+             --reason <text>             Why this intervention is needed
+             --instruction <text>        Instruction text (for add_instruction action)
+             --rule-id <id>              Rule ID to ignore (for ignore_rule action)
+             --decision <c>              Override decision: continue, stop, cancel (for override action)
+
+  targets    List all configured target devices with their current state and active runs.
+
+  target     Get detailed capabilities and state for a specific target.
+             --show <id>                 Target device ID (required)
+
+  history    Get recent validation history for a target device.
+             --target <id>               Target device ID (required)
+             --limit <n>                 Max episodes to return (default: 10)
+
+  task       Manage scheduled validation tasks.
+             --list                      List all configured tasks
+             --show <name>               Show details for a specific task
+
+  memory     Manage persistent memory (known facts, issues) for a target device.
+             --add <statement>           Add a new fact (use with --target and --category)
+             --target <id>               Target device ID (for --add, --ls)
+             --category <cat>            Fact category, e.g. "known_issue", "quirk", "pattern"
+             --ls                        List facts (optionally filtered by --target and --category)
+             --confirm <id>              Mark a fact as verified
+             --delete <id>               Delete a fact by its fact_id
+
+  skill      List and inspect reusable validation skill patterns.
+             --list                      List all available skills
+             --show <name>               Show details for a specific skill
+
+  hook       List and inspect lifecycle hook scripts.
+             --list                      List all configured hooks
+             --show <name>               Show details for a specific hook
+
+GLOBAL OPTIONS
+  --json                               Output results as JSON instead of human-readable text`, format);
         break;
     }
   } catch (e) {

@@ -99,6 +99,12 @@ export interface StepFailedPayload {
 export interface CheckpointPayload {
   metrics: Record<string, number>;
   trend?: string;
+  /** Raw line counts per sampling window — for model-driven pattern analysis. */
+  window_samples?: number[];
+  /** Stage transitions observed during this window. */
+  stage_transitions?: { stage: string; at_sample: number }[];
+  /** Cross-source exec completions with exit codes and timestamps. */
+  cross_source_events?: { source: string; exit: number; at_sec: number }[];
 }
 
 export interface ObservationPayload {

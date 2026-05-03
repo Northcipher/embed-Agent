@@ -83,7 +83,7 @@ export class HookManager {
         },
       };
       if (ctx.run_id) ev.run_id = ctx.run_id as string;
-      this.eb?.emit(ev);
+      await this.eb?.emit(ev);
 
       lastResult = result;
 

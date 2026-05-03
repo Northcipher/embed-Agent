@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "embed-agent": {
+      "command": "node",
+      "args": ["apps/mcp-server/dist/main.js"],
+      "env": { "EMBED_AGENT_DATA": ".embed-agent" }
+    }
+  }
+}

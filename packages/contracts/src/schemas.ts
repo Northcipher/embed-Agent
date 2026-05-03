@@ -1,14 +1,20 @@
 import { z } from "zod/v4";
 
-// Target Profile Schema
-export const TargetProfileSchema = z.object({
+// Target Profile Schema — accepts single object or array of targets
+const TargetProfileObjectSchema = z.object({
   target_id: z.string(),
   display_name: z.string().optional(),
   connections: z.object({
-    serial: z.object({ port: z.string(), baud: z.number() }).optional(),
+    serial: z.object({ port: z.string(), baudRate: z.number() }).optional(),
     adb: z.object({ device_id: z.string() }).optional(),
     fastboot: z.object({ device_id: z.string() }).optional(),
-    ssh: z.object({ host: z.string(), port: z.number() }).optional(),
+    ssh: z.object({
+      host: z.string(), port: z.number(),
+      username: z.string().optional(), password: z.string().optional(),
+      privateKeyPath: z.string().optional(),
+      hostKeyPolicy: z.object({ type: z.enum(["skip", "accept-new", "trust-on-first-use", "strict"]) }).optional(),
+      commandPolicy: z.object({ allowed_commands: z.string().array() }).optional(),
+    }).optional(),
   }),
   flash: z.object({
     method: z.enum(["fastboot", "custom_command"]),
@@ -37,11 +43,13 @@ export const TargetProfileSchema = z.object({
   skills: z.string().array().optional(),
 });
 
+export const TargetProfileSchema = z.union([TargetProfileObjectSchema, z.array(TargetProfileObjectSchema)]);
+
 // LLM Config Schema
 export const LLMConfigSchema = z.object({
   default_provider: z.string(),
   providers: z.record(z.string(), z.object({
-    type: z.enum(["anthropic", "openai", "openai-compatible"]),
+    type: z.enum(["anthropic", "openai", "openai-compatible", "mock", "deepseek", "deepseek-openai"]),
     api_key_env: z.string(),
     base_url: z.string().optional(),
     models: z.object({

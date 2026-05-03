@@ -5,7 +5,12 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/main.ts",
+    "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --pretty false"
+  },
+  "bin": {
+    "embedagent-server": "./dist/main.js"
   },
   "dependencies": {
     "@embed-agent/cli": "workspace:*",

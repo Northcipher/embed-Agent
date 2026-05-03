@@ -1,3 +1,11 @@
+/**
+ * Aggregator v2 — raw time-series data collector only.
+ *
+ * Changes from v1:
+ *   - Removed detectPattern() — no more human-classified output patterns (burst/oscillation/etc.)
+ *   - checkpoint() outputs raw window_samples, stage_transitions, cross_source_events
+ *   - Model observes raw data and identifies patterns itself (Bitter Lesson)
+ */
 interface Emitter { emit(e: Record<string, unknown>): void; }
 
 export class Aggregator {
@@ -5,12 +13,10 @@ export class Aggregator {
   private count = 0;
   private elapsed = 0;
   private markers: { text: string; stage: string }[] = [];
-  // Pattern detection state
-  private recentCounts: number[] = [];
-  private prevCount = 0;
   private stageOrder: string[] = [];
-  // Cross-source state
-  private execResults: { stepId: string; exitCode: number; source: string }[] = [];
+  // Time-series data for model analysis
+  private windowSamples: number[] = [];
+  private execResults: { stepId: string; exitCode: number; source: string; atSec: number }[] = [];
   private runId?: string;
 
   constructor(private eb: Emitter, private interval = 300) {}
@@ -26,7 +32,7 @@ export class Aggregator {
 
   feed(line: string): void {
     this.count++;
-    // Stage transition detection
+    // Stage transition detection (this is structural, not pattern classification)
     for (const m of this.markers) {
       if (line.includes(m.text) && this.stage !== m.stage) {
         const prev = this.stage;
@@ -41,15 +47,19 @@ export class Aggregator {
     }
   }
 
-  /** Cross-source correlation: compare this source's result with previous sources. */
+  /** Cross-source correlation: record raw completion data for model analysis. */
   onExecComplete(stepId: string, exitCode?: number, source?: string): void {
-    this.execResults.push({ stepId, exitCode: exitCode ?? -1, source: source ?? "unknown" });
+    this.execResults.push({
+      stepId,
+      exitCode: exitCode ?? -1,
+      source: source ?? "unknown",
+      atSec: this.elapsed + this.interval,
+    });
 
-    // Correlate: if multiple sources completed, check for temporal alignment
+    // Emit correlated signal for cross-source events (structural, not semantic)
     if (this.execResults.length >= 2) {
       const last = this.execResults[this.execResults.length - 1]!;
       const prev = this.execResults[this.execResults.length - 2]!;
-      // Different sources finishing near same time with different exit codes → correlation signal
       if (last.source !== prev.source) {
         this.emit({
           type: "correlated", source: "aggregator",
@@ -64,60 +74,45 @@ export class Aggregator {
     }
   }
 
-  /** Periodic checkpoint with pattern detection. */
+  /** Periodic checkpoint — raw time-series data, no classification. */
   async checkpoint(): Promise<Record<string, unknown>> {
-    const linesPerSec = this.interval > 0 ? Math.round(this.count / this.interval) : 0;
+    // Record this window's line count as a raw sample
+    this.windowSamples.push(this.count);
+    if (this.windowSamples.length > 20) this.windowSamples.shift();
 
-    // Output pattern detection
-    this.recentCounts.push(this.count);
-    if (this.recentCounts.length > 10) this.recentCounts.shift();
-    const pattern = this.detectPattern();
+    // Build stage transitions for this window — from→to pairs with timestamps
+    const transitions: { from: string; to: string; at_sec: number }[] = [];
+    for (let i = 1; i < this.stageOrder.length; i++) {
+      transitions.push({ from: this.stageOrder[i - 1]!, to: this.stageOrder[i]!, at_sec: this.elapsed });
+    }
+
+    // Build cross-source events with timestamps
+    const crossSourceEvents = this.execResults.slice(-5).map(r => ({
+      source: r.source,
+      exit: r.exitCode,
+      at_sec: r.atSec,
+    }));
 
     const cp = {
       type: "checkpoint", severity: "info", source: "aggregator",
-      summary: `Stage: ${this.stage}, ${linesPerSec} l/s, pattern: ${pattern}`,
+      summary: `Stage: ${this.stage}, samples=[${this.windowSamples.join(",")}]`,
       payload: {
         stage: this.stage,
-        lines_per_sec: linesPerSec,
-        output_pattern: pattern,
+        lines_per_sec: this.interval > 0 ? Math.round(this.count / this.interval) : 0,
+        window_samples: [...this.windowSamples],
+        stage_transitions: transitions.length > 0 ? transitions : undefined,
+        cross_source_events: crossSourceEvents.length > 0 ? crossSourceEvents : undefined,
         total_elapsed: this.elapsed + this.interval,
-        stage_order: [...this.stageOrder],
       },
     };
     this.emit(cp);
 
-    this.prevCount = this.count;
     this.count = 0;
     this.elapsed += this.interval;
     return cp;
   }
 
-  private detectPattern(): string {
-    if (this.recentCounts.length < 2) return this.count === 0 ? "silence" : "unknown";
-    if (this.count === 0) return "silence";
-
-    // Check for burst: count > 2x previous
-    if (this.prevCount > 0 && this.count > this.prevCount * 2) return "burst";
-
-    // Check for oscillation: alternating high/low over last N
-    if (this.recentCounts.length >= 4) {
-      let oscillations = 0;
-      for (let i = 2; i < this.recentCounts.length; i++) {
-        const a = this.recentCounts[i - 2]!;
-        const b = this.recentCounts[i - 1]!;
-        const c = this.recentCounts[i]!;
-        if ((b > a && b > c) || (b < a && b < c)) oscillations++;
-      }
-      if (oscillations >= 2) return "oscillation";
-    }
-
-    // Check for sharp decline
-    if (this.prevCount > 0 && this.count < this.prevCount * 0.3) return "declining";
-
-    return "stable";
-  }
-
-  /** Finalize aggregation at run end — emit summary and close stage tracking. */
+  /** Finalize aggregation at run end — emit summary. */
   onRunEnd(): void {
     this.emit({
       type: "observation", source: "aggregator",

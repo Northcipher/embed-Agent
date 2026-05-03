@@ -6,12 +6,14 @@ interface EventEmitter { emit(e: Record<string, unknown>): Promise<void>; }
 
 interface ConnectionResolver {
   getForStep(target: { target_id: string; connections: Record<string, unknown> }, action: string, capability: string): Connection | null;
+  isShellCommandAllowed?(command: string): boolean;
 }
 
 interface OutputPipeLike {
   feedStream(chunk: string): Promise<void>;
   feedExec(stdout: string, stderr: string, exitCode: number): Promise<void>;
   flush(): Promise<void>;
+  disableSilence?(): void;
   setConnection?(conn: { state(): string }): void;
 }
 
@@ -83,6 +85,15 @@ export class StepExecutor {
       });
       return { completed: false, blocked: true, error: `Hook blocked: ${preResult.reason}` };
     }
+    if (preResult.decision === "retry") {
+      await this.eb.emit({
+        type: "observation", run_id: this.runId, source: "step_executor", severity: "info",
+        summary: `Step retry requested by hook: ${preResult.reason ?? "no reason"}`,
+        payload: { step_id: step.id },
+      });
+      // Return non-completed to trigger retry logic in executeWithRetry
+      return { completed: false, error: `Hook retry: ${preResult.reason ?? "no reason"}`, failureType: "transient" };
+    }
 
     // 2. Get Connection
     const conn = this.cm.getForStep(this.target, step.action, step.capability);
@@ -90,10 +101,21 @@ export class StepExecutor {
       return { completed: false, error: `No connection for action=${step.action} capability=${step.capability}` };
     }
 
-    try {
-      await conn.connect();
-    } catch (e) {
-      return { completed: false, error: `Connection failed: ${(e as Error).message}`, failureType: "connection_lost" };
+    // 2b. Connect with retry (transient connection failures are retryable)
+    let connectAttempt = 0;
+    const maxConnectRetries = this.retryConfig.maxRetries;
+    while (true) {
+      try {
+        await conn.connect();
+        break;
+      } catch (e) {
+        connectAttempt++;
+        if (connectAttempt > maxConnectRetries || !this.retryConfig.retryable.includes("connection_lost")) {
+          return { completed: false, error: `Connection failed after ${connectAttempt} attempts: ${(e as Error).message}`, failureType: "connection_lost" };
+        }
+        const delay = (this.retryConfig.intervals[connectAttempt - 1] ?? this.retryConfig.intervals[this.retryConfig.intervals.length - 1]!) * 1000;
+        await new Promise(r => setTimeout(r, delay));
+      }
     }
 
     // 3. Execute with retry
@@ -106,8 +128,6 @@ export class StepExecutor {
       const result = await this.executeWithRetry(step, conn);
 
       if (this._interrupted) {
-        await this.eb.emit({ type: "step_failed", run_id: this.runId, step_id: step.id, source: "step_executor", summary: "Step interrupted", payload: {} });
-        await this.hm.execute("PostStepFailed", { run_id: this.runId, step_id: step.id, reason: "interrupted" });
         return { completed: false, interrupted: true };
       }
 
@@ -192,6 +212,12 @@ export class StepExecutor {
       switch (step.action) {
         case "exec": {
           if (!conn.exec) return { success: false, error: "exec not supported", failureType: "unsupported" };
+          // Shell command whitelist enforcement — covers device commands via ADB/SSH.
+          // local_exec has its own local whitelist via LocalConnection.
+          if (step.command && step.capability !== "local_exec" && this.cm.isShellCommandAllowed) {
+            const allowed = this.cm.isShellCommandAllowed(step.command);
+            if (!allowed) return { success: false, error: `Command not whitelisted: ${step.command}`, failureType: "security_blocked" };
+          }
           const result = await conn.exec(step.command ?? "true", timeout);
           if (pipe) await pipe.feedExec(result.stdout, result.stderr, result.exit_code);
           return result.exit_code === 0
@@ -201,14 +227,18 @@ export class StepExecutor {
 
         case "stream": {
           if (!conn.stream) return { success: false, error: "stream not supported", failureType: "unsupported" };
-          const deadline = Date.now() + timeout * 1000;
+          const streamStart = Date.now();
           let lastSample = Date.now();
-          const sampleInterval = (step.observe?.sampling_commands?.length ? 60_000 : 0); // sample every 60s
+          const sampleInterval = step.observe?.sampling_commands?.length
+            ? (step.observe.interval ?? 60) * 1000
+            : 0;
 
           for await (const line of conn.stream(timeout)) {
             if (this._interrupted) { await pipe?.flush(); break; }
             if (pipe) await pipe.feedStream(line + "\n");
-            if (Date.now() > deadline) {
+            // Dynamic timeout: extendTimeout() can increase _timeoutExtension during streaming
+            const effectiveTimeout = (step.timeout_sec + this._timeoutExtension) * 1000;
+            if (Date.now() - streamStart > effectiveTimeout) {
               await pipe?.flush();
               return { success: false, error: "stream timeout", failureType: "timeout" };
             }
@@ -216,7 +246,7 @@ export class StepExecutor {
             if (sampleInterval > 0 && Date.now() - lastSample >= sampleInterval) {
               lastSample = Date.now();
               for (const cmd of (step.observe?.sampling_commands ?? [])) {
-                if (conn.exec) {
+                if (conn.exec && (this.cm.isShellCommandAllowed?.(cmd) ?? true)) {
                   const r = await conn.exec(cmd, 10);
                   if (pipe) await pipe.feedExec(r.stdout, r.stderr, r.exit_code);
                   await this.eb.emit({
@@ -229,22 +259,25 @@ export class StepExecutor {
             }
           }
           await pipe?.flush();
+          pipe?.disableSilence?.();
           return { success: true };
         }
 
         case "push": {
           if (!conn.push) return { success: false, error: "push not supported", failureType: "unsupported" };
-          const [src, dst] = (step.command ?? ":").split(":");
-          if (!src || !dst) return { success: false, error: "push requires src:dst", failureType: "invalid_args" };
+          const src = (step as any).src ?? (step.command ?? ":").split(":")[0];
+          const dst = (step as any).dst ?? (step.command ?? ":").split(":")[1];
+          if (!src || !dst) return { success: false, error: "push requires src:dst (or step.src + step.dst)", failureType: "invalid_args" };
           await conn.push(src, dst, timeout);
           return { success: true };
         }
 
         case "flash": {
           if (!conn.flash) return { success: false, error: "flash not supported", failureType: "unsupported" };
-          const [image, partition] = (step.command ?? ":").split(":");
-          if (!image || !partition) return { success: false, error: "flash requires image:partition", failureType: "invalid_args" };
-          await conn.flash(image, partition);
+          const image = (step as any).image ?? (step.command ?? ":").split(":")[0];
+          const partition = (step as any).partition ?? (step.command ?? ":").split(":")[1];
+          if (!image || !partition) return { success: false, error: "flash requires image:partition (or step.image + step.partition)", failureType: "invalid_args" };
+          await conn.flash(image!, partition!);
           return { success: true };
         }
 

@@ -11,4 +11,9 @@ describe("CLI", () => {
     const { CommandHandler } = await import("../src/command-handler.js");
     expect(typeof CommandHandler).toBe("function");
   });
+
+  it("exports HttpCommandHandler", async () => {
+    const { HttpCommandHandler } = await import("../src/http-client.js");
+    expect(typeof HttpCommandHandler).toBe("function");
+  });
 });

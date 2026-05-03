@@ -48,7 +48,9 @@ export class Ssh2Connection implements Connection {
   // --- Connection lifecycle ---
 
   async connect(): Promise<void> {
-    if (!this.client) throw new Error("SSH client not initialized");
+    if (!this.client) {
+      this.client = new RealSsh2Client(new Client());
+    }
 
     const policy = this.config.commandPolicy ?? DEFAULT_SSH_COMMAND_POLICY;
 
@@ -87,9 +89,9 @@ export class Ssh2Connection implements Connection {
   async disconnect(): Promise<void> {
     if (this.client) {
       this.client.end();
+      this.client = null;
     }
     this._state = "disconnected";
-    this.client = null;
   }
 
   state(): "connected" | "disconnected" | "error" {

@@ -23,6 +23,7 @@
     "@ai-sdk/openai-compatible": "^2.0.43",
     "@embed-agent/contracts": "workspace:*",
     "@embed-agent/stores": "workspace:*",
-    "ai": "^6.0.171"
+    "ai": "^6.0.171",
+    "zod": "^4.3.6"
   }
 }

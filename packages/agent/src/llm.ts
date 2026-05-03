@@ -12,6 +12,10 @@ export interface LLMResponse {
   content: string;
   model: string;
   usage?: { input_tokens: number; output_tokens: number };
+  /** Tool call results from multi-step generation. */
+  toolResults?: { toolCallId: string; toolName: string; args: unknown; result?: unknown }[];
+  /** Anthropic prompt cache metrics. Present when model supports it. */
+  cacheMetrics?: { cacheCreationTokens: number; cacheReadTokens: number; totalInputTokens: number };
 }
 
 export interface LLMCallOptions {
@@ -19,18 +23,17 @@ export interface LLMCallOptions {
   timeout: number;
   maxTokens: number;
   tools?: ToolSet;
-  maxSteps?: number;
+  /** AI SDK v6 stopWhen condition (e.g. isStepCount(N)). Passed through to generateText. */
+  stopWhen?: unknown;
 }
 
 export interface LLMProvider {
   call(messages: LLMMessage[], options: LLMCallOptions): Promise<LLMResponse>;
 }
 
-// Shared helper: call generateText and normalize the response
+// Shared helper: call generateText and normalize the response. stopWhen/tools flow through req.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function callAI(req: any, modelName: string, tools?: ToolSet, maxSteps?: number): Promise<LLMResponse> {
-  if (tools) req.tools = tools;
-  if (maxSteps != null) req.maxSteps = maxSteps;
+async function callAI(req: any, modelName: string): Promise<LLMResponse> {
   const result = await generateText(req);
   const usage = result.usage;
   const resp: LLMResponse = {
@@ -39,6 +42,16 @@ async function callAI(req: any, modelName: string, tools?: ToolSet, maxSteps?: n
   };
   if (usage && typeof usage.inputTokens === "number" && typeof usage.outputTokens === "number") {
     resp.usage = { input_tokens: usage.inputTokens, output_tokens: usage.outputTokens };
+  }
+  // Extract tool results for structured output extraction
+  const rawResult = result as unknown as Record<string, unknown>;
+  if (rawResult.toolResults && Array.isArray(rawResult.toolResults)) {
+    resp.toolResults = (rawResult.toolResults as Array<Record<string, unknown>>).map(tr => ({
+      toolCallId: (tr.toolCallId as string) ?? "",
+      toolName: (tr.toolName as string) ?? "",
+      args: tr.args,
+      result: tr.result,
+    }));
   }
   return resp;
 }
@@ -67,7 +80,9 @@ export class AIAnthropicProvider implements LLMProvider {
     };
     if (systemMsg) req.system = systemMsg.content;
 
-    return callAI(req, options.model, options.tools, options.maxSteps);
+    if (options.stopWhen) req.stopWhen = options.stopWhen;
+    if (options.tools) req.tools = options.tools;
+    return callAI(req, options.model);
   }
 }
 
@@ -92,7 +107,9 @@ export class AIOpenAIProvider implements LLMProvider {
       abortSignal: AbortSignal.timeout(options.timeout * 1000),
     };
 
-    return callAI(req, options.model, options.tools, options.maxSteps);
+    if (options.stopWhen) req.stopWhen = options.stopWhen;
+    if (options.tools) req.tools = options.tools;
+    return callAI(req, options.model);
   }
 }
 
@@ -118,7 +135,155 @@ export class AIOpenAICompatibleProvider implements LLMProvider {
       abortSignal: AbortSignal.timeout(options.timeout * 1000),
     };
 
-    return callAI(req, options.model, options.tools, options.maxSteps);
+    if (options.stopWhen) req.stopWhen = options.stopWhen;
+    if (options.tools) req.tools = options.tools;
+    return callAI(req, options.model);
+  }
+}
+
+// ============================================================
+// DeepSeek Anthropic-compatible Provider (raw fetch, no AI SDK wrapper)
+// The AI SDK Anthropic provider adds tool_choice/cache_control params
+// that DeepSeek doesn't handle. This provider sends clean requests.
+// ============================================================
+
+export class DeepSeekProvider implements LLMProvider {
+  constructor(private apiKey: string, private baseURL = "https://api.deepseek.com/anthropic") {}
+
+  async call(messages: LLMMessage[], options: LLMCallOptions): Promise<LLMResponse> {
+    const systemMsg = messages.find(m => m.role === "system");
+    const userMsgs = messages.filter(m => m.role !== "system").map(m => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body: any = {
+      model: options.model,
+      max_tokens: options.maxTokens,
+      messages: userMsgs,
+    };
+    if (systemMsg) body.system = systemMsg.content;
+    if (options.tools) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      body.tools = Object.entries(options.tools as Record<string, any>).map(([name, t]) => {
+        let schema = t.inputSchema ?? t.parameters ?? { type: "object", properties: {} };
+        // Convert Zod schema to plain JSON schema
+        if (typeof schema === "object" && "_def" in schema) schema = JSON.parse(JSON.stringify(schema));
+        return { name, description: t.description ?? "", input_schema: schema };
+      });
+    }
+    // DeepSeek works better with explicit low temperature for tool_use
+    body.temperature = 0.1;
+
+    const resp = await fetch(`${this.baseURL}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": this.apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(options.timeout * 1000),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      throw new Error(`DeepSeek API ${resp.status}: ${errText.slice(0, 500)}`);
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json: any = await resp.json();
+    const content = json.content ?? [];
+    const textParts = content.filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n");
+    const toolUses = content.filter((c: any) => c.type === "tool_use");
+
+    // Build content: include tool_use summaries so outputChars > 0 for audit logging
+    const toolSummaries = toolUses.map((tu: any) =>
+      `[tool_use:${tu.name}] ${JSON.stringify(tu.input ?? {})}`
+    ).join("\n");
+    const fullContent = [textParts, toolSummaries].filter(Boolean).join("\n");
+
+    const resp2: LLMResponse = {
+      content: fullContent,
+      model: json.model ?? options.model,
+    };
+    if (toolUses.length > 0) {
+      resp2.toolResults = toolUses.map((tu: any) => ({
+        toolCallId: tu.id ?? "",
+        toolName: tu.name ?? "",
+        args: tu.input ?? {},
+      }));
+    }
+    if (json.usage) {
+      resp2.usage = { input_tokens: json.usage.input_tokens, output_tokens: json.usage.output_tokens };
+      // Extract Anthropic prompt cache metrics
+      const ccr = json.usage.cache_creation_input_tokens ?? 0;
+      const cr = json.usage.cache_read_input_tokens ?? 0;
+      const total = json.usage.input_tokens ?? 0;
+      if (ccr > 0 || cr > 0) {
+        resp2.cacheMetrics = { cacheCreationTokens: ccr, cacheReadTokens: cr, totalInputTokens: total };
+      }
+    }
+    return resp2;
+  }
+}
+
+// ============================================================
+// DeepSeek OpenAI-compatible Provider (raw fetch, /v1/chat/completions)
+// ============================================================
+
+export class DeepSeekOpenAIProvider implements LLMProvider {
+  constructor(private apiKey: string, private baseURL = "https://api.deepseek.com") {}
+
+  async call(messages: LLMMessage[], options: LLMCallOptions): Promise<LLMResponse> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body: any = {
+      model: options.model,
+      max_tokens: options.maxTokens,
+      messages: messages.map(m => ({ role: m.role, content: m.content })),
+      temperature: 0.1,
+    };
+    if (options.tools) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      body.tools = Object.entries(options.tools as Record<string, any>).map(([_name, t]) => {
+        let schema = t.inputSchema ?? t.parameters ?? { type: "object", properties: {} };
+        if (typeof schema === "object" && "_def" in schema) schema = JSON.parse(JSON.stringify(schema));
+        return { type: "function", function: { name: _name, description: t.description ?? "", parameters: schema } };
+      });
+    }
+
+    const resp = await fetch(`${this.baseURL}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "Authorization": `Bearer ${this.apiKey}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(options.timeout * 1000),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "");
+      throw new Error(`DeepSeek OpenAI ${resp.status}: ${errText.slice(0, 500)}`);
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const json: any = await resp.json();
+    const choice = json.choices?.[0]?.message ?? {};
+    const textContent = choice.content ?? "";
+    const toolCalls: any[] = choice.tool_calls ?? [];
+
+    const toolSummaries = toolCalls.map((tc: any) =>
+      `[tool_call:${tc.function?.name}] ${tc.function?.arguments ?? "{}"}`
+    ).join("\n");
+    const fullContent = [textContent, toolSummaries].filter(Boolean).join("\n");
+
+    const resp2: LLMResponse = {
+      content: fullContent,
+      model: json.model ?? options.model,
+    };
+    if (toolCalls.length > 0) {
+      resp2.toolResults = toolCalls.map((tc: any) => ({
+        toolCallId: tc.id ?? "",
+        toolName: tc.function?.name ?? "",
+        args: (() => { try { return JSON.parse(tc.function?.arguments ?? "{}"); } catch { return {}; } })(),
+      }));
+    }
+    if (json.usage) {
+      resp2.usage = { input_tokens: json.usage.prompt_tokens, output_tokens: json.usage.completion_tokens };
+    }
+    return resp2;
   }
 }
 
@@ -150,8 +315,13 @@ export class LLMCircuitBreaker {
   private degraded = false;
   private degradedSince = 0;
   private probing = false;
-  private readonly MAX_FAILURES = 3;
-  private readonly PROBE_AFTER_MS = 5 * 60 * 1000;
+  private readonly maxFailures: number;
+  private readonly probeAfterMs: number;
+
+  constructor(maxFailures = 3, probeAfterSec = 300) {
+    this.maxFailures = maxFailures;
+    this.probeAfterMs = probeAfterSec * 1000;
+  }
 
   recordFailure(): void {
     this.failures++;
@@ -161,7 +331,7 @@ export class LLMCircuitBreaker {
       this.probing = false;
       return;
     }
-    if (this.failures >= this.MAX_FAILURES) {
+    if (this.failures >= this.maxFailures) {
       this.degraded = true;
       this.degradedSince = Date.now();
     }
@@ -175,7 +345,7 @@ export class LLMCircuitBreaker {
 
   allowCall(): boolean {
     if (!this.degraded) return true;
-    if (Date.now() - this.degradedSince >= this.PROBE_AFTER_MS) {
+    if (Date.now() - this.degradedSince >= this.probeAfterMs) {
       if (!this.probing) {
         this.probing = true;
         return true;
@@ -210,6 +380,7 @@ export class LLMCallManager {
       reply: { model: string; timeout: number; maxTokens?: number };
     },
     retryConfig?: { maxRetries?: number; backoffMs?: number[] },
+    private cbConfig?: { maxFailures?: number; probeAfterSec?: number },
   ) {
     this.retryConfig = {
       maxRetries: retryConfig?.maxRetries ?? 2,
@@ -219,14 +390,14 @@ export class LLMCallManager {
 
   private breaker(role: string): LLMCircuitBreaker {
     let b = this.breakers.get(role);
-    if (!b) { b = new LLMCircuitBreaker(); this.breakers.set(role, b); }
+    if (!b) { b = new LLMCircuitBreaker(this.cbConfig?.maxFailures, this.cbConfig?.probeAfterSec); this.breakers.set(role, b); }
     return b;
   }
 
   async call(
     role: "planner" | "observer" | "reply",
     messages: LLMMessage[],
-    opts?: { tools?: ToolSet; maxSteps?: number },
+    opts?: { tools?: ToolSet; stopWhen?: unknown },
   ): Promise<LLMResponse | { status: "degraded"; reason: string }> {
     const br = this.breaker(role);
     if (!br.allowCall()) {
@@ -243,7 +414,7 @@ export class LLMCallManager {
           timeout: cfg.timeout,
           maxTokens: cfg.maxTokens ?? 4096,
           ...(opts?.tools ? { tools: opts.tools } : {}),
-          ...(opts?.maxSteps != null ? { maxSteps: opts.maxSteps } : {}),
+          ...(opts?.stopWhen != null ? { stopWhen: opts.stopWhen } : {}),
         });
         br.recordSuccess();
         return resp;
@@ -273,7 +444,7 @@ export class LLMCallManager {
   async callBypassBreaker(
     role: "planner" | "observer" | "reply",
     messages: LLMMessage[],
-    opts?: { tools?: ToolSet; maxSteps?: number },
+    opts?: { tools?: ToolSet; stopWhen?: unknown },
   ): Promise<LLMResponse | { status: "degraded"; reason: string }> {
     const cfg = this.models[role];
 
@@ -283,7 +454,7 @@ export class LLMCallManager {
         timeout: cfg.timeout,
         maxTokens: cfg.maxTokens ?? 4096,
         ...(opts?.tools ? { tools: opts.tools } : {}),
-        ...(opts?.maxSteps != null ? { maxSteps: opts.maxSteps } : {}),
+        ...(opts?.stopWhen != null ? { stopWhen: opts.stopWhen } : {}),
       });
       return resp;
     } catch (e) {

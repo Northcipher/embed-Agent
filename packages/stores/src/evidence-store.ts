@@ -123,6 +123,17 @@ export class EvidenceStore {
     return { filePath, bytes: content.length };
   }
 
+  /** Append data to an existing evidence file without overwriting. Safe for streaming. */
+  async append(runId: string, ref: string, data: string): Promise<void> {
+    validateId(runId, "runId"); validateRef(ref);
+    const dir = this.runDir(runId);
+    await fs.mkdir(path.join(dir, "snapshots"), { recursive: true });
+    const filePath = path.join(dir, this.refToFile(ref));
+    await fs.appendFile(filePath, data, "utf-8");
+    try { const stat = await fs.stat(filePath); await this.addRef(runId, { ref, kind: this.refKind(ref), path: this.refToFile(ref), available: true, bytes: stat.size }); }
+    catch { /* file may not exist yet */ }
+  }
+
   // --- Read ---
 
   async read(runId: string, ref: string): Promise<{ filePath: string; size: number; available: boolean }> {

@@ -18,11 +18,17 @@ export class TargetManager {
     if (!target) return { all_passed: false, checks: [{ check: "target_exists", passed: false, error: "not found" }], failure_type: "host" };
 
     const checks: PreflightCheck[] = [];
+    const statePatch: Record<string, string> = {};
     for (const t of transports) {
       const conn = this.cm.get(target, t);
       if (!conn) { checks.push({ check: `${t}_available`, passed: false, error: "not configured" }); continue; }
-      try { await conn.connect(); checks.push({ check: `${t}_open`, passed: true }); }
+      try { await conn.connect(); checks.push({ check: `${t}_open`, passed: true }); statePatch[t] = t === "adb" ? "online" : "connected"; }
       catch (e) { checks.push({ check: `${t}_open`, passed: false, error: (e as Error).message }); }
+      finally { try { await conn.disconnect(); } catch { /* best effort */ } }
+    }
+    // Persist transport states so Views/MCP report correct capabilities
+    if (Object.keys(statePatch).length > 0) {
+      try { await this.store.updateState(targetId, statePatch); } catch { /* best effort */ }
     }
 
     // Use fs.access, not shell exec
@@ -108,12 +114,22 @@ export class TargetManager {
     return state != null && !["idle", "offline"].includes(state.state);
   }
 
-  /** Acquire a target lock — transitions state to preparing with the given run_id. */
+  /** Per-target lock serialization — prevents concurrent acquireLock race conditions. */
+  private lockQueue = new Map<string, Promise<void>>();
+
+  /** Acquire a target lock — serialized per target to prevent concurrent acquisition. */
   async acquireLock(targetId: string, runId: string): Promise<boolean> {
-    const s = await this.store.getState(targetId);
-    if (this.isBusy(s)) return false;
-    await this.store.updateState(targetId, { state: "preparing", current_run_id: runId });
-    return true;
+    const prev = this.lockQueue.get(targetId) ?? Promise.resolve();
+    let acquired = false;
+    const next = prev.then(async () => {
+      const s = await this.store.getState(targetId);
+      if (s == null || this.isBusy(s)) return; // null = unknown target
+      await this.store.updateState(targetId, { state: "preparing", current_run_id: runId });
+      acquired = true;
+    });
+    this.lockQueue.set(targetId, next);
+    await next;
+    return acquired;
   }
 
   /** Release a target lock — transitions to cleaning then idle. */

@@ -1,10 +1,17 @@
 /**
- * ContextAssembler — builds LLM context per role, not per data source.
+ * ContextAssembler v2 — builds LLM context per role, cache-aware.
+ *
+ * Context is the core of the agent. Four explicit layers with cache breakpoints:
+ *
+ *   [BP1 — Deployment-level]   System Prompt (shared across all runs/targets)
+ *   [BP2 — Run-level]          Goal + Known Issues + Evidence Policy (per-run invariant)
+ *   [BP3 — Semi-stable]        Working Memory + Decisions + Checkpoint trends (slow growth)
+ *   [Uncached — Variable]      Time / Trigger / Evidence / Signals (changes every call)
  *
  * Design principles:
- *   Planner  = generate (few-shot) → Goal first, ref at end.
- *   Observer = discriminate (recency) → stable prefix → cacheable. Constraints + trigger + evidence last: recency zone.
- *   Reply    = evaluate (primacy) → Criteria first, evidence last.
+ *   Planner  = generate (primacy) → Goal first, examples in middle, history last.
+ *   Observer = discriminate (recency) → Constraints first in variable zone, evidence last.
+ *   Reply    = evaluate (primacy) → Criteria rubric first, evidence last.
  *
  * Each method only includes sections that role actually needs.
  */
@@ -47,46 +54,67 @@ export interface PlannerContext {
 export interface ObserverContext {
   staticPrompt: string;
   formattedContext: string;
+  /** Known issues matched by keyword — presented as context hints, not decision substitutes. */
   knownIssues?: { fact_id: string; category: string; statement: string; extended_pattern?: string }[] | undefined;
 }
 
-// --- Inline fallback prompts (used when config/prompts/ not loaded) ---
+// ============================================================
+// Minimal fallback prompts — only used when config/prompts/ is unavailable.
+// These are intentionally terse: the real prompt comes from versioned .md files.
+// ============================================================
 
-const PLANNER_FALLBACK = `You are an Embed Agent Task Planner. Create a concrete, executable validation plan.
+const PLANNER_FALLBACK = `You are an Embed Agent Task Planner. Create a concrete, executable validation plan for an embedded device artifact.
 
-Given a target device with specific connections (serial, adb, ssh, local, fastboot) and a task, produce a step-by-step plan.
+## Step Design
+Each step needs: id (kebab-case), action (exec|stream|push|flash|wait), capability, timeout_sec.
+- serial_output → stream (serial console output)
+- shell_exec → exec (device shell via ADB)
+- adb_logs → stream (live logcat) or exec (logcat -d dump)
+- wait_adb → wait (wait for device to be ready)
+- flash → flash (write firmware, command="image:partition")
+- push → push (transfer file, command="src:dst")
+- collect_logs → exec (dmesg, logcat)
+- local_exec → exec (host machine command)
+- ssh_exec → exec (device shell via SSH)
 
-Capability × Action matrix (ONLY these combinations):
-  local_exec   → exec   (host machine shell command)
-  shell_exec   → exec   (device shell via ADB)
-  ssh_exec     → exec   (device shell via SSH)
-  serial_output → stream (serial console output)
-  adb_logs     → stream (live logcat)  or  exec (logcat -d dump)
-  wait_adb     → wait   (wait for ADB)
-  flash        → flash  (fastboot flash, command="<image>:<partition>")
-  push         → push   (file push, command="<src>:<dst>")
-  collect_logs → exec   (dmesg/logcat)
+## Step Order
+1. stream serial_output to observe boot
+2. wait_adb after boot
+3. shell_exec for verification
+4. collect_logs at the end
 
-Output JSON: { plan_id, estimated_duration_sec, steps: [{ id, capability, action, command?, timeout_sec }], evidence_policy: { always, on_failure }, success_criteria, failure_signals }`;
+## Evidence Policy
+Minimum: always=["serial:full"], on_failure=["serial:last-window"]
+Add dmesg, logcat if applicable.
 
-const OBSERVER_FALLBACK = `You are an Embed Agent Observer. Decide: continue, stop, collect_more, extend_wait, pause, or suggest.
+## Output ONLY valid JSON in the exact format shown below.`;
 
-Priority:
-1. fatal severity → stop
-2. known issue match → continue
-3. warning → check evidence windows; confirm → stop/collect_more; ambiguous → continue
-4. timeout/slow → extend_wait if device active, collect_more if silent
-5. otherwise → continue
+const OBSERVER_FALLBACK = `You are an Embed Agent Observer. Your role is to decide what action to take when a signal is detected during a validation run.
 
-CB1 active → only suggest, never stop. CB3 escalation → more conservative.
+Available decisions:
+- continue — the signal is benign or expected, proceed normally
+- collect_more — gather additional evidence before making a final judgment
+- collect_evidence — run specific diagnostic commands to get more data
+- extend_wait — the device needs more time, extend the current wait
+- stop — the signal indicates a real failure, end the run
+- pause — the situation needs human attention
+- suggest — offer a suggestion but don't change the run state
+- observe_more_frequent — increase checkpoint frequency temporarily
+- observe_again_at — re-check at a specific future time
 
-Output JSON: { decision, reason, confidence, reasoning_trace, evidence_refs?, params?, suggestion? }`;
+You will be given the run goal, known issues for this target, recent decisions, the triggering event, and evidence windows. Evaluate all of this holistically.
 
-const REPLY_FALLBACK = `You are an Embed Agent Reply Generator. The run status (completed/failed/cancelled) is pre-determined by the system — you do NOT output it. Your job is to produce the narrative: summary, key_evidence, criteria_results, suggested_next, and confidence.
+Note: CB1 (override breaker) and CB3 (warning escalation) may be active. When active, the system applies additional constraints on your decision AFTER you output it.`;
 
-Output JSON: { summary, suggested_next, key_evidence: [{ summary, evidence_refs }], criteria_results: [{ criterion, status: "pass"|"fail"|"unknown", evidence_refs }], confidence }`;
+const REPLY_FALLBACK = `You are an Embed Agent Reply Generator. The run status (completed/failed/cancelled) is pre-determined by the system. Your job is the narrative: summary, key evidence, per-criterion evaluation, and suggested next steps.
 
-// --- Helpers ---
+Evaluate each success criterion against the events and evidence. Be honest — if evidence contradicts a criterion, mark it fail.
+
+Output via the submitReply tool.`;
+
+// ============================================================
+// Helpers
+// ============================================================
 
 function h(heading: string, ...lines: string[]): string {
   const body = lines.filter(l => l !== "").join("\n");
@@ -96,6 +124,25 @@ function h(heading: string, ...lines: string[]): string {
 function bullets(items: string[]): string {
   return items.map(i => `- ${i}`).join("\n");
 }
+
+/** Read evidence content: return full content if ≤ maxBytes, otherwise head + tail to preserve both context and recency. */
+async function readEvidenceWindow(
+  evidence: EvidenceReader,
+  runId: string,
+  ref: string,
+  maxBytes: number,
+): Promise<string> {
+  const content = await evidence.readContent(runId, ref, maxBytes + 1);
+  if (!content) return "(empty)";
+  if (content.length <= maxBytes) return content;
+  const headSize = Math.floor(maxBytes * 0.25);
+  const tailSize = maxBytes - headSize;
+  return content.slice(0, headSize) + `\n... [${content.length - maxBytes} bytes omitted] ...\n` + content.slice(-tailSize);
+}
+
+// ============================================================
+// ContextAssembler
+// ============================================================
 
 export class ContextAssembler {
   private plannerPrompt: string;
@@ -117,10 +164,9 @@ export class ContextAssembler {
   }
 
   // ============================================================
-  // Planner: Goal → Constraints → Target → Skills → History
+  // Planner context
   //
-  // LLM needs: what to do, what's allowed, what device has,
-  //            patterns to follow, lessons from past.
+  // Goal (primacy) → Constraints → Target → Few-Shot (perturbed) → History (reference)
   // ============================================================
 
   async assemblePlannerContext(runId: string, taskInfo?: {
@@ -136,19 +182,21 @@ export class ContextAssembler {
     ]);
 
     const taskDesc = taskInfo?.task ?? (run.artifact.type ? `validate ${run.artifact.type}` : "validate device");
-    const tier1 = this.skillRegistry?.matchTop(taskDesc, 5) ?? [];
+
+    // Fetch more candidates for perturbation. SkillRegistry implements reservoir sampling internally.
+    const skillCandidates = this.skillRegistry?.matchTop(taskDesc, 20) ?? [];
     const tier2 = this.skillRegistry?.loadMatchedSteps(taskDesc, 3) ?? [];
 
     const sections: string[] = [];
 
-    // 1. Goal — primacy: what to do, what success looks like
+    // --- Goal (primacy) ---
     const goalLines: string[] = [];
     goalLines.push(`**Task**: ${taskInfo?.task ?? `Validate ${run.artifact.type} on ${run.target_id}`}`);
     goalLines.push(`**Expected**: ${taskInfo?.expected ?? "Device operates normally"}`);
     if (taskInfo?.concerns?.length) goalLines.push(`**Concerns**: ${taskInfo.concerns.join(", ")}`);
     sections.push(h("Goal", ...goalLines));
 
-    // 2. Safety Constraints — boundaries for the plan
+    // --- Safety Constraints ---
     const constraints = taskInfo?.constraints;
     if (constraints && Object.keys(constraints).length > 0) {
       const cl: string[] = [];
@@ -159,7 +207,7 @@ export class ContextAssembler {
       if (cl.length > 0) sections.push(h("Safety Constraints", ...cl));
     }
 
-    // 3. Test Hint
+    // --- Test Hint ---
     const hint = taskInfo?.test_hint as Record<string, unknown> | undefined;
     if (hint?.command) {
       const hl: string[] = [];
@@ -170,7 +218,7 @@ export class ContextAssembler {
       sections.push(h("Test Hint", ...hl));
     }
 
-    // 4. Target — what connections are available → what capabilities can be used
+    // --- Target ---
     const tl: string[] = [];
     tl.push(`**ID**: ${run.target_id}`);
     tl.push(`**Artifact**: ${run.artifact.path} (${run.artifact.type}${run.artifact.version ? ` v${run.artifact.version}` : ""})`);
@@ -180,23 +228,29 @@ export class ContextAssembler {
     }
     sections.push(h("Target", ...tl));
 
-    // 5. Few-Shot Examples — validated patterns (REFERENCE, not primary)
+    // --- Few-Shot Examples (perturbed) ---
     if (tier2.length > 0) {
       const sl: string[] = [];
-      sl.push("Validated plan patterns. Prefer these over inventing new step sequences.");
+      sl.push(`⚠ Examples below are randomly sampled from ${skillCandidates.length} relevant patterns — each plan generation may see different examples.`);
       sl.push("");
-      for (const s of tier2) {
+      for (let idx = 0; idx < tier2.length; idx++) {
+        const s = tier2[idx]!;
         sl.push(`**Example: ${s.name}** — ${s.description}`);
         sl.push("```");
         sl.push(s.steps.map((st, i) => `${i + 1}. ${st.action} via ${st.capability}${st.command ? `: ${st.command}` : ""} [${st.timeout_sec}s]`).join("\n"));
         sl.push("```");
         sl.push(`Evidence: always=[${s.evidence.always.join(",")}] on_failure=[${s.evidence.on_failure.join(",")}]`);
         sl.push("");
+        // Inject perturbation reminder after 2-3 examples
+        if (idx === 1 && tier2.length > 2) {
+          sl.push("⚠ These are REFERENCE patterns. Your specific device and task may require a different approach.");
+          sl.push("");
+        }
       }
       sections.push(h("Few-Shot Examples", ...sl));
     }
 
-    // 6. History — what happened before (PAST, not directive)
+    // --- History (reference, not directive) ---
     const hl2: string[] = [];
     if (episodes.length > 0) {
       hl2.push("Recent episodes:");
@@ -219,16 +273,16 @@ export class ContextAssembler {
   }
 
   // ============================================================
-  // Observer: Stable → Cumulative → Variable
+  // Observer context — cache-aware 4-layer structure
   //
-  // Stable (cached across calls): Known Issues, Evidence Policy
-  // Cumulative (prefix stable):    Decisions, Checkpoints, WM
-  // Variable (recency zone):       Run State → Constraints →
-  //                                 Trigger → Evidence → Signals
+  // [BP1 — Deployment-level]  System Prompt (cacheable across all runs)
+  // [BP2 — Run-level]         Goal + Known Issues + Evidence Policy
+  // [BP3 — Semi-stable]       Working Memory + Recent Decisions + Checkpoint trends
+  // [Uncached]                Constraints → Trigger → Evidence → Signals (recency-ordered)
   //
-  // Constraints is in the variable section START so it's the
-  // first thing LLM reads in the recency zone — directly
-  // constraining the decision space.
+  // Constraints appears FIRST in the uncached section so it bounds
+  // the decision before the LLM reads the triggering event details.
+  // Evidence appears LAST for recency bias toward ground truth.
   // ============================================================
 
   async assembleObserverContext(
@@ -240,8 +294,14 @@ export class ContextAssembler {
     const run = await this.runStore.get(runId);
     const targetId = run?.target_id ?? "";
 
-    const [recentEvents, wm, facts, ts, startEvents] = await Promise.all([
-      this.eventStore.read(runId, Math.max(0, triggeringEvent.seq - 100), 50),
+    const [
+      recentEvents,
+      wm,
+      facts,
+      ts,
+      startEvents,
+    ] = await Promise.all([
+      this.eventStore.read(runId, Math.max(0, triggeringEvent.seq - 200), 100),
       this.memory.readWorkingMemory(runId),
       this.memory.queryFacts("target", targetId, "known_issue", true),
       targetId ? (this.targetStore.getState?.(targetId) ?? Promise.resolve(null)) : Promise.resolve(null),
@@ -251,22 +311,40 @@ export class ContextAssembler {
     const sections: string[] = [];
 
     // ========================
-    // STABLE — cacheable across Observer calls within same run
+    // [BP2 — Run-level invariant]
+    // These sections are IDENTICAL across all Observer calls within a run.
     // ========================
 
-    // Known Issues — verified patterns from past episodes
+    // --- Run Goal ---
+    const runStart = startEvents.find(e => e.type === "run_started");
+    const runPayload = (runStart?.payload ?? {}) as Record<string, unknown>;
+    const goalLines: string[] = [];
+    const task = (runPayload.task as string) ?? `Validate ${run?.artifact?.type ?? "device"}`;
+    const expected = (runPayload.expected as string) ?? "Device operates normally";
+    goalLines.push(`**Task**: ${task}`);
+    goalLines.push(`**Expected**: ${expected}`);
+    const planId = (runPayload.plan_id as string);
+    if (planId) goalLines.push(`**Plan**: ${planId}`);
+    const totalSteps = ((runPayload.steps as unknown[])?.length);
+    if (totalSteps != null) goalLines.push(`**Total steps**: ${totalSteps}`);
+    sections.push(h("Run Goal", ...goalLines));
+
+    // --- Known Issues ---
     if (facts.length > 0) {
       const lines = facts.map(f => {
         let l = `- ${f.statement}`;
         if (f.extended_pattern) l += ` (pattern: \`${f.extended_pattern}\`)`;
         return l;
       });
+      lines.push("");
+      lines.push("When the triggering event matches a known issue semantically, consider whether this instance differs from past occurrences.");
       sections.push(h("Known Issues", ...lines));
+    } else {
+      sections.push(h("Known Issues", "(none recorded for this target)"));
     }
 
-    // Evidence Policy — what to collect on collect_more
-    const runStart = startEvents.find(e => e.type === "run_started");
-    const ep = (runStart?.payload as Record<string, unknown> | undefined)?.evidence_policy as { always: string[]; on_failure: string[] } | undefined;
+    // --- Evidence Policy ---
+    const ep = (runPayload.evidence_policy as { always: string[]; on_failure: string[] } | undefined);
     if (ep) {
       sections.push(h("Evidence Policy",
         `Always collect: ${ep.always?.join(", ") ?? "none"}`,
@@ -274,102 +352,112 @@ export class ContextAssembler {
       ));
     }
 
+    // --- Success & Failure Criteria (for reference) ---
+    const sc = runPayload.success_criteria as string[] | undefined;
+    const fs = runPayload.failure_signals as string[] | undefined;
+    if (sc?.length || fs?.length) {
+      const cl: string[] = [];
+      if (sc?.length) { cl.push("Success criteria:"); cl.push(...sc.map(c => `- ${c}`)); }
+      if (fs?.length) { cl.push(""); cl.push("Failure signals:"); cl.push(...fs.map(s => `- ${s}`)); }
+      sections.push(h("Criteria Reference", ...cl));
+    }
+
     // ========================
-    // CUMULATIVE — prefix mostly stable, grows slowly
+    // [BP3 — Semi-stable]
+    // Grows slowly over a run. Mostly stable between consecutive calls.
     // ========================
 
-    // Working Memory
+    // --- Working Memory ---
     if (wm.length > 0) {
       sections.push(h("Working Memory",
         ...wm.map(w => `- [${w.source}] ${w.key}: ${w.summary}`),
       ));
     }
 
-    // Recent Decisions
+    // --- Recent Decisions (last 10) ---
     const decEvents = recentEvents.filter(e => e.type === "decision_made");
     if (decEvents.length > 0) {
       const lines: string[] = [];
-      for (const d of decEvents.slice(-5).reverse()) {
+      for (const d of decEvents.slice(-10).reverse()) {
         const p = d.payload as Record<string, unknown> | undefined;
         const dec = (p?.decision as string) ?? "?";
         const conf = typeof p?.confidence === "number" ? ` conf=${p.confidence.toFixed(1)}` : "";
-        lines.push(`- seq=${d.seq}: **${dec}**${conf} ${d.summary}`);
-        if (p?.reasoning_trace) lines.push(`  > ${p.reasoning_trace as string}`);
-      }
-      const decisions = decEvents.slice(-5).map(e => (e.payload as Record<string, unknown>)?.decision as string).filter(Boolean);
-      if (new Set(decisions).size === 1 && decisions.length >= 3) {
-        lines.push(`  ⚠ Last ${decisions.length} decisions all "${decisions[0]}" — stuck loop?`);
+        lines.push(`- seq=${d.seq}: **${dec}**${conf} — ${d.summary}`);
       }
       sections.push(h("Recent Decisions", ...lines));
     }
 
-    // Checkpoint History
+    // --- Checkpoint History ---
     const cps = recentEvents.filter(e => e.type === "checkpoint");
     if (cps.length > 0) {
       const lines: string[] = [];
       for (const c of cps.slice(-5)) {
         const p = c.payload as Record<string, unknown> | undefined;
-        lines.push(`- seq=${c.seq}: ${(p?.stage as string) ?? "?"} stage, ${(p?.lines_per_sec as number) ?? "?"} l/s, pattern=${(p?.output_pattern as string) ?? "?"}`);
-      }
-      const lpsVals = cps.slice(-5).map(e => (e.payload as Record<string, unknown>)?.lines_per_sec as number | undefined).filter((v): v is number => typeof v === "number");
-      if (lpsVals.length >= 2) {
-        const first = lpsVals[0]!, last = lpsVals[lpsVals.length - 1]!;
-        const trend = last > first * 1.1 ? "improving" : last < first * 0.9 ? "degrading" : "stable";
-        lines.push(`Trend: **${trend}**`);
+        const stage = (p?.stage as string) ?? "?";
+        const lps = (p?.lines_per_sec as number);
+        const samples = (p?.window_samples as number[]);
+        if (samples?.length) {
+          lines.push(`- seq=${c.seq}: stage=${stage}, samples=[${samples.join(",")}]`);
+        } else {
+          lines.push(`- seq=${c.seq}: stage=${stage}${lps != null ? `, ${lps} l/s` : ""}`);
+        }
       }
       sections.push(h("Checkpoint History", ...lines));
     }
 
     // ========================
-    // VARIABLE — recency zone. Constraints FIRST so it constrains
-    // the decision before LLM reads what happened.
+    // [Uncached — Variable]
+    // Constraints FIRST so the decision boundary is read before the trigger.
+    // Evidence LAST for recency bias toward ground truth.
     // ========================
 
-    // Run State
-    const rsLines: string[] = [];
-    rsLines.push(`State: ${run?.state ?? "?"}  Elapsed: ${run?.elapsed_sec ?? 0}s`);
-    if (run?.current_step_id) rsLines.push(`Step: ${run.current_step_id}`);
-    sections.push(h("Run State", ...rsLines));
+    // --- Run State + Time ---
+    const elapsed = run?.elapsed_sec ?? 0;
+    const maxDur = (runPayload.estimated_duration_sec as number) ?? 600;
+    const remaining = Math.max(0, maxDur - elapsed);
+    sections.push(h("Run State",
+      `State: ${run?.state ?? "?"}  Step: ${run?.current_step_id ?? "none"}`,
+      `[t=${elapsed}s, remaining=${remaining}s, max=${maxDur}s]`,
+    ));
 
-    // Constraints — decision boundary, recency position
-    const maxDur = (runStart?.payload as Record<string, unknown> | undefined)?.estimated_duration_sec as number | undefined;
-    const remaining = Math.max(0, (maxDur ?? 600) - (run?.elapsed_sec ?? 0));
+    // --- Constraints (decision boundary) ---
     const caps = ts
       ? Object.keys(ts).filter(k => k !== "state" && ((ts as Record<string, unknown>)[k] === "connected" || (ts as Record<string, unknown>)[k] === "online"))
       : [];
-    const clines: string[] = [];
-    clines.push(`⚠ This section reflects the current observation only — values change every call.`);
-    clines.push(`Remaining: **${remaining}s**`);
-    clines.push(`Capabilities: ${caps.length > 0 ? caps.join(", ") : "unknown"}`);
-    clines.push(`CB1 (override breaker): **${circuitBreakerActive ? "ACTIVE — only suggest" : "inactive"}**`);
-    clines.push(`CB3 (warning escalation): **${warningEscalation ? "ACTIVE — be conservative" : "inactive"}**`);
-    sections.push(h("Constraints", ...clines));
+    sections.push(h("Constraints",
+      `Capabilities: ${caps.length > 0 ? caps.join(", ") : "unknown"}`,
+      `CB1 (override breaker): ${circuitBreakerActive ? "ACTIVE — the system will downgrade 'stop' to 'suggest'" : "inactive"}`,
+      `CB3 (warning escalation): ${warningEscalation ? "ACTIVE — the system applies conservative constraints" : "inactive"}`,
+    ));
 
-    // Target State
+    // --- Target State ---
     if (ts) {
       sections.push(h("Target State",
         `Serial: ${ts.serial}  ADB: ${ts.adb}  Device: ${ts.state}`,
       ));
     }
 
-    // Triggering Event
+    // --- Triggering Event ---
     const trLines: string[] = [];
     trLines.push(`Type: ${triggeringEvent.type}  Severity: **${triggeringEvent.severity ?? "info"}**`);
     trLines.push(`Summary: ${triggeringEvent.summary}`);
     if (triggeringEvent.step_id) trLines.push(`Step: ${triggeringEvent.step_id}`);
-    if (triggeringEvent.evidence_refs?.length) trLines.push(`Evidence refs: ${triggeringEvent.evidence_refs.join(", ")}`);
+    if (triggeringEvent.evidence_refs?.length) {
+      trLines.push(`Evidence refs: ${triggeringEvent.evidence_refs.join(", ")}`);
+    }
     sections.push(h("Triggering Event", ...trLines));
 
-    // Evidence Windows — ground truth
+    // --- Evidence Windows (recency position — LAST in uncached) ---
     const evRefs = triggeringEvent.evidence_refs ?? [];
     if (evRefs.length > 0 && this.evidence) {
       const lines: string[] = [];
-      for (let i = 0; i < Math.min(evRefs.length, 3); i++) {
-        const content = await this.evidence.readContent(runId, evRefs[i]!, 3000);
+      // Sample all available refs, not just 3. Max 5 to keep context manageable.
+      for (let i = 0; i < Math.min(evRefs.length, 5); i++) {
+        const content = await readEvidenceWindow(this.evidence, runId, evRefs[i]!, 8000);
         if (content) {
           lines.push(`**${evRefs[i]}**:`);
           lines.push("```");
-          lines.push(content.slice(-3000));
+          lines.push(content);
           lines.push("```");
           lines.push("");
         }
@@ -379,12 +467,17 @@ export class ContextAssembler {
       sections.push(h("Evidence Windows", `${evRefs.length} window(s) available: ${evRefs.join(", ")}`));
     }
 
-    // Recent Signals — by step phase
+    // --- Recent Signals (all warning+ events, grouped by step) ---
     const sigs = recentEvents.filter(e => e.severity === "warning" || e.severity === "fatal");
     if (sigs.length > 0) {
       const currentStep = triggeringEvent.step_id;
       const byStep = new Map<string | undefined, typeof sigs>();
-      for (const s of sigs) { const k = s.step_id as string | undefined; const g = byStep.get(k) ?? []; g.push(s); byStep.set(k, g); }
+      for (const s of sigs) {
+        const k = s.step_id as string | undefined;
+        const g = byStep.get(k) ?? [];
+        g.push(s);
+        byStep.set(k, g);
+      }
 
       const lines: string[] = [];
       lines.push(`${sigs.length} signal(s) across ${byStep.size} step(s).`);
@@ -403,11 +496,33 @@ export class ContextAssembler {
       sections.push(h("Recent Signals", ...lines));
     }
 
+    // --- Output Rhythm (raw time-series from Aggregator, no human labels) ---
+    const lastCp = cps[cps.length - 1];
+    if (lastCp) {
+      const p = lastCp.payload as Record<string, unknown> | undefined;
+      const samples = p?.window_samples as number[] | undefined;
+      const transitions = p?.stage_transitions as { from: string; to: string; at_sec: number }[] | undefined;
+      const crossSource = p?.cross_source_events as { source: string; exit: number; at_sec: number }[] | undefined;
+
+      if (samples?.length || transitions?.length || crossSource?.length) {
+        const rl: string[] = [];
+        if (samples?.length) {
+          rl.push(`Output samples (lines per window): [${samples.join(", ")}]`);
+        }
+        if (transitions?.length) {
+          rl.push(`Stage transitions: ${transitions.map(t => `${t.from}→${t.to}@${t.at_sec}s`).join(", ")}`);
+        }
+        if (crossSource?.length) {
+          rl.push(`Cross-source completions: ${crossSource.map(c => `${c.source}(exit=${c.exit})@${c.at_sec}s`).join(", ")}`);
+        }
+        sections.push(h("Output Rhythm", ...rl));
+      }
+    }
+
     return {
       staticPrompt: this.observerPrompt,
       formattedContext: sections.join("\n"),
       knownIssues: facts.length > 0 ? facts : undefined,
     };
   }
-
 }

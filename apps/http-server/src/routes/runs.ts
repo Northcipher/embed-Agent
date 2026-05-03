@@ -10,7 +10,7 @@ interface CreateRunBody {
   artifact: { path: string; type: string; version?: string; build_id?: string };
   target: string;
   expected?: string;
-  context?: { task?: string; expected: string; concerns?: string[]; success_criteria?: string[]; failure_criteria?: string[] };
+  context?: { task?: string; expected: string; concerns?: string[]; what_changed?: string; success_criteria?: string[]; failure_criteria?: string[]; observe_interval?: number; observe_metrics?: string[] };
   concerns?: string[];
   success_criteria?: string[];
   failure_criteria?: string[];
@@ -23,25 +23,78 @@ function numberParam(value: unknown, fallback: number): number {
 }
 
 export function registerRunRoutes(app: FastifyInstance, handler: CommandHandler) {
+  // --- Targets ---
+  app.get("/targets", async () => {
+    return handler.targetList();
+  });
+
+  app.get("/targets/:targetId/capabilities", async (request) => {
+    const { targetId } = request.params as { targetId: string };
+    return handler.getTargetCapabilities(targetId);
+  });
+
+  app.get("/targets/:targetId/history", async (request) => {
+    const { targetId } = request.params as { targetId: string };
+    const query = request.query as { limit?: string };
+    return handler.history(targetId, numberParam(query.limit, 10));
+  });
+
   // --- Create run ---
   app.post("/runs", async (request) => {
-    const body = request.body as CreateRunBody;
+    const body = request.body as CreateRunBody | null;
+    if (!body || !body.artifact?.path || !body.target) {
+      return { status: "invalid_request", reasons: ["artifact.path and target are required"] };
+    }
 
-    // Map to ValidateRequest shape: flat expected/concerns, or from context
+    // Map to ValidateRequest shape with full context fields
     const req: Record<string, unknown> = {
       artifact: body.artifact,
       target: body.target,
       expected: body.expected ?? body.context?.expected ?? "",
     };
+    if (body.context?.task) req.task = body.context.task;
+    if (body.context?.what_changed) req.what_changed = body.context.what_changed;
     if (body.concerns) req.concerns = body.concerns;
     else if (body.context?.concerns) req.concerns = body.context.concerns;
     if (body.success_criteria) req.success_criteria = body.success_criteria;
     else if (body.context?.success_criteria) req.success_criteria = body.context.success_criteria;
     if (body.failure_criteria) req.failure_criteria = body.failure_criteria;
     else if (body.context?.failure_criteria) req.failure_criteria = body.context.failure_criteria;
-    if (body.constraints) req.constraints = body.constraints;
+    if (body.constraints) {
+      req.constraints = { ...body.constraints };
+      // Preserve observe_interval/observe_metrics from context that aren't in the flat constraints type
+      if (body.context?.observe_interval != null) (req.constraints as any).observe_interval = body.context.observe_interval;
+      if (body.context?.observe_metrics != null) (req.constraints as any).observe_metrics = body.context.observe_metrics;
+    }
 
     return handler.validate(req as unknown as Parameters<typeof handler.validate>[0]);
+  });
+
+  // --- Run intervention ---
+  app.post("/runs/:runId/interventions", async (request) => {
+    const { runId } = request.params as { runId: string };
+    const body = request.body as {
+      action: "pause" | "resume" | "cancel" | "add_instruction" | "ignore_rule" | "override";
+      reason?: string;
+      instruction?: string;
+      rule_id?: string;
+      decision?: "continue" | "stop" | "cancel";
+    };
+
+    switch (body.action) {
+      case "pause":
+        return handler.pause(runId, body.reason ?? "manual");
+      case "resume":
+        return handler.resume(runId);
+      case "cancel":
+        return handler.cancel(runId, body.reason ?? "manual");
+      case "add_instruction":
+        return handler.addInstruction(runId, body.instruction ?? body.reason ?? "");
+      case "ignore_rule":
+        return handler.ignoreRule(runId, body.rule_id ?? "");
+      case "override":
+        return handler.override(runId, body.decision ?? "continue", body.reason);
+    }
   });
 
   // --- Run status ---

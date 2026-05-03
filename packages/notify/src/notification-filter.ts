@@ -34,8 +34,8 @@ const CATEGORY_MAP: Record<string, { category: SemanticCategory; condition?: (e:
   },
   suggestion_generated: {
     category: "memory_suggestion",
-    // Only match memory-sourced suggestions, not Observer general suggestions
-    condition: (e) => (e.payload as Record<string, unknown>)?.source === "memory",
+    // Observer suggestions and memory suggestions both route here
+    condition: () => true,
   },
 };
 
@@ -93,7 +93,7 @@ export class NotificationFilter {
   start(): void {
     this.unsub = this.eb.subscribe(
       ["result_ready", "target_state_changed", "suggestion_generated"],
-      e => { this.handleEvent(e); },
+      e => this.handleEvent(e),
     );
   }
 

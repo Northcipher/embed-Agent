@@ -16,6 +16,7 @@ interface RunStoreIO {
 
 interface TargetStateIO {
   getState(targetId: string): Promise<{ state: string; current_run_id?: string; target_id?: string } | null>;
+  get?(targetId: string): Promise<{ safety?: { allow_flash?: boolean; allow_shell_exec?: boolean } } | null>;
   updateState(targetId: string, patch: Record<string, unknown>): Promise<void>;
   listStates?(): Promise<{ target_id: string; state: string; current_run_id?: string }[]>;
 }
@@ -40,12 +41,13 @@ interface AgentReply {
   suggested_next: string;
   evidence_path: string;
   key_evidence: { summary: string; evidence_refs: string[] }[];
+  confidence: number;
   criteria_results?: { criterion: string; status: "pass" | "fail" | "unknown"; evidence_refs: string[] }[];
 }
 
 interface ReplyCaller {
   generate(runId: string): Promise<AgentReply>;
-  generateMinimal(runId: string, reason: string): Promise<AgentReply>;
+  generateMinimal(runId: string, reason: string, runInfo?: { target_id: string; artifact: { path: string; type: string; version?: string; build_id?: string } }): Promise<AgentReply>;
   generateCancelled(runId: string, reason: string): Promise<AgentReply>;
 }
 
@@ -100,6 +102,9 @@ export class RunManager {
   private activeExecutors = new Map<string, StepExecutor>();
   private activeDecisionHandlers = new Map<string, DecisionHandler>();
   private stepQueues = new Map<string, StepQueue>();
+  checkpointTimers = new Map<string, ReturnType<typeof setInterval>>();
+  /** Per-run ignored rules — survives DecisionHandler instance re-creation. */
+  ignoredRules = new Map<string, Set<string>>();
 
   // Factories injected by bootstrap — avoid stubs in executeRun
   private executorFactory?: (runId: string, targetId: string) => StepExecutor | Promise<StepExecutor>;
@@ -204,6 +209,7 @@ export class RunManager {
       return { status: "target_busy", reasons: [`Target ${req.target} is busy`] };
     }
 
+    try {
     // 3. Create Run record
     const run: RunRecord = {
       run_id: runId,
@@ -227,13 +233,15 @@ export class RunManager {
     }
 
     // 5. ContextAssembler → Planner → Plan
-    const taskInfo: { task: string; expected: string; concerns?: string[]; constraints?: Record<string, unknown>; test_hint?: unknown } = {
+    const taskInfo: { task: string; expected: string; concerns?: string[]; constraints?: Record<string, unknown>; test_hint?: unknown; success_criteria?: string[]; failure_criteria?: string[] } = {
       task: `Validate ${req.artifact.type} on ${req.target}`,
       expected: req.expected,
       constraints: req.constraints as unknown as Record<string, unknown>,
       test_hint: req.test_hint,
     };
     if (req.concerns) taskInfo.concerns = req.concerns;
+    if (req.success_criteria) taskInfo.success_criteria = req.success_criteria;
+    if (req.failure_criteria) taskInfo.failure_criteria = req.failure_criteria;
 
     let planResult: PlanCallResult;
     try {
@@ -254,15 +262,24 @@ export class RunManager {
 
     const plan = planResult.plan!;
 
-    // 6. Validate plan — safety constraints
+    // 6. Validate plan — safety constraints + duration
     if (!plan.steps || plan.steps.length === 0) {
       return await this.rejectRun(runId, req.target, "Plan rejected: no steps generated", "plan_rejected");
     }
-    const allowFlash = req.constraints?.allow_flash ?? true;
-    const allowShell = req.constraints?.allow_shell_exec ?? true;
+    // Duration check: enforce max_duration_sec against plan estimate
+    const maxDur = req.constraints?.max_duration_sec;
+    if (maxDur != null && plan.estimated_duration_sec > maxDur) {
+      return await this.rejectRun(runId, req.target, `Plan rejected: estimated ${plan.estimated_duration_sec}s exceeds max ${maxDur}s`, "plan_rejected");
+    }
+    // Merge request constraints with target safety profile (more restrictive wins)
+    const targetProfile = await this.targetState.get?.(req.target);
+    const targetSafety = (targetProfile as Record<string, unknown> | null)?.safety as Record<string, boolean> | undefined;
+    const allowFlash = (req.constraints?.allow_flash ?? true) && (targetSafety?.allow_flash ?? true);
+    const noFlash = req.constraints?.no_flash ?? false;
+    const allowShell = (req.constraints?.allow_shell_exec ?? true) && (targetSafety?.allow_shell_exec ?? true);
     for (const step of plan.steps) {
-      if (step.action === "flash" && !allowFlash) {
-        return await this.rejectRun(runId, req.target, `Plan rejected: flash step "${step.id}" blocked by allow_flash=false`, "plan_rejected");
+      if (step.action === "flash" && (!allowFlash || noFlash)) {
+        return await this.rejectRun(runId, req.target, `Plan rejected: flash step "${step.id}" blocked by ${noFlash ? "no_flash" : "allow_flash=false"}`, "plan_rejected");
       }
       if (step.capability === "shell_exec" && !allowShell) {
         return await this.rejectRun(runId, req.target, `Plan rejected: shell_exec step "${step.id}" blocked by allow_shell_exec=false`, "plan_rejected");
@@ -307,19 +324,25 @@ export class RunManager {
     this.stepQueues.set(runId, sq);
 
     // Start async execution — don't await, let it run in background
-    this.executeRun(runId, req.target).catch(async (e) => {
+    const continuous = req.constraints?.continuous ?? false;
+    this.executeRun(runId, req.target, continuous).catch(async (e) => {
       console.error(`[RunManager] Background execution failed for ${runId}:`, (e as Error).message);
       await this.finalize(runId, req.target, "failed", `Execution error: ${(e as Error).message}`);
     });
 
     return { status: "accepted", run_id: runId };
+    } catch (e) {
+      // Release lock on unexpected error to prevent permanent target lock
+      await this.tm.releaseLock(req.target);
+      throw e;
+    }
   }
 
   /**
    * Execute all steps in a run. Uses injected StepExecutor + DecisionHandler factories.
    * Must be called after setExecutorFactory / setDecisionHandlerFactory are configured.
    */
-  async executeRun(runId: string, targetId: string): Promise<void> {
+  async executeRun(runId: string, targetId: string, continuous = false): Promise<void> {
     const sq = this.stepQueues.get(runId);
     if (!sq) return;
 
@@ -333,7 +356,7 @@ export class RunManager {
     // Execute steps until done
     let hasMore = true;
     while (hasMore) {
-      hasMore = await this.runNextStep(runId, executor, dh);
+      hasMore = await this.runNextStep(runId, executor, dh, continuous);
     }
   }
 
@@ -352,10 +375,13 @@ export class RunManager {
   // ============================================================
 
   private async finalize(runId: string, targetId: string, status: "completed" | "failed" | "cancelled", reason: string): Promise<void> {
-    // 1. Detach decision handler & executor
+    // 1. Detach decision handler & executor, clear step queue, stop timers
     this.activeDecisionHandlers.get(runId)?.detach();
     this.activeDecisionHandlers.delete(runId);
     this.activeExecutors.delete(runId);
+    this.stepQueues.delete(runId);
+    const timer = this.checkpointTimers.get(runId);
+    if (timer) { clearInterval(timer); this.checkpointTimers.delete(runId); }
 
     // 2. State transitions: completed → collecting_evidence → finalizing; failed/cancelled → finalizing
     if (status === "completed") {
@@ -376,16 +402,23 @@ export class RunManager {
         // Normal completion — LLM-driven reply with full event analysis
         reply = await this.reply.generate(runId);
       } else {
-        // Failed (early failure) — rule-based minimal reply
-        reply = await this.reply.generateMinimal(runId, reason);
+        // Failed (early failure) — rule-based minimal reply with run context
+        const runRec = await this.runStore.get(runId);
+        reply = await this.reply.generateMinimal(runId, reason, runRec ? { target_id: runRec.target_id, artifact: runRec.artifact } : undefined);
       }
     } catch (e) {
       console.error(`[RunManager] Reply generation failed for ${runId}:`, (e as Error).message);
       reply = {
         run_id: runId, status,
         summary: reason, suggested_next: "check evidence manually", evidence_path: `${this.dataRoot}/runs/${runId}`,
-        key_evidence: [],
-      };
+        key_evidence: [], confidence: 0.3,
+      } as AgentReply;
+      // Emit result_ready to prevent consumers from missing the final result
+      await this.eb.emit({
+        type: "result_ready", run_id: runId, source: "reply_generator",
+        summary: reply.summary,
+        payload: { status: reply.status, summary: reply.summary, suggested_next: reply.suggested_next, evidence_path: reply.evidence_path, key_evidence: reply.key_evidence, confidence: reply.confidence },
+      }).catch(() => {});
     }
 
     // 4. RM emits audit event FIRST, then updates state.
@@ -426,9 +459,21 @@ export class RunManager {
   async resume(runId: string): Promise<void> {
     const sq = this.stepQueues.get(runId);
     if (!sq) throw new Error(`Run not active: ${runId}`);
+    // Guard: only resume if actually paused and no active executor
+    if (!sq.isPaused || this.activeExecutors.has(runId)) {
+      throw new Error(`Run ${runId} is not paused`);
+    }
     sq.resume();
     await this.eb.emit({ type: "run_resumed", run_id: runId, source: "run_manager", summary: "Run resumed", payload: {} });
     await this.runStore.update(runId, { state: "running" });
+    // Restart the execution loop (background, non-blocking)
+    const run = await this.runStore.get(runId);
+    if (run) {
+      this.executeRun(runId, run.target_id).catch(async (e) => {
+        console.error(`[RunManager] Resume execution failed for ${runId}:`, (e as Error).message);
+        await this.finalize(runId, run.target_id, "failed", `Resume error: ${(e as Error).message}`);
+      });
+    }
   }
 
   async cancel(runId: string, reason: string): Promise<void> {
@@ -488,19 +533,40 @@ export class RunManager {
     return this.stepQueues.get(runId);
   }
 
-  async runNextStep(runId: string, executor: StepExecutor, dh: DecisionHandler): Promise<boolean> {
+  async runNextStep(runId: string, executor: StepExecutor, dh: DecisionHandler, continuous = false): Promise<boolean> {
     const sq = this.stepQueues.get(runId);
     if (!sq) return false;
 
     const step = sq.next();
     if (!step) {
-      // No more steps — begin finalization
-      await this.finalize(runId, executor["target"]?.target_id ?? "", "completed", "All steps completed");
+      if (sq.isExhausted) {
+        if (continuous) {
+          // Reload queue but skip destructive steps (flash/push) for continuous observation
+          const original = sq.steps;
+          sq.steps = original.filter(s => s.action !== "flash" && s.action !== "push");
+          sq.reset();
+          if (sq.steps.length === 0) {
+            await this.finalize(runId, executor["target"]?.target_id ?? "", "completed", "Continuous run: no observation steps remain");
+            return false;
+          }
+          return true;
+        }
+        // All steps completed — begin finalization
+        await this.finalize(runId, executor["target"]?.target_id ?? "", "completed", "All steps completed");
+      }
+      // If paused (not exhausted), just return — wait for resume
       return false;
     }
 
     this.activeExecutors.set(runId, executor);
     this.activeDecisionHandlers.set(runId, dh);
+
+    // Track progress: update current_step_id and elapsed_sec on run record
+    const run = await this.runStore.get(runId);
+    if (run) {
+      const patch: Partial<RunRecord> = { current_step_id: step.id, elapsed_sec: run.elapsed_sec ?? 0 };
+      await this.runStore.update(runId, patch).catch(() => {});
+    }
 
     dh.attach(runId, executor);
     const result = await executor.executeStep(step);
@@ -508,7 +574,8 @@ export class RunManager {
 
     if (!result.completed) {
       if (result.interrupted) {
-        // Interrupted by pause/cancel — leave as-is (caller handles)
+        // Interrupted by pause/cancel — clean up and wait for resume
+        this.activeExecutors.delete(runId);
         return false;
       }
       if (result.blocked) {
@@ -516,7 +583,19 @@ export class RunManager {
         await this.pause(runId, result.error ?? "Hook blocked step");
         return false;
       }
-      // Step failed — finalize as failed
+      // Step failed — honor on_failure policy
+      const onFailure = step.on_failure ?? "stop";
+      if (onFailure === "continue") {
+        return true; // continue to next step
+      }
+      if (onFailure === "collect_and_stop") {
+        // Append a diagnostic collect step before stopping
+        this.stepQueues.get(runId)?.append({
+          id: `collect_after_fail_${Date.now()}`,
+          capability: "collect_logs", action: "exec",
+          command: "dmesg; logcat -d", timeout_sec: 30,
+        });
+      }
       await this.finalize(runId, executor["target"]?.target_id ?? "", "failed", result.error ?? "Step failed");
       return false;
     }

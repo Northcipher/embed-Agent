@@ -58,12 +58,16 @@ export class Views {
     const readLimit = types ? Math.max(limit * 3, 500) : limit + 1;
     const events = await this.eventStore.read(runId, afterSeq, readLimit);
     const filtered = types ? events.filter(e => types.includes(e.type)) : events;
-    const hasMore = filtered.length > limit;
+    const ranOut = events.length < readLimit; // true if no more events in store
+    const hasMore = ranOut ? filtered.length > limit : true; // more may exist beyond read window
     const sliced = filtered.slice(0, limit);
     return {
       events: sliced.map(e => {
-        const item = { seq: e.seq, type: e.type, summary: e.summary, time: e.time } as { seq: number; type: string; severity?: string; summary: string; time: string };
+        const item = { seq: e.seq, type: e.type, summary: e.summary, time: e.time } as { seq: number; type: string; severity?: string; summary: string; time: string; step_id?: string; payload?: Record<string, unknown>; evidence_refs?: string[] };
         if (e.severity) item.severity = e.severity;
+        if (e.step_id) item.step_id = e.step_id;
+        if (e.payload) item.payload = e.payload;
+        if (e.evidence_refs) item.evidence_refs = e.evidence_refs;
         return item;
       }),
       next_after_seq: sliced.length > 0 ? sliced[sliced.length - 1]!.seq : afterSeq,
@@ -82,10 +86,17 @@ export class Views {
     const terminal = ["completed", "failed", "cancelled"].includes(run.state);
     if (!terminal) return { run_id: runId, state: run.state, result_available: false };
 
-    // Look for result_ready event — the authoritative result.
-    // Read from after the run started (seq 0) to catch result_ready wherever it lands.
-    const events = await this.eventStore.read(runId, 0, 1000);
-    const resultReady = events.find(e => e.type === "result_ready");
+    // Look for result_ready event — read in batches to handle runs with >1000 events
+    let resultReady = undefined;
+    let afterSeq = 0;
+    while (true) {
+      const batch = await this.eventStore.read(runId, afterSeq, 500);
+      if (batch.length === 0) break;
+      resultReady = batch.find(e => e.type === "result_ready");
+      if (resultReady) break;
+      afterSeq = batch[batch.length - 1]!.seq;
+      if (batch.length < 500) break; // no more events
+    }
     if (resultReady) {
       const p = resultReady.payload as Record<string, unknown>;
       const result = {
@@ -131,8 +142,12 @@ export class Views {
       if (!ev.available) return { available: false };
       // Read evidence content for the ref
       try {
-        const content = await fs.readFile(ev.filePath, "utf-8");
-        return { content: content.slice(0, 100_000), filePath: ev.filePath, size: ev.size, available: true };
+        // Read first 100KB only — avoid loading huge evidence files into memory
+        const fh = await fs.open(ev.filePath, "r");
+        const buf = Buffer.alloc(100_000);
+        const { bytesRead } = await fh.read(buf, 0, 100_000, 0);
+        await fh.close();
+        return { content: buf.toString("utf-8", 0, bytesRead), filePath: ev.filePath, size: ev.size, available: true };
       } catch {
         return { filePath: ev.filePath, size: ev.size, available: true };
       }
