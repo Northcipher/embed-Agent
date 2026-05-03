@@ -82,7 +82,7 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   const providerApiKey = providerApiKeyEnv ? (process.env[providerApiKeyEnv] ?? "") : "";
 
   let llmProvider: LLMProvider;
-  if (providerType === "mock" || !providerCfg || !providerApiKey) {
+  if (providerType === "mock") {
     const mock = new MockProvider();
     mock.setResponse(JSON.stringify({
       plan_id: "default", estimated_duration_sec: 300,
@@ -91,9 +91,9 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
       success_criteria: ["device responds to shell"], failure_signals: ["kernel panic"],
     }));
     llmProvider = mock;
-    if (providerType !== "mock" && !providerApiKey) {
-      log.warn(`${providerApiKeyEnv} not set — using MockProvider`);
-    }
+  } else if (!providerApiKey) {
+    logger.error(`${providerApiKeyEnv} not set — refusing to start with provider "${providerType}". Set the env var or use mock provider.`);
+    process.exit(1);
   } else if (providerType === "anthropic") {
     llmProvider = new AIAnthropicProvider(providerApiKey, providerBaseUrl);
     const am = (providerCfg?.models as Record<string, string> | undefined);

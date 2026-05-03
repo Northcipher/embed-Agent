@@ -104,15 +104,15 @@ async function main(): Promise<void> {
     handler.resume = async () => ({ accepted: false, run_id: "", status: "error", error_code: "internal_error", message: "RunManager not available" }) as any;
     handler.cancel = async () => ({ accepted: false, run_id: "", status: "error", error_code: "internal_error", message: "RunManager not available" }) as any;
 
-    handler.skillList = async () => ({ skills: skillStore.list().map(s => ({ name: s.name, description: s.description, category: s.category })), status: "ok" });
-    handler.taskList = async () => ({ tasks: (await taskStore.list()).map(t => ({ name: t.name, skill: t.skill, enabled: t.enabled })), status: "ok" });
-    handler.hookList = async () => ({ hooks: [] as { name: string; on: string }[], status: "ok" });
+    handler.skillList = async () => ({ skills: skillStore.list().map(s => ({ name: s.name, description: s.description, category: s.category })), status: "ok" } as any);
+    handler.taskList = async () => ({ tasks: (await taskStore.list()).map(t => ({ name: t.name, skill: t.skill, enabled: t.enabled })), status: "ok" } as any);
+    handler.hookList = async () => ({ hooks: [] as { name: string; on: string }[], status: "ok" } as any);
     handler.memoryList = async (targetId?: string, category?: string) => {
       try {
         const facts = await memoryStore.queryFacts("target", targetId ?? "", category);
         const entries = facts.filter((f: { statement: string }) => f.statement !== "__DELETED__").map((f: { fact_id: string; category: string; statement: string; verified: boolean }) => ({ fact_id: f.fact_id, category: f.category, statement: f.statement, verified: f.verified }));
-        return { entries, status: "ok" };
-      } catch { return { entries: [] as { fact_id: string; category: string; statement: string; verified: boolean }[], status: "ok" }; }
+        return { entries, status: "ok" } as any;
+      } catch { return { entries: [] as { fact_id: string; category: string; statement: string; verified: boolean }[], status: "ok" } as any; }
     };
 
     await runCli(handler, entry.argv);

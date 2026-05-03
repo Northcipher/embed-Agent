@@ -156,10 +156,13 @@ export class CommandHandler {
 
   // --- Task / Memory / Skill / Hook Management ---
 
-  async taskList() { return { tasks: [] as { name: string; skill: string }[], status: "ok" }; }
-  async taskShow(_name: string) { return { status: "error", error_code: "unsupported_action", message: "Not yet implemented" } as const; }
+  async taskList() { return { status: "error", error_code: "unsupported_action", message: "Task management requires bootstrap with TaskStore" } as const; }
+  async taskShow(_name: string) { return { status: "error", error_code: "unsupported_action", message: "Task management requires bootstrap with TaskStore" } as const; }
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async memoryList(_targetId?: string, _category?: string) { return { entries: [] as { fact_id: string; category: string; statement: string }[], status: "ok" }; }
+  async memoryList(_targetId?: string, _category?: string) {
+    if (!this.memoryStore) return { status: "error", error_code: "unsupported_action", message: "Memory store not available" } as const;
+    return { status: "error", error_code: "unsupported_action", message: "Memory list requires bootstrap wiring" } as const;
+  }
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async memoryConfirm(factId?: string) {
     if (!this.memoryStore || !factId) return { status: "error", error_code: "unsupported_action", message: "Fact verification requires fact_id" } as const;
@@ -194,6 +197,6 @@ export class CommandHandler {
     if (!s) return { status: "error", error_code: "not_found", message: `Skill not found: ${name}` } as const;
     return { skill: s, status: "ok" };
   }
-  async hookList() { return { hooks: [] as { name: string; on: string }[], status: "ok" }; }
-  async hookShow(_name: string) { return { status: "error", error_code: "unsupported_action", message: "Not yet implemented" } as const; }
+  async hookList() { return { status: "error", error_code: "unsupported_action", message: "Hook management requires bootstrap wiring" } as const; }
+  async hookShow(_name: string) { return { status: "error", error_code: "unsupported_action", message: "Hook management requires bootstrap wiring" } as const; }
 }

@@ -54,11 +54,11 @@ export class LocalConnection implements Connection {
   }
 
   async push(src: string, dst: string): Promise<void> {
-    // Security: check blocked push paths
-    const normalized = path.normalize(dst);
+    // Security: resolve absolute path before checking against blocked paths
+    const resolved = path.resolve(dst);
     for (const blocked of this.policy.blocked_push_paths) {
-      if (normalized.startsWith(blocked)) {
-        throw new Error(`Push blocked: destination "${dst}" matches blocked path "${blocked}"`);
+      if (resolved === blocked || resolved.startsWith(blocked + path.sep)) {
+        throw new Error(`Push blocked: destination "${dst}" (resolved: "${resolved}") matches blocked path "${blocked}"`);
       }
     }
     await fs.copyFile(src, dst);
