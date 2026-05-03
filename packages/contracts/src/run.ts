@@ -56,16 +56,6 @@ export interface ValidateRequest {
   };
 }
 
-// Validate Response
-export type ValidateResponse =
-  | { status: "accepted"; run_id: string; state: RunState; evidence_path: string }
-  | { status: "target_busy"; target_id: string }
-  | { status: "artifact_invalid"; reasons: string[] }
-  | { status: "clarification_needed"; missing_info: string[]; suggested_next?: string }
-  | { status: "plan_rejected"; reasons: string[] }
-  | { status: "target_not_found"; target_id: string }
-  | { status: "target_not_ready"; target_id: string; failed_checks: { check: string; error: string }[] };
-
 // Run Record (persisted)
 export interface RunRecord {
   run_id: string;
@@ -87,27 +77,6 @@ export interface RunRecord {
   created_at: string;
   started_at?: string;
   ended_at?: string;
-}
-
-// Run Status (for get_run_status)
-export interface RunStatus {
-  run_id: string;
-  state: RunState;
-  current_step?: {
-    id: string;
-    capability: string;
-    started_at: string;
-    timeout_sec: number;
-  };
-  target: {
-    target_id: string;
-    state: string;
-    serial: string;
-    adb: string;
-  };
-  elapsed_sec: number;
-  last_event_seq: number;
-  evidence_path: string;
 }
 
 // Agent Reply

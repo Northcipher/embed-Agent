@@ -138,16 +138,3 @@ export type SubmitReplyInput = z.infer<typeof SubmitReplySchema>;
 export function createObserverTools(): ToolSet {
   return { makeDecision: makeDecisionTool } as unknown as ToolSet;
 }
-
-/** Reply tools: criterion result + final reply. */
-export function createReplyTools(): ToolSet {
-  return {
-    submitCriterionResult: submitCriterionResultTool,
-    submitReply: submitReplyTool,
-  } as unknown as ToolSet;
-}
-
-/** Planner tools: plan submission (exploration tools are separate). */
-export function createPlannerOutputTools(): ToolSet {
-  return { submitPlan: submitPlanTool } as unknown as ToolSet;
-}

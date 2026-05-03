@@ -19,7 +19,7 @@ export class HttpCommandHandler {
       response = await fetch(`${this.baseUrl}${path}`, init);
     } catch (e) {
       throw new Error(
-        `Embed Agent Runtime is not reachable at ${this.baseUrl}. Start the HTTP runtime server, set EMBED_AGENT_SERVER_URL, or use --local-runtime for development. Cause: ${(e as Error).message}`,
+        `Embed Agent Runtime is not reachable at ${this.baseUrl}. Start the HTTP server (pnpm --filter @embed-agent/http-server dev) or set EMBED_AGENT_SERVER_URL. Cause: ${(e as Error).message}`,
       );
     }
 

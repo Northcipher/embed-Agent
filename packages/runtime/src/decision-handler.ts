@@ -123,7 +123,6 @@ export class DecisionHandler {
   /** Human override — CB1 counter */
   onOverride(): void {
     this.overrideBreaker.onOverride();
-    this.eb.emit({ type: "decision_overridden", run_id: this.runId, source: "decision_handler", summary: "Human override" });
   }
 
   // ============================================================

@@ -6,7 +6,6 @@ import { NotificationFilter, LogChannel } from "@embed-agent/notify";
 import { Views } from "@embed-agent/views";
 import { SystemConfigSchema, LLMConfigSchema, HookConfigSchema, TargetProfileSchema } from "@embed-agent/contracts";
 import { CommandHandler } from "./command-handler.js";
-import { runCli } from "./cli.js";
 
 export interface BootstrapResult {
   handler: CommandHandler;
@@ -314,13 +313,4 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
     logger: log,
     shutdown: async () => { log.info("Shutting down"); },
   };
-}
-
-// Auto-run if executed directly
-const isMain = process.argv[1]?.includes("bootstrap");
-if (isMain) {
-  bootstrap().then(({ handler }) => runCli(handler)).catch((e) => {
-    process.stderr.write(`Bootstrap failed: ${(e as Error).message}\n`);
-    process.exit(1);
-  });
 }

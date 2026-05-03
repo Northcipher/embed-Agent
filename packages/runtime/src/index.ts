@@ -5,4 +5,3 @@ export { DecisionHandler, ObserverOverrideBreaker, WarningAccumulator, type Deci
 export { RunManager, type ValidateRequest } from "./run-manager.js";
 export { ContextAssembler, type PlannerContext, type ObserverContext } from "./context-assembler.js";
 export { HookManager, type HookConfig, type HookResult, type HookPoint } from "./hook-manager.js";
-export { TaskManager, type Task } from "./task-manager.js";

@@ -78,7 +78,7 @@ function parsePlan(content: string): PlanResult {
       plan: {
         ...plan,
         plan_id: plan.plan_id ?? generateId(),
-        evidence_policy: (plan.evidence_policy ?? (planData as any).evidence) ?? FALLBACK_PLAN.evidence_policy,
+        evidence_policy: plan.evidence_policy ?? FALLBACK_PLAN.evidence_policy,
         success_criteria: plan.success_criteria ?? FALLBACK_PLAN.success_criteria,
         failure_signals: plan.failure_signals ?? FALLBACK_PLAN.failure_signals,
         estimated_duration_sec: plan.estimated_duration_sec ?? FALLBACK_PLAN.estimated_duration_sec,

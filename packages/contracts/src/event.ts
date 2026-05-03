@@ -33,8 +33,7 @@ export type DecisionEventType =
   | "decision_made"
   | "decision_rejected"
   | "suggestion_generated"
-  | "rule_ignored"
-  | "decision_overridden";
+  | "rule_ignored";
 
 export type EvidenceEventType = "evidence_collected";
 export type HookEventType = "hook_executed";
