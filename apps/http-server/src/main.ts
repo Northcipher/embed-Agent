@@ -1,27 +1,63 @@
 /**
  * HTTP Server — thin adapter over CommandHandler/Views.
  * POST /runs → create run. GET /runs/:id/events/stream → SSE.
+ * Also runs scheduled tasks via cron.
  * Never touches device connections directly.
  */
 import Fastify from "fastify";
-// @fastify/sse v0.4.0 exports a CJS module with `default` and `fastifySSE` named export
 import pkg from "@fastify/sse";
 const fastifySSE = (pkg as unknown as { default: typeof pkg; fastifySSE: typeof pkg }).default ?? (pkg as unknown as { fastifySSE: typeof pkg }).fastifySSE ?? pkg;
 import { bootstrap } from "@embed-agent/cli";
+import { TaskStore } from "@embed-agent/stores";
 import { registerRunRoutes } from "./routes/runs.js";
+
+// Lazy-load cron to avoid requiring it for typecheck when not installed
+async function loadCron() {
+  try { return (await import("node-cron")).default; }
+  catch { return null; }
+}
 
 async function main() {
   const app = Fastify({ logger: true });
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await app.register(fastifySSE as any, { heartbeatInterval: 30_000 });
 
-  const { handler, shutdown } = await bootstrap();
+  const { handler } = await bootstrap();
 
   registerRunRoutes(app, handler);
 
+  // ── Scheduled tasks ──────────────────────────────────────
+  const taskStore = new TaskStore(process.env["EMBED_AGENT_DATA"] ?? ".embed-agent");
+  const cron = await loadCron();
+  if (cron) {
+    const tasks = await taskStore.list();
+    for (const task of tasks) {
+      if (!task.enabled) continue;
+      if (!cron.validate(task.cron)) {
+        app.log.warn(`Task "${task.name}": invalid cron expression "${task.cron}" — skipping`);
+        continue;
+      }
+      cron.schedule(task.cron, async () => {
+        app.log.info(`Task "${task.name}" triggered`);
+        try {
+          const result = await (handler as any).validate({
+            artifact: { path: task.artifactPath, type: task.artifactType },
+            target: task.target,
+            expected: task.expected,
+          });
+          if (result?.run_id) {
+            await taskStore.updateLastRun(task.name, result.run_id);
+            app.log.info(`Task "${task.name}" → run ${result.run_id}`);
+          }
+        } catch (e) {
+          app.log.error(`Task "${task.name}" failed: ${(e as Error).message}`);
+        }
+      });
+      app.log.info(`Task "${task.name}" scheduled: ${task.cron}`);
+    }
+  }
+
   app.addHook("onClose", async () => {
-    await shutdown();
+    // cron jobs are cleaned up on process exit
   });
 
   const port = Number(process.env["PORT"]) || 8787;

@@ -14,15 +14,18 @@
   },
   "dependencies": {
     "@embed-agent/cli": "workspace:*",
+    "@embed-agent/stores": "workspace:*",
+    "@fastify/sse": "^0.4.0",
     "fastify": "^5.8.5",
-    "@fastify/sse": "^0.4.0"
+    "node-cron": "^3.0.3"
   },
   "devDependencies": {
-    "@embed-agent/runtime": "workspace:*",
     "@embed-agent/agent": "workspace:*",
+    "@embed-agent/runtime": "workspace:*",
     "@embed-agent/stores": "workspace:*",
     "@embed-agent/tools": "workspace:*",
     "@embed-agent/views": "workspace:*",
+    "@types/node-cron": "^3.0.11",
     "vitest": "^4.0.15"
   }
 }
