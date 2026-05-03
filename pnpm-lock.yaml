@@ -138,6 +138,9 @@ importers:
       ai:
         specifier: ^6.0.171
         version: 6.0.171(zod@4.3.6)
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       vitest:
         specifier: ^4.0.15

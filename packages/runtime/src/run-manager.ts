@@ -413,12 +413,14 @@ export class RunManager {
         summary: reason, suggested_next: "check evidence manually", evidence_path: `${this.dataRoot}/runs/${runId}`,
         key_evidence: [], confidence: 0.3,
       } as AgentReply;
-      // Emit result_ready to prevent consumers from missing the final result
-      await this.eb.emit({
-        type: "result_ready", run_id: runId, source: "reply_generator",
-        summary: reply.summary,
-        payload: { status: reply.status, summary: reply.summary, suggested_next: reply.suggested_next, evidence_path: reply.evidence_path, key_evidence: reply.key_evidence, confidence: reply.confidence },
-      }).catch(() => {});
+      // Reply layer failed; persist minimal reply so consumers have a fallback
+      try {
+        const { join } = await import("node:path");
+        const { writeFile, mkdir } = await import("node:fs/promises");
+        const dir = join(this.dataRoot, "runs", runId, "brain");
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, "reply.json"), JSON.stringify(reply, null, 2), "utf-8");
+      } catch { /* best effort */ }
     }
 
     // 4. RM emits audit event FIRST, then updates state.

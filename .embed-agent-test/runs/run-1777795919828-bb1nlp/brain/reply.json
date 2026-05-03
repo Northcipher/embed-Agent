@@ -1,0 +1,32 @@
+{
+  "run_id": "run-1777795919828-bb1nlp",
+  "status": "completed",
+  "summary": "All criteria passed.",
+  "suggested_next": "deploy",
+  "evidence_path": ".embed-agent-test/runs/run-1777795919828-bb1nlp",
+  "key_evidence": [
+    {
+      "summary": "OK",
+      "evidence_refs": [
+        "serial:full"
+      ]
+    }
+  ],
+  "confidence": 0.95,
+  "criteria_results": [
+    {
+      "criterion": "shell responds",
+      "status": "pass",
+      "evidence_refs": [
+        "serial:full"
+      ]
+    },
+    {
+      "criterion": "dmesg works",
+      "status": "pass",
+      "evidence_refs": [
+        "dmesg:full"
+      ]
+    }
+  ]
+}

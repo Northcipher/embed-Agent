@@ -1,0 +1,8 @@
+{
+  "target_id": "iot-gateway-01",
+  "state": "idle",
+  "serial": "disconnected",
+  "adb": "disconnected",
+  "fastboot": "disconnected",
+  "updated_at": "2026-05-03T03:35:29.860Z"
+}

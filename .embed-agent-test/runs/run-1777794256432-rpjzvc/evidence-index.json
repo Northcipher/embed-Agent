@@ -1,0 +1,23 @@
+{
+  "run_id": "run-1777794256432-rpjzvc",
+  "partial": true,
+  "updated_at": "2026-05-03T07:44:16.448Z",
+  "root_path": "/Users/luozx/work/embed-Agent/.embed-agent-test/runs/run-1777794256432-rpjzvc",
+  "refs": [
+    {
+      "ref": "step-s1:full",
+      "kind": "log",
+      "path": "step-s1-full.log",
+      "available": true,
+      "bytes": 11
+    },
+    {
+      "ref": "step-s2:full",
+      "kind": "log",
+      "path": "step-s2-full.log",
+      "available": true,
+      "bytes": 13
+    }
+  ],
+  "key_events": []
+}

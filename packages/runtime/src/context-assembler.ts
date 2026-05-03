@@ -106,12 +106,6 @@ You will be given the run goal, known issues for this target, recent decisions, 
 
 Note: CB1 (override breaker) and CB3 (warning escalation) may be active. When active, the system applies additional constraints on your decision AFTER you output it.`;
 
-const REPLY_FALLBACK = `You are an Embed Agent Reply Generator. The run status (completed/failed/cancelled) is pre-determined by the system. Your job is the narrative: summary, key evidence, per-criterion evaluation, and suggested next steps.
-
-Evaluate each success criterion against the events and evidence. Be honest — if evidence contradicts a criterion, mark it fail.
-
-Output via the submitReply tool.`;
-
 // ============================================================
 // Helpers
 // ============================================================
@@ -147,7 +141,6 @@ async function readEvidenceWindow(
 export class ContextAssembler {
   private plannerPrompt: string;
   private observerPrompt: string;
-  private replyPrompt: string;
 
   constructor(
     private runStore: RunStoreReader,
@@ -156,11 +149,10 @@ export class ContextAssembler {
     private memory: MemoryReader,
     private evidence?: EvidenceReader,
     private skillRegistry?: SkillReader,
-    prompts?: { planner?: string; observer?: string; reply?: string },
+    prompts?: { planner?: string; observer?: string },
   ) {
     this.plannerPrompt = prompts?.planner ?? PLANNER_FALLBACK;
     this.observerPrompt = prompts?.observer ?? OBSERVER_FALLBACK;
-    this.replyPrompt = prompts?.reply ?? REPLY_FALLBACK;
   }
 
   // ============================================================

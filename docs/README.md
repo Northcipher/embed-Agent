@@ -34,6 +34,7 @@
   03-implementation-plan.md 实现计划（依赖图、6 Phase、M1/M2/M3）
   04-test-plan.md          测试计划（三层策略、80+单元、10集成、7系统）
   05-feature-checklist.md  功能清单（164 项，可逐项验证）
+  08-benchmark-design.md   Benchmark 设计（场景、case contract、评分、私有数据治理）
 ```
 
 ## 归档

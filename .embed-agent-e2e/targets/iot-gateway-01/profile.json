@@ -1,0 +1,32 @@
+{
+  "target_id": "iot-gateway-01",
+  "display_name": "IoT Gateway v2",
+  "connections": {
+    "serial": {
+      "port": "/dev/ttyUSB0",
+      "baud": 115200
+    },
+    "adb": {
+      "device_id": "gw01"
+    }
+  },
+  "target_hints": {
+    "boot_markers": [
+      "U-Boot",
+      "Starting kernel",
+      "login:"
+    ],
+    "fail_patterns": [
+      "KERNEL PANIC",
+      "Unrecoverable error"
+    ],
+    "known_quirks": [
+      "slow boot on cold start (up to 45s)"
+    ],
+    "recommended_checks": [
+      "uname -a",
+      "dmesg | tail -20",
+      "ip addr show"
+    ]
+  }
+}

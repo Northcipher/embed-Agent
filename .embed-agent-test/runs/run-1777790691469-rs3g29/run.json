@@ -1,0 +1,17 @@
+{
+  "run_id": "run-1777790691469-rs3g29",
+  "session_id": "session-1777790691470",
+  "state": "completed",
+  "target_id": "e2e-device",
+  "artifact": {
+    "path": "/tmp/test.bin",
+    "type": "firmware",
+    "version": "v2.0"
+  },
+  "elapsed_sec": 0,
+  "last_event_seq": 15,
+  "evidence_root": ".embed-agent-test/runs/run-1777790691469-rs3g29",
+  "created_at": "2026-05-03T06:44:51.470Z",
+  "started_at": "2026-05-03T06:44:51.475Z",
+  "ended_at": "2026-05-03T06:44:51.493Z"
+}

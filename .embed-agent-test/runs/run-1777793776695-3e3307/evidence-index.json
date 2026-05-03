@@ -1,0 +1,23 @@
+{
+  "run_id": "run-1777793776695-3e3307",
+  "partial": true,
+  "updated_at": "2026-05-03T07:36:16.709Z",
+  "root_path": "/Users/luozx/work/embed-Agent/.embed-agent-test/runs/run-1777793776695-3e3307",
+  "refs": [
+    {
+      "ref": "step-s1:full",
+      "kind": "log",
+      "path": "step-s1-full.log",
+      "available": true,
+      "bytes": 13
+    },
+    {
+      "ref": "step-s2:full",
+      "kind": "log",
+      "path": "step-s2-full.log",
+      "available": true,
+      "bytes": 11
+    }
+  ],
+  "key_events": []
+}

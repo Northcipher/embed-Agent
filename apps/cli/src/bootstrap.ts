@@ -122,10 +122,14 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
 
   // Read model names and timeouts from LLM config
   const models = {
-    planner: { model: (providerCfg?.models as Record<string, string> | undefined)?.["planner"] ?? "claude-sonnet-4-6", timeout: (providerCfg?.timeout as Record<string, number> | undefined)?.["planner"] ?? 120 },
-    observer: { model: (providerCfg?.models as Record<string, string> | undefined)?.["observer"] ?? "claude-haiku-4-5", timeout: (providerCfg?.timeout as Record<string, number> | undefined)?.["observer"] ?? 60 },
-    reply: { model: (providerCfg?.models as Record<string, string> | undefined)?.["reply"] ?? "claude-sonnet-4-6", timeout: (providerCfg?.timeout as Record<string, number> | undefined)?.["reply"] ?? 60 },
+    planner: { model: (providerCfg?.models as Record<string, string> | undefined)?.["planner"] ?? "", timeout: (providerCfg?.timeout as Record<string, number> | undefined)?.["planner"] ?? 120 },
+    observer: { model: (providerCfg?.models as Record<string, string> | undefined)?.["observer"] ?? "", timeout: (providerCfg?.timeout as Record<string, number> | undefined)?.["observer"] ?? 60 },
+    reply: { model: (providerCfg?.models as Record<string, string> | undefined)?.["reply"] ?? "", timeout: (providerCfg?.timeout as Record<string, number> | undefined)?.["reply"] ?? 60 },
   };
+  if (!models.planner.model || !models.observer.model || !models.reply.model) {
+    logger.error("llm.yml must specify models for planner, observer, and reply");
+    process.exit(1);
+  }
 
   // Wire observer CB4 config from system.yml
   const obsCfg = (systemConfig?.observer as Record<string, unknown>);

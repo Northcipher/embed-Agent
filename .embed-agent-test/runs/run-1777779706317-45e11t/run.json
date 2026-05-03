@@ -1,0 +1,17 @@
+{
+  "run_id": "run-1777779706317-45e11t",
+  "session_id": "session-1777779706318",
+  "state": "completed",
+  "target_id": "e2e-device",
+  "artifact": {
+    "path": "/tmp/test.bin",
+    "type": "firmware",
+    "version": "v2.0"
+  },
+  "elapsed_sec": 0,
+  "last_event_seq": 15,
+  "evidence_root": ".embed-agent-test/runs/run-1777779706317-45e11t",
+  "created_at": "2026-05-03T03:41:46.318Z",
+  "started_at": "2026-05-03T03:41:46.324Z",
+  "ended_at": "2026-05-03T03:41:46.342Z"
+}

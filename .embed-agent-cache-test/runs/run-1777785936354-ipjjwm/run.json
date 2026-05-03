@@ -1,0 +1,17 @@
+{
+  "run_id": "run-1777785936354-ipjjwm",
+  "session_id": "session-1777785936356",
+  "state": "completed",
+  "target_id": "dut2",
+  "artifact": {
+    "path": "fw-v2.img",
+    "type": "firmware",
+    "version": "v2"
+  },
+  "elapsed_sec": 0,
+  "last_event_seq": 31,
+  "evidence_root": ".embed-agent-cache-test/runs/run-1777785936354-ipjjwm",
+  "created_at": "2026-05-03T05:25:36.356Z",
+  "started_at": "2026-05-03T05:25:58.747Z",
+  "ended_at": "2026-05-03T05:27:08.832Z"
+}

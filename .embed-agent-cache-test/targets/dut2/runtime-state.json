@@ -1,0 +1,8 @@
+{
+  "target_id": "dut2",
+  "state": "idle",
+  "serial": "disconnected",
+  "adb": "disconnected",
+  "fastboot": "disconnected",
+  "updated_at": "2026-05-03T05:27:08.833Z"
+}

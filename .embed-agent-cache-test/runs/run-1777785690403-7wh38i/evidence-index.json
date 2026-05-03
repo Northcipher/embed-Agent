@@ -1,0 +1,73 @@
+{
+  "run_id": "run-1777785690403-7wh38i",
+  "partial": true,
+  "updated_at": "2026-05-03T05:22:39.207Z",
+  "root_path": "/Users/luozx/work/embed-Agent/.embed-agent-cache-test/runs/run-1777785690403-7wh38i",
+  "refs": [
+    {
+      "ref": "step-stream-serial-boot:full",
+      "kind": "log",
+      "path": "step-stream-serial-boot-full.log",
+      "available": true,
+      "bytes": 40
+    },
+    {
+      "ref": "serial:last-window",
+      "kind": "window",
+      "path": "snapshots/serial-last-window.log",
+      "available": true,
+      "bytes": 74
+    },
+    {
+      "ref": "step-wait-adb-ready:full",
+      "kind": "log",
+      "path": "step-wait-adb-ready-full.log",
+      "available": true,
+      "bytes": 3
+    },
+    {
+      "ref": "step-check-kernel-panic:full",
+      "kind": "log",
+      "path": "step-check-kernel-panic-full.log",
+      "available": true,
+      "bytes": 3
+    },
+    {
+      "ref": "step-check-uptime:full",
+      "kind": "log",
+      "path": "step-check-uptime-full.log",
+      "available": true,
+      "bytes": 3
+    },
+    {
+      "ref": "step-collect-dmesg:full",
+      "kind": "log",
+      "path": "step-collect-dmesg-full.log",
+      "available": true,
+      "bytes": 3
+    },
+    {
+      "ref": "step-collect-logcat:full",
+      "kind": "log",
+      "path": "step-collect-logcat-full.log",
+      "available": true,
+      "bytes": 3
+    }
+  ],
+  "key_events": [
+    {
+      "seq": 5,
+      "summary": "Rule warn matched",
+      "evidence_refs": [
+        "serial:last-window"
+      ]
+    },
+    {
+      "seq": 24,
+      "summary": "The warning is a benign \"sshd: host key not found\" message during first boot. This is expected behavior — SSH host keys are generated on first boot or may not be persisted. The device successfully reached a login prompt, indicating the kernel and critical services are operational. No action needed.",
+      "evidence_refs": [
+        "serial:last-window"
+      ]
+    }
+  ]
+}

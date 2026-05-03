@@ -129,7 +129,7 @@ export class ReplyGenerator {
       // Multi-pass: evaluate each criterion independently
       try {
         const results = await Promise.all(
-          criteria.map(c => this.evaluateCriterion(runId, c, events, evidence, evidenceContent, sharedContext)),
+          criteria.map(c => this.evaluateCriterion(runId, c, evidenceContent, sharedContext)),
         );
         criteriaResults = results;
       } catch {
@@ -144,7 +144,7 @@ export class ReplyGenerator {
       // Phase 2: Synthesis — combine per-criterion results into final reply.
       // Final status considers both events AND criteria evaluation.
       const finalStatus = this.determineStatus(events, criteriaResults);
-      reply = await this.synthesize(runId, finalStatus, criteriaResults, events, evidence, sharedContext);
+      reply = await this.synthesize(runId, finalStatus, criteriaResults, sharedContext);
     } else {
       // Single-pass fallback: one LLM call does everything
       const singlePassEvidence = evidenceContent || await this.readEvidenceContent(runId, evidence);
@@ -179,8 +179,6 @@ export class ReplyGenerator {
   private async evaluateCriterion(
     runId: string,
     criterion: string,
-    events: { type: string; severity?: string; summary: string; step_id?: string; payload: Record<string, unknown>; evidence_refs?: string[] }[],
-    evidence: { refs: { ref: string; kind: string; bytes?: number; available: boolean }[] },
     evidenceContent: string,
     sharedContext: string,
   ): Promise<{ criterion: string; status: "pass" | "fail" | "unknown"; confidence: number; reasoning: string; evidence_refs: string[] }> {
@@ -235,8 +233,6 @@ export class ReplyGenerator {
     runId: string,
     status: AgentReply["status"],
     criteriaResults: { criterion: string; status: "pass" | "fail" | "unknown"; confidence: number; reasoning: string; evidence_refs: string[] }[],
-    events: { type: string; severity?: string; summary: string; step_id?: string }[],
-    evidence: { refs: { ref: string; kind: string; bytes?: number; available: boolean }[] },
     sharedContext: string,
   ): Promise<AgentReply> {
     const context = [

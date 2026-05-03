@@ -1,0 +1,9 @@
+{
+  "target_id": "e2e-device",
+  "state": "idle",
+  "serial": "disconnected",
+  "adb": "disconnected",
+  "fastboot": "disconnected",
+  "updated_at": "2026-05-03T09:25:17.509Z",
+  "local": "connected"
+}

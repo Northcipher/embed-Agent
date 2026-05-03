@@ -1,0 +1,9 @@
+{
+  "target_id": "http-test-device",
+  "state": "idle",
+  "serial": "disconnected",
+  "adb": "disconnected",
+  "fastboot": "disconnected",
+  "updated_at": "2026-05-03T09:25:18.167Z",
+  "local": "connected"
+}

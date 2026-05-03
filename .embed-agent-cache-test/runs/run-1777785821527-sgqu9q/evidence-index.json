@@ -1,0 +1,66 @@
+{
+  "run_id": "run-1777785821527-sgqu9q",
+  "partial": true,
+  "updated_at": "2026-05-03T05:24:27.608Z",
+  "root_path": "/Users/luozx/work/embed-Agent/.embed-agent-cache-test/runs/run-1777785821527-sgqu9q",
+  "refs": [
+    {
+      "ref": "step-stream-boot-serial:full",
+      "kind": "log",
+      "path": "step-stream-boot-serial-full.log",
+      "available": true,
+      "bytes": 12
+    },
+    {
+      "ref": "serial:last-window",
+      "kind": "window",
+      "path": "snapshots/serial-last-window.log",
+      "available": true,
+      "bytes": 74
+    },
+    {
+      "ref": "step-wait-adb-ready:full",
+      "kind": "log",
+      "path": "step-wait-adb-ready-full.log",
+      "available": true,
+      "bytes": 3
+    },
+    {
+      "ref": "step-verify-uptime:full",
+      "kind": "log",
+      "path": "step-verify-uptime-full.log",
+      "available": true,
+      "bytes": 3
+    },
+    {
+      "ref": "step-verify-dmesg-panic:full",
+      "kind": "log",
+      "path": "step-verify-dmesg-panic-full.log",
+      "available": true,
+      "bytes": 3
+    },
+    {
+      "ref": "step-collect-logs:full",
+      "kind": "log",
+      "path": "step-collect-logs-full.log",
+      "available": true,
+      "bytes": 3
+    }
+  ],
+  "key_events": [
+    {
+      "seq": 5,
+      "summary": "Rule warn matched",
+      "evidence_refs": [
+        "serial:last-window"
+      ]
+    },
+    {
+      "seq": 21,
+      "summary": "The device booted successfully to a login prompt (U-Boot → kernel → sshd → login). The \"sshd: WARN: host key not found\" is a benign, expected warning on fresh firmware — SSH host keys are typically generated on first boot and this does not indicate a failure. The device is operational and the run should proceed normally.",
+      "evidence_refs": [
+        "serial:last-window"
+      ]
+    }
+  ]
+}

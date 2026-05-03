@@ -1,0 +1,17 @@
+{
+  "run_id": "run-1777790433740-oozkuc",
+  "session_id": "session-1777790433742",
+  "state": "completed",
+  "target_id": "e2e-device",
+  "artifact": {
+    "path": "/tmp/test.bin",
+    "type": "firmware",
+    "version": "v2.0"
+  },
+  "elapsed_sec": 0,
+  "last_event_seq": 15,
+  "evidence_root": ".embed-agent-test/runs/run-1777790433740-oozkuc",
+  "created_at": "2026-05-03T06:40:33.742Z",
+  "started_at": "2026-05-03T06:40:33.747Z",
+  "ended_at": "2026-05-03T06:40:33.767Z"
+}

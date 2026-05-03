@@ -9,6 +9,7 @@
     { "path": "./packages/notify" },
     { "path": "./packages/views" },
     { "path": "./apps/cli" },
+    { "path": "./apps/http-server" },
     { "path": "./apps/mcp-server" },
     { "path": "./apps/tui" }
   ]

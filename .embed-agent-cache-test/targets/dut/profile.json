@@ -1,0 +1,9 @@
+{
+  "target_id": "dut",
+  "connections": {
+    "adb": {
+      "device_id": "dut"
+    }
+  },
+  "target_hints": {}
+}

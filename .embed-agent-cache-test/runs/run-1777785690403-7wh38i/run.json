@@ -1,0 +1,15 @@
+{
+  "run_id": "run-1777785690403-7wh38i",
+  "session_id": "session-1777785690404",
+  "state": "finalizing",
+  "target_id": "dut",
+  "artifact": {
+    "path": "fw.img",
+    "type": "firmware"
+  },
+  "elapsed_sec": 0,
+  "last_event_seq": 24,
+  "evidence_root": ".embed-agent-cache-test/runs/run-1777785690403-7wh38i",
+  "created_at": "2026-05-03T05:21:30.404Z",
+  "started_at": "2026-05-03T05:22:24.128Z"
+}

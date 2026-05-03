@@ -1,0 +1,73 @@
+{
+  "run_id": "run-1777785936354-ipjjwm",
+  "partial": true,
+  "updated_at": "2026-05-03T05:26:17.368Z",
+  "root_path": "/Users/luozx/work/embed-Agent/.embed-agent-cache-test/runs/run-1777785936354-ipjjwm",
+  "refs": [
+    {
+      "ref": "step-stream-serial-boot:full",
+      "kind": "log",
+      "path": "step-stream-serial-boot-full.log",
+      "available": true,
+      "bytes": 16
+    },
+    {
+      "ref": "serial:last-window",
+      "kind": "window",
+      "path": "snapshots/serial-last-window.log",
+      "available": true,
+      "bytes": 74
+    },
+    {
+      "ref": "step-wait-for-adb:full",
+      "kind": "log",
+      "path": "step-wait-for-adb-full.log",
+      "available": true,
+      "bytes": 3
+    },
+    {
+      "ref": "step-verify-boot-complete:full",
+      "kind": "log",
+      "path": "step-verify-boot-complete-full.log",
+      "available": true,
+      "bytes": 3
+    },
+    {
+      "ref": "step-verify-network-up:full",
+      "kind": "log",
+      "path": "step-verify-network-up-full.log",
+      "available": true,
+      "bytes": 3
+    },
+    {
+      "ref": "step-collect-dmesg:full",
+      "kind": "log",
+      "path": "step-collect-dmesg-full.log",
+      "available": true,
+      "bytes": 3
+    },
+    {
+      "ref": "step-collect-logcat:full",
+      "kind": "log",
+      "path": "step-collect-logcat-full.log",
+      "available": true,
+      "bytes": 3
+    }
+  ],
+  "key_events": [
+    {
+      "seq": 5,
+      "summary": "Rule warn matched",
+      "evidence_refs": [
+        "serial:last-window"
+      ]
+    },
+    {
+      "seq": 24,
+      "summary": "The \"sshd: WARN: host key not found\" message is a standard, benign warning that appears when SSH host keys haven't been generated yet — typical on first boot of a fresh firmware image. The device successfully reached the login prompt (U-Boot → kernel → login), confirming the boot process completed normally. At t=0s with the run just starting, this is not indicative of any failure; the device is operating as expected.",
+      "evidence_refs": [
+        "serial:last-window"
+      ]
+    }
+  ]
+}
