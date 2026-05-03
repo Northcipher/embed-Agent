@@ -312,7 +312,11 @@ COMMANDS
              --show <name>               Show details for a specific hook
 
 GLOBAL OPTIONS
-  --json                               Output results as JSON instead of human-readable text`, format);
+  --json                               Output results as JSON instead of human-readable text
+
+ENVIRONMENT
+  EMBED_AGENT_SERVER_URL=http://...    Default HTTP Runtime URL (overridden by --server)
+  EMBED_AGENT_CLI_MODE=local           Equivalent to --local-runtime`, format);
         break;
     }
   } catch (e) {

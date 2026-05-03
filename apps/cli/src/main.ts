@@ -67,7 +67,15 @@ async function main(): Promise<void> {
   const entry = parseEntryOptions(process.argv.slice(2));
   const command = detectCommand(entry.argv);
 
-  if (!entry.localRuntime && (HTTP_RUNTIME_COMMANDS.has(command) || !LOCAL_STORE_COMMANDS.has(command))) {
+  // help runs without any Runtime dependency
+  if (command === "help") {
+    await runCli(null as never, entry.argv);
+    return;
+  }
+
+  // Route to HTTP Runtime for commands that need active run state.
+  const useHttpRuntime = !entry.localRuntime && HTTP_RUNTIME_COMMANDS.has(command);
+  if (useHttpRuntime) {
     await runCli(new HttpCommandHandler(entry.serverUrl) as never, entry.argv);
     return;
   }
