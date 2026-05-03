@@ -1,7 +1,0 @@
-{
-  "target_id": "e2e-device",
-  "connections": {
-    "local": "available"
-  },
-  "target_hints": {}
-}

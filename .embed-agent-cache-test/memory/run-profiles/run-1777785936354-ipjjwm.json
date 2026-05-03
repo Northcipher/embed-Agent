@@ -1,1 +1,0 @@
-{"run_id":"run-1777785936354-ipjjwm","target_id":"dut2","artifact":{"path":"fw-v2.img","type":"firmware","version":"v2"},"result":"completed","stage_durations":[],"final_metrics":{},"output_summary":{"total_lines":22,"peak_lines_per_sec":0,"silence_count":0,"rule_hits":{}},"recorded_at":"2026-05-03T05:27:08.825Z"}

@@ -1,7 +1,0 @@
-{
-  "target_id": "http-test-device",
-  "connections": {
-    "local": "available"
-  },
-  "target_hints": {}
-}
