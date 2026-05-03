@@ -7,6 +7,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./http-client.js": {
+      "types": "./dist/http-client.d.ts",
+      "import": "./dist/http-client.js"
     }
   },
   "scripts": {
