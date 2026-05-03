@@ -1,0 +1,1 @@
+{"run_id":"run-1777800672708-3tit85","target_id":"http-test-device","artifact":{"path":"/var/folders/fr/6m6wbs2d6xvgkpwb83x6lhtc0000gn/T/embed-agent-http-test.img","type":"firmware"},"result":"completed","stage_durations":[],"final_metrics":{},"output_summary":{"total_lines":7,"peak_lines_per_sec":0,"silence_count":0,"rule_hits":{}},"recorded_at":"2026-05-03T09:31:12.753Z"}

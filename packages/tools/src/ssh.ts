@@ -14,7 +14,7 @@ export interface SshClientLike {
 }
 
 /** Wraps ssh2 Client in our SshClientLike interface. */
-export class RealSsh2Client implements SshClientLike {
+class RealSsh2Client implements SshClientLike {
   constructor(private client: Client) {}
   on(event: string, listener: (...args: unknown[]) => void): void { this.client.on(event as never, listener as never); }
   connect(config: Record<string, unknown>): void { this.client.connect(config as ConnectConfig); }

@@ -117,13 +117,13 @@ export class HttpCommandHandler {
 
   async taskList() { return unsupported("Task management is not exposed by the HTTP Runtime API yet"); }
   async taskShow(_name: string) { return unsupported("Task management is not exposed by the HTTP Runtime API yet"); }
-  async memoryList(_targetId?: string, _category?: string) { return { entries: [] as { fact_id: string; category: string; statement: string }[], status: "ok" }; }
+  async memoryList(_targetId?: string, _category?: string) { return unsupported("Memory is not exposed by the HTTP Runtime API yet"); }
   async memoryConfirm(_factId?: string) { return unsupported("Fact verification is not exposed by the HTTP Runtime API yet"); }
   async memoryAdd(_targetId: string, _category: string, _statement: string) { return unsupported("Memory writes are not exposed by the HTTP Runtime API yet"); }
   async memoryDelete(_factId: string) { return unsupported("Memory writes are not exposed by the HTTP Runtime API yet"); }
-  async skillList() { return { skills: [] as { name: string; description: string }[], status: "ok" }; }
+  async skillList() { return unsupported("Skills are not exposed by the HTTP Runtime API yet"); }
   async skillShow(_name: string) { return unsupported("Skill details are not exposed by the HTTP Runtime API yet"); }
-  async hookList() { return { hooks: [] as { name: string; on: string }[], status: "ok" }; }
+  async hookList() { return unsupported("Hooks are not exposed by the HTTP Runtime API yet"); }
   async hookShow(_name: string) { return unsupported("Hook details are not exposed by the HTTP Runtime API yet"); }
 }
 

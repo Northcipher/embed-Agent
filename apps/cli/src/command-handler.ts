@@ -11,7 +11,6 @@ interface RunManagerLike {
   resume(runId: string): Promise<void>;
   cancel(runId: string, reason: string): Promise<void>;
   stopRun?(runId: string, reason: string): Promise<void>;
-  onOverride?(runId: string): void;
 }
 
 interface MemoryStoreLike {
