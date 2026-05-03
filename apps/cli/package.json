@@ -11,6 +11,10 @@
     "./http-client.js": {
       "types": "./dist/http-client.d.ts",
       "import": "./dist/http-client.js"
+    },
+    "./server-start.js": {
+      "types": "./dist/server-start.d.ts",
+      "import": "./dist/server-start.js"
     }
   },
   "scripts": {

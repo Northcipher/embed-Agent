@@ -57,13 +57,6 @@ export const CancelRunInput = z.object({
 
 export const GetTargetCapabilitiesInput = z.object({ target: z.string() });
 
-// --- Response type: every tool returns this shape ---
-
-export interface ToolResponse<T = Record<string, unknown>> {
-  summary: string;
-  data: T;
-}
-
 // --- Tool definitions (for MCP server registration) ---
 
 export const TOOL_DEFINITIONS = [
@@ -192,45 +185,3 @@ export const TOOL_DEFINITIONS = [
   },
 ];
 
-// --- Tool handler types ---
-
-export interface ToolHandlers {
-  list_targets(): Promise<ToolResponse<{
-    targets: { target_id: string; state: string; capabilities: string[]; connections: { serial: string; adb: string; fastboot: string }; current_run_id?: string }[];
-  }>>;
-  get_target_capabilities(input: z.infer<typeof GetTargetCapabilitiesInput>): Promise<ToolResponse<{
-    target: string; state: string; capabilities: string[]; connections: { serial: string; adb: string; fastboot: string }; current_run_id?: string;
-  }>>;
-  validate_artifact(input: z.infer<typeof ValidateArtifactInput>): Promise<ToolResponse<{
-    status: string; run_id?: string; state?: string; reasons?: string[]; failed_checks?: { check: string; error: string }[]; missing_info?: string[]; suggested_next?: string;
-  }>>;
-  get_run_status(input: z.infer<typeof GetRunStatusInput>): Promise<ToolResponse<{
-    run_id: string; state: string; current_step?: { id: string }; elapsed_sec: number; last_event_seq: number; evidence_path: string;
-  }>>;
-  watch_run(input: z.infer<typeof WatchRunInput>): Promise<ToolResponse<{
-    run_id: string; state: string; events: { seq: number; type: string; severity?: string; summary: string; time: string }[]; next_after_seq: number;
-  }>>;
-  get_run_events(input: z.infer<typeof GetRunEventsInput>): Promise<ToolResponse<{
-    run_id: string; state: string; events: { seq: number; type: string; severity?: string; summary: string; time: string }[]; next_after_seq: number; has_more: boolean;
-  }>>;
-  get_evidence(input: z.infer<typeof GetEvidenceInput>): Promise<ToolResponse<{
-    index?: { refs: { ref: string; kind: string; bytes?: number; summary?: string }[]; key_events: { seq: number; summary: string }[] };
-    content?: string; ref?: string; truncated?: boolean;
-    available: boolean;
-  }>>;
-  get_run_result(input: z.infer<typeof GetRunResultInput>): Promise<ToolResponse<{
-    run_id: string; verdict: "pass" | "fail" | "blocked" | "inconclusive" | "cancelled";
-    state: string;
-    confidence: number; summary: string;
-    checks: { id: string; title: string; status: "pass" | "fail" | "skipped"; reason: string; evidence_refs: string[] }[];
-    key_evidence: { summary: string; evidence_refs: string[] }[];
-    suggested_next: string;
-    result_available: boolean;
-  }>>;
-  intervene_run(input: z.infer<typeof InterveneRunInput>): Promise<ToolResponse<{
-    run_id: string; accepted: boolean; action: string; reason?: string;
-  }>>;
-  cancel_run(input: z.infer<typeof CancelRunInput>): Promise<ToolResponse<{
-    run_id: string; accepted: boolean; status: string;
-  }>>;
-}
