@@ -4,7 +4,6 @@ export { RunStore, type RunState, type RunRecord } from "./run-store.js";
 export { TargetStore, type TargetState, type TargetProfile, type TargetRuntimeState } from "./target-store.js";
 export { MemoryStore, type WorkingMemoryEntry, type Episode, type SemanticFact, type RunProfile } from "./memory-store.js";
 export { SkillStore, type Skill } from "./skill-store.js";
-export { TaskStore, type TaskRecord } from "./task-store.js";
 export { validateId, generateId, extractJson } from "./validate.js";
 export { Logger, type LogLevel, type LoggerOptions } from "./logger.js";
 export { ConfigLoader, type ConfigLoadResult } from "./config-loader.js";

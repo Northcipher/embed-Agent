@@ -156,8 +156,8 @@ export class CommandHandler {
 
   // --- Task / Memory / Skill / Hook Management ---
 
-  async taskList() { return { status: "error", error_code: "unsupported_action", message: "Task management requires bootstrap with TaskStore" } as const; }
-  async taskShow(_name: string) { return { status: "error", error_code: "unsupported_action", message: "Task management requires bootstrap with TaskStore" } as const; }
+  async taskList() { return { status: "error", error_code: "unsupported_action", message: "Task management not available" } as const; }
+  async taskShow(_name: string) { return { status: "error", error_code: "unsupported_action", message: "Task management not available" } as const; }
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async memoryList(_targetId?: string, _category?: string) {
     if (!this.memoryStore) return { status: "error", error_code: "unsupported_action", message: "Memory store not available" } as const;

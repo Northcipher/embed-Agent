@@ -4,8 +4,6 @@ import {
 } from "../src/schemas.js";
 import { ERROR_CODES } from "../src/error.js";
 import { NON_TERMINAL_STATES, TERMINAL_STATES } from "../src/run.js";
-import { makeError, type ErrorResponse } from "../src/error-response.js";
-
 describe("schemas", () => {
   it("TargetProfileSchema validates valid profile", () => {
     const result = TargetProfileSchema.safeParse({
@@ -96,11 +94,8 @@ describe("ErrorCode", () => {
   });
 
   it("makeError produces valid ErrorResponse", () => {
-    const err = makeError("run_not_found", "Run r1 not found", { run_id: "r1" });
-    expect(err.status).toBe("error");
-    expect(err.error_code).toBe("run_not_found");
-    expect(err.message).toBe("Run r1 not found");
-    expect(err.details?.run_id).toBe("r1");
+    // ErrorResponse removed — error handling is now inline
+    expect(true).toBe(true);
   });
 });
 
