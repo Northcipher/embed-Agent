@@ -219,7 +219,6 @@ export async function runCli(handler: CommandHandler, argv: string[] = process.a
 GLOBAL FLAGS
 
   --server <url>              Runtime HTTP URL (default: http://127.0.0.1:8787)
-  --local-runtime             Development only: run an embedded Runtime in this CLI process
 
 COMMANDS
 
@@ -315,8 +314,7 @@ GLOBAL OPTIONS
   --json                               Output results as JSON instead of human-readable text
 
 ENVIRONMENT
-  EMBED_AGENT_SERVER_URL=http://...    Default HTTP Runtime URL (overridden by --server)
-  EMBED_AGENT_CLI_MODE=local           Equivalent to --local-runtime`, format);
+  EMBED_AGENT_SERVER_URL=http://...    Default HTTP Runtime URL (overridden by --server)`, format);
         break;
     }
   } catch (e) {
