@@ -113,6 +113,10 @@ export class ReplyGenerator {
     const planPayload = (planEvent?.payload ?? {}) as Record<string, unknown>;
     const criteria = (planPayload.success_criteria as string[]) ?? [];
 
+    // Load baseline for comparison
+    const targetId = run?.target_id ?? "";
+    const baseline = targetId ? await this.memory.getLatestProfile(targetId).catch(() => null) : null;
+
     // Build shared context for per-criterion evaluation
     const sharedContext = this.buildSharedContext(events, evidence, planPayload);
 
@@ -144,7 +148,7 @@ export class ReplyGenerator {
       // Phase 2: Synthesis — combine per-criterion results into final reply.
       // Final status considers both events AND criteria evaluation.
       const finalStatus = this.determineStatus(events, criteriaResults);
-      reply = await this.synthesize(runId, finalStatus, criteriaResults, sharedContext);
+      reply = await this.synthesize(runId, finalStatus, criteriaResults, sharedContext, baseline);
     } else {
       // Single-pass fallback: one LLM call does everything
       const singlePassEvidence = evidenceContent || await this.readEvidenceContent(runId, evidence);
@@ -234,11 +238,21 @@ export class ReplyGenerator {
     status: AgentReply["status"],
     criteriaResults: { criterion: string; status: "pass" | "fail" | "unknown"; confidence: number; reasoning: string; evidence_refs: string[] }[],
     sharedContext: string,
+    baseline?: { final_metrics: Record<string, number> } | null,
   ): Promise<AgentReply> {
+    const baselineSection = baseline?.final_metrics ? [
+      "## Baseline Comparison",
+      "Compare against the latest successful run on this target:",
+      ...Object.entries(baseline.final_metrics).map(([k, v]) => `- ${k}: ${v}`),
+      "If the current metrics deviate significantly from baseline, note this in your summary and suggested_next.",
+      "",
+    ].join("\n") : "";
+
     const context = [
       `## Run Status (pre-determined)`,
       `Status: **${status}**`,
       "",
+      baselineSection,
       "## Per-Criterion Results",
       ...criteriaResults.map(c =>
         `- **${c.status.toUpperCase()}** | ${c.criterion} (confidence: ${c.confidence.toFixed(1)})\n  Reasoning: ${c.reasoning}\n  Evidence: ${c.evidence_refs.join(", ") || "none"}`,

@@ -23,6 +23,9 @@ function numberParam(value: unknown, fallback: number): number {
 }
 
 export function registerRunRoutes(app: FastifyInstance, handler: CommandHandler) {
+  // --- Health ---
+  app.get("/health", async () => ({ status: "ok" }));
+
   // --- Targets ---
   app.get("/targets", async () => {
     return handler.targetList();

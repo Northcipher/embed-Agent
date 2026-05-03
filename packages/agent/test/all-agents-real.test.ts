@@ -13,7 +13,7 @@ const TOKEN = process.env["ANTHROPIC_AUTH_TOKEN"];
 const BASE = process.env["ANTHROPIC_BASE_URL"] ?? "https://api.deepseek.com/anthropic";
 const MODEL = process.env["ANTHROPIC_MODEL"] ?? "deepseek-v4-pro[1m]";
 
-const describeIf = TOKEN ? describe : describe.skip;
+const describeIf = (TOKEN && TOKEN.length > 0) ? describe : describe.skip;
 
 function log(label: string, obj: unknown) {
   const s = typeof obj === "string" ? obj : JSON.stringify(obj);
