@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { api, type RunStatus, type RunEvent, type RunResult } from "./api";
-import { Header, Badge, Btn, Section } from "./Dashboard";
+import { Header, Btn, Section } from "./Dashboard";
+import { useT } from "./i18n";
 
 export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void }) {
+  const { t } = useT();
   const [status, setStatus] = useState<RunStatus | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [result, setResult] = useState<RunResult | null>(null);
@@ -18,12 +20,10 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
       setPaused(s.state === "paused");
       const ev = await api.events(runId, events.length > 0 ? events[events.length - 1]!.seq : 0, 200).catch(() => null);
       if (ev?.events.length) setEvents(prev => [...prev, ...ev.events].slice(-500));
-      // Fetch result for terminal runs
       if (["completed", "failed", "cancelled"].includes(s.state) && !result) {
         const r = await api.result(runId).catch(() => null);
         if (r) setResult(r);
       }
-      // Tail evidence log for active stream steps
       if (s.current_step?.id) {
         try {
           const ev2 = await api.evidence(runId, `step-${s.current_step.id}:full`);
@@ -36,28 +36,23 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
     return () => clearInterval(timer.current);
   }, [runId]);
 
-  if (!status) return <div style={{ padding: 40, color: "var(--fg-tertiary)" }}>Loading...</div>;
+  if (!status) return <div style={{ padding: 40, color: "var(--fg-tertiary)" }}>{t("detail.loading")}</div>;
 
-  const v = status.state === "completed" ? "pass" : status.state === "failed" ? "fail" : status.state === "cancelled" ? "cancelled" : "running";
   const terminal = ["completed", "failed", "cancelled"].includes(status.state);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
       <Header title={runId} sub={`${status.state} · ${status.elapsed_sec}s`}>
         <div style={{ display: "flex", gap: 8 }}>
-          {!terminal && <Btn ghost onClick={() => api.intervene(runId, paused ? "resume" : "pause").then(() => setPaused(!paused))}>{paused ? "▶ Resume" : "⏸ Pause"}</Btn>}
-          {!terminal && <Btn ghost onClick={() => api.intervene(runId, "cancel", "manual").then(() => setStatus(s => s ? { ...s, state: "cancelled" } : null))}>✕ Cancel</Btn>}
-          <Btn ghost onClick={onBack}>← Back</Btn>
+          {!terminal && <Btn ghost onClick={() => api.intervene(runId, paused ? "resume" : "pause").then(() => setPaused(!paused))}>{paused ? t("detail.resume") : t("detail.pause")}</Btn>}
+          {!terminal && <Btn ghost onClick={() => api.intervene(runId, "cancel", "manual").then(() => setStatus(s => s ? { ...s, state: "cancelled" } : null))}>{t("detail.cancel")}</Btn>}
+          <Btn ghost onClick={onBack}>← {t("detail.back")}</Btn>
         </div>
       </Header>
-
-      {/* Steps Timeline */}
-      <Section>Timeline</Section>
+      <Section>{t("detail.timeline")}</Section>
       <Timeline events={events} />
-
-      {/* Observer Decisions */}
       {events.filter(e => e.type === "decision_made").length > 0 && <>
-        <Section>Observer Decisions</Section>
+        <Section>{t("detail.observer")}</Section>
         {events.filter(e => e.type === "decision_made").slice(-5).map((e, i) => {
           const p = e.payload ?? {};
           return (
@@ -71,18 +66,14 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
           );
         })}
       </>}
-
-      {/* Live Log */}
       {log.length > 0 && <>
-        <Section>Serial Output</Section>
+        <Section>{t("detail.serialOutput")}</Section>
         <pre style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6, padding: "16px 20px", fontFamily: "var(--font-mono)", fontSize: 11, lineHeight: 1.7, maxHeight: 240, overflow: "auto", color: "var(--fg-secondary)", margin: 0 }}>
           {log.map((l, i) => <div key={i} style={{ color: /warn|error|fail/i.test(l) ? "var(--amber)" : /panic|fatal/i.test(l) ? "var(--red)" : "inherit" }}>{l}</div>)}
         </pre>
       </>}
-
-      {/* Criteria */}
       {result?.criteria_results && result.criteria_results.length > 0 && <>
-        <Section>Criteria Evaluation</Section>
+        <Section>{t("detail.criteria")}</Section>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {result.criteria_results.map((c, i) => (
             <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, padding: "10px 14px", background: "var(--bg-card)", borderRadius: 6, border: "1px solid var(--border)", borderLeft: `3px solid ${c.status === "pass" ? "var(--green)" : c.status === "fail" ? "var(--red)" : "var(--amber)"}` }}>
@@ -92,10 +83,8 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
           ))}
         </div>
       </>}
-
-      {/* Key Evidence */}
       {result?.key_evidence && result.key_evidence.length > 0 && <>
-        <Section>Key Evidence</Section>
+        <Section>{t("detail.keyEvidence")}</Section>
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {result.key_evidence.map((ke, i) => (
             <div key={i} style={{ fontSize: 12, padding: "10px 14px", background: "var(--bg-card)", borderRadius: 6, border: "1px solid var(--border)", color: "var(--fg-secondary)" }}>
@@ -104,10 +93,8 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
           ))}
         </div>
       </>}
-
-      {/* Events Table (collapsed) */}
       <details style={{ fontSize: 12 }}>
-        <summary style={{ cursor: "pointer", color: "var(--fg-tertiary)", fontSize: 11, textTransform: "uppercase", letterSpacing: 1 }}>All Events ({events.length})</summary>
+        <summary style={{ cursor: "pointer", color: "var(--fg-tertiary)", fontSize: 11, textTransform: "uppercase", letterSpacing: 1 }}>{t("detail.allEvents")} ({events.length})</summary>
         <div style={{ marginTop: 8, maxHeight: 300, overflow: "auto", fontFamily: "var(--font-mono)", fontSize: 11 }}>
           {events.map((e, i) => (
             <div key={i} style={{ padding: "3px 0", color: e.severity === "fatal" ? "var(--red)" : e.severity === "warning" ? "var(--amber)" : "var(--fg-tertiary)" }}>
@@ -121,7 +108,8 @@ export function RunDetail({ runId, onBack }: { runId: string; onBack: () => void
 }
 
 function Timeline({ events }: { events: RunEvent[] }) {
-  const steps = new Map<string, { id: string; status: string; start?: string }>();
+  const { t } = useT();
+  const steps = new Map<string, { id: string; status: string }>();
   for (const e of events) {
     if (e.type === "step_started" && e.step_id) steps.set(e.step_id, { id: e.step_id, status: "running" });
     if (e.type === "step_completed" && e.step_id) { const s = steps.get(e.step_id); if (s) s.status = "done"; }
@@ -129,7 +117,6 @@ function Timeline({ events }: { events: RunEvent[] }) {
   }
   const items = [...steps.values()];
   if (items.length === 0) {
-    // Fallback: derive from plan_generated payload
     const plan = events.find(e => e.type === "plan_generated");
     if (plan?.payload) {
       const stepCount = (plan.payload as any).step_count ?? 0;
@@ -140,7 +127,7 @@ function Timeline({ events }: { events: RunEvent[] }) {
   return (
     <div style={{ position: "relative", paddingLeft: 22 }}>
       <div style={{ position: "absolute", left: 6, top: 6, bottom: 6, width: 1, background: "var(--border)" }} />
-      {items.length === 0 ? <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>No steps yet</div> : items.map((s, i) => {
+      {items.length === 0 ? <div style={{ fontSize: 12, color: "var(--fg-tertiary)" }}>{t("detail.noSteps")}</div> : items.map((s, i) => {
         const color = s.status === "done" ? "var(--green)" : s.status === "fail" ? "var(--red)" : s.status === "running" ? "var(--blue)" : "var(--border)";
         const icon = s.status === "done" ? "✓" : s.status === "fail" ? "✗" : s.status === "running" ? "●" : "—";
         return (

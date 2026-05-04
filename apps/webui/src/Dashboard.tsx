@@ -1,13 +1,14 @@
 import { useState, useEffect } from "react";
 import { api, type Target } from "./api";
+import { useT } from "./i18n";
 
 export function Dashboard({ onViewRun, onStart }: { onViewRun: (id: string) => void; onStart: () => void }) {
+  const { t } = useT();
   const [targets, setTargets] = useState<Target[]>([]);
   const [runs, setRuns] = useState<any[]>([]);
 
   useEffect(() => {
     api.targets().then(setTargets).catch(() => {});
-    // Fetch recent runs from known targets
     api.targets().then(ts => {
       ts.filter(t => t.current_run_id).forEach(t => {
         api.status(t.current_run_id!).then(s => {
@@ -22,41 +23,37 @@ export function Dashboard({ onViewRun, onStart }: { onViewRun: (id: string) => v
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
-      <Header title="Embed Agent" sub={`${online} online · ${active} active`}>
-        <Btn onClick={onStart}>+ New Run</Btn>
+      <Header title={t("app.title")} sub={`${online} ${t("dash.online")} · ${active} ${t("dash.running")}`}>
+        <Btn onClick={onStart}>+ {t("nav.start")}</Btn>
       </Header>
-
       <Stats>
-        <StatCard value={online} label="Online" delta={`${targets.length} total`} />
-        <StatCard value={active} label="Running" delta={active > 0 ? `${active} active` : "—"} tone={active > 0 ? "amber" : ""} />
-        <StatCard value={runs.filter(r => r.state === "completed").length} label="Passed" delta="" />
-        <StatCard value={runs.filter(r => r.state === "failed").length} label="Failed" tone="red" delta="" />
+        <StatCard value={online} label={t("dash.online")} delta={t("dash.total", { n: targets.length })} />
+        <StatCard value={active} label={t("dash.running")} delta={active > 0 ? t("dash.active", { n: active }) : "—"} tone={active > 0 ? "amber" : ""} />
+        <StatCard value={runs.filter(r => r.state === "completed").length} label={t("dash.passed")} delta="" />
+        <StatCard value={runs.filter(r => r.state === "failed").length} label={t("dash.failed")} delta="" tone="red" />
       </Stats>
-
-      <Section>Devices</Section>
+      <Section>{t("dash.devices")}</Section>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 1, background: "var(--border)", borderRadius: 6, overflow: "hidden" }}>
-        {targets.map(t => (
-          <DeviceCard key={t.target_id} target={t} onClick={() => t.current_run_id && onViewRun(t.current_run_id)} />
-        ))}
+        {targets.map(t => <DeviceCard key={t.target_id} target={t} onClick={() => t.current_run_id && onViewRun(t.current_run_id)} />)}
       </div>
-
-      <Section>Active Runs</Section>
-      <RunTable runs={runs} onClick={onViewRun} />
+      <Section>{t("dash.recentRuns")}</Section>
+      <RunTable runs={runs} onClick={onViewRun} empty={t("dash.noRuns")} />
     </div>
   );
 }
 
 function DeviceCard({ target: t, onClick }: { target: Target; onClick: () => void }) {
-  const stateColor = t.state === "busy" ? "var(--amber)" : t.state === "offline" ? "var(--fg-tertiary)" : "var(--green)";
-  const stateBg = t.state === "busy" ? "#fdf6e8" : t.state === "offline" ? "var(--bg-hover)" : "#eef5f0";
+  const { t } = useT();
+  const sc = t.state === "busy" ? "var(--amber)" : t.state === "offline" ? "var(--fg-tertiary)" : "var(--green)";
+  const sb = t.state === "busy" ? "#fdf6e8" : t.state === "offline" ? "var(--bg-hover)" : "#eef5f0";
   return (
     <div onClick={onClick} style={{ background: "var(--bg-card)", padding: "18px 20px", cursor: "pointer", display: "flex", flexDirection: "column", gap: 8 }}>
-      <span style={{ display: "inline-block", fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".5px", padding: "2px 8px", borderRadius: 3, color: stateColor, background: stateBg, alignSelf: "flex-start" }}>{t.state}</span>
+      <span style={{ display: "inline-block", fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".5px", padding: "2px 8px", borderRadius: 3, color: sc, background: sb, alignSelf: "flex-start" }}>{t.state}</span>
       <div style={{ fontWeight: 600, fontSize: 14 }}>{t.target_id}</div>
       <div style={{ display: "flex", gap: 8, fontFamily: "var(--font-mono)", fontSize: 10 }}>
-        <Conn label="SERIAL" on={t.serial === "connected"} />
-        <Conn label="ADB" on={t.adb === "online"} />
-        <Conn label="FB" on={t.fastboot === "connected"} />
+        <Conn label={t("conn.serial")!} on={t.serial === "connected"} />
+        <Conn label={t("conn.adb")!} on={t.adb === "online"} />
+        <Conn label={t("conn.fastboot")!} on={t.fastboot === "connected"} />
       </div>
       {t.current_run_id && <div style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--fg-secondary)" }}>▶ {t.current_run_id}</div>}
     </div>
@@ -67,11 +64,12 @@ function Conn({ label, on }: { label: string; on: boolean }) {
   return <span style={{ padding: "2px 7px", borderRadius: 3, color: on ? "var(--green)" : "var(--fg-tertiary)", background: on ? "#eef5f0" : "var(--bg-hover)" }}>{label}</span>;
 }
 
-function RunTable({ runs, onClick }: { runs: any[]; onClick: (id: string) => void }) {
-  if (runs.length === 0) return <div style={{ color: "var(--fg-tertiary)", fontSize: 13, padding: 20 }}>No active runs</div>;
+function RunTable({ runs, onClick, empty }: { runs: any[]; onClick: (id: string) => void; empty: string }) {
+  const { t } = useT();
+  if (runs.length === 0) return <div style={{ color: "var(--fg-tertiary)", fontSize: 13, padding: 20 }}>{empty}</div>;
   return (
     <table style={{ width: "100%", borderCollapse: "collapse" }}>
-      <thead><tr>{["Run", "Target", "State", "Time", "Summary"].map(h => <th key={h} style={{ textAlign: "left", padding: "10px 14px", color: "var(--fg-tertiary)", fontWeight: 500, textTransform: "uppercase", fontSize: 10, letterSpacing: ".5px", borderBottom: "1px solid var(--border)" }}>{h}</th>)}</tr></thead>
+      <thead><tr>{["run.table.run","run.table.target","run.table.state","run.table.time","run.table.summary"].map(h => <th key={h} style={{ textAlign: "left", padding: "10px 14px", color: "var(--fg-tertiary)", fontWeight: 500, textTransform: "uppercase", fontSize: 10, letterSpacing: ".5px", borderBottom: "1px solid var(--border)" }}>{t(h)}</th>)}</tr></thead>
       <tbody>
         {runs.map(r => {
           const v = r.state === "completed" ? "pass" : r.state === "failed" ? "fail" : "running";
@@ -79,7 +77,7 @@ function RunTable({ runs, onClick }: { runs: any[]; onClick: (id: string) => voi
             <tr key={r.run_id} onClick={() => onClick(r.run_id)} style={{ cursor: "pointer", borderBottom: "1px solid var(--border)" }}>
               <td style={{ padding: "10px 14px", fontSize: 13, fontFamily: "var(--font-mono)" }}>{r.run_id}</td>
               <td style={{ padding: "10px 14px", fontSize: 13 }}>{r.target}</td>
-              <td style={{ padding: "10px 14px" }}><Badge tone={v}>{r.state.toUpperCase()}</Badge></td>
+              <td style={{ padding: "10px 14px" }}><Badge tone={v}>{t(`badge.${v}`)}</Badge></td>
               <td style={{ padding: "10px 14px", fontSize: 13, fontFamily: "var(--font-mono)" }}>{r.elapsed_sec ?? 0}s</td>
               <td style={{ padding: "10px 14px", fontSize: 13, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--fg-secondary)" }}>{r.summary ?? r.state}</td>
             </tr>
@@ -120,12 +118,7 @@ function StatCard({ value, label, delta, tone }: { value: number; label: string;
 
 export function Btn({ onClick, children, ghost }: { onClick: () => void; children: string; ghost?: boolean }) {
   return (
-    <button onClick={onClick} style={{
-      background: ghost ? "transparent" : "var(--fg)", color: ghost ? "var(--fg)" : "var(--bg-card)",
-      border: ghost ? "1px solid var(--border)" : "none", padding: "10px 24px", borderRadius: 6,
-      fontFamily: "var(--font-sans)", fontSize: 13, fontWeight: 600, cursor: "pointer",
-      letterSpacing: "-0.2px", transition: "opacity .12s",
-    }}>
+    <button onClick={onClick} style={{ background: ghost ? "transparent" : "var(--fg)", color: ghost ? "var(--fg)" : "var(--bg-card)", border: ghost ? "1px solid var(--border)" : "none", padding: "10px 24px", borderRadius: 6, fontFamily: "var(--font-sans)", fontSize: 13, fontWeight: 600, cursor: "pointer", letterSpacing: "-0.2px", transition: "opacity .12s" }}>
       {children}
     </button>
   );
