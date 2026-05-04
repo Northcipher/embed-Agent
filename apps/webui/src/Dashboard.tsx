@@ -24,7 +24,7 @@ export function Dashboard({ onViewRun, onStart }: { onViewRun: (id: string) => v
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
       <Header title={t("app.title")} sub={`${online} ${t("dash.online")} · ${active} ${t("dash.running")}`}>
-        <Btn onClick={onStart}>+ {t("nav.start")}</Btn>
+        <Btn onClick={onStart}>{`+ ${t("nav.start")}`}</Btn>
       </Header>
       <Stats>
         <StatCard value={online} label={t("dash.online")} delta={t("dash.total", { n: targets.length })} />
@@ -42,20 +42,20 @@ export function Dashboard({ onViewRun, onStart }: { onViewRun: (id: string) => v
   );
 }
 
-function DeviceCard({ target: t, onClick }: { target: Target; onClick: () => void }) {
+function DeviceCard({ target: dev, onClick }: { target: Target; onClick: () => void }) {
   const { t } = useT();
-  const sc = t.state === "busy" ? "var(--amber)" : t.state === "offline" ? "var(--fg-tertiary)" : "var(--green)";
-  const sb = t.state === "busy" ? "#fdf6e8" : t.state === "offline" ? "var(--bg-hover)" : "#eef5f0";
+  const sc = dev.state === "busy" ? "var(--amber)" : dev.state === "offline" ? "var(--fg-tertiary)" : "var(--green)";
+  const sb = dev.state === "busy" ? "#fdf6e8" : dev.state === "offline" ? "var(--bg-hover)" : "#eef5f0";
   return (
     <div onClick={onClick} style={{ background: "var(--bg-card)", padding: "18px 20px", cursor: "pointer", display: "flex", flexDirection: "column", gap: 8 }}>
-      <span style={{ display: "inline-block", fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".5px", padding: "2px 8px", borderRadius: 3, color: sc, background: sb, alignSelf: "flex-start" }}>{t.state}</span>
-      <div style={{ fontWeight: 600, fontSize: 14 }}>{t.target_id}</div>
+      <span style={{ display: "inline-block", fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".5px", padding: "2px 8px", borderRadius: 3, color: sc, background: sb, alignSelf: "flex-start" }}>{dev.state}</span>
+      <div style={{ fontWeight: 600, fontSize: 14 }}>{dev.target_id}</div>
       <div style={{ display: "flex", gap: 8, fontFamily: "var(--font-mono)", fontSize: 10 }}>
-        <Conn label={t("conn.serial")!} on={t.serial === "connected"} />
-        <Conn label={t("conn.adb")!} on={t.adb === "online"} />
-        <Conn label={t("conn.fastboot")!} on={t.fastboot === "connected"} />
+        <Conn label={t("conn.serial")} on={dev.serial === "connected"} />
+        <Conn label={t("conn.adb")} on={dev.adb === "online"} />
+        <Conn label={t("conn.fastboot")} on={dev.fastboot === "connected"} />
       </div>
-      {t.current_run_id && <div style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--fg-secondary)" }}>▶ {t.current_run_id}</div>}
+      {dev.current_run_id && <div style={{ fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--fg-secondary)" }}>▶ {dev.current_run_id}</div>}
     </div>
   );
 }
@@ -116,7 +116,7 @@ function StatCard({ value, label, delta, tone }: { value: number; label: string;
   );
 }
 
-export function Btn({ onClick, children, ghost }: { onClick: () => void; children: string; ghost?: boolean }) {
+export function Btn({ onClick, children, ghost }: { onClick: () => void; children: any; ghost?: boolean }) {
   return (
     <button onClick={onClick} style={{ background: ghost ? "transparent" : "var(--fg)", color: ghost ? "var(--fg)" : "var(--bg-card)", border: ghost ? "1px solid var(--border)" : "none", padding: "10px 24px", borderRadius: 6, fontFamily: "var(--font-sans)", fontSize: 13, fontWeight: 600, cursor: "pointer", letterSpacing: "-0.2px", transition: "opacity .12s" }}>
       {children}

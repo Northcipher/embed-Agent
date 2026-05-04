@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, createElement, type ReactNode } from "react";
 
 export type Lang = "zh" | "en";
 
@@ -136,7 +136,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   function toggle() { setLang(l => l === "zh" ? "en" : "zh"); }
 
-  return <I18nCtx.Provider value={{ lang, t, toggle }}>{children}</I18nCtx.Provider>;
+  return createElement(I18nCtx.Provider, { value: { lang, t, toggle } }, children);
 }
 
 export function useT() {
