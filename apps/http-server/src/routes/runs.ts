@@ -4,6 +4,12 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { CommandHandler } from "@embed-agent/cli";
+import { readFile, writeFile } from "node:fs/promises";
+import { parse, stringify } from "yaml";
+import path from "node:path";
+
+const CONFIG_DIR = path.resolve(process.env["EMBED_AGENT_DATA"] ?? ".embed-agent");
+const ALLOWED_CONFIGS = ["llm.yml", "system.yml"];
 
 // CommandHandler's validate expects a flat ValidateRequest from @embed-agent/runtime
 interface CreateRunBody {
@@ -182,5 +188,30 @@ export function registerRunRoutes(app: FastifyInstance, handler: CommandHandler)
     const { runId } = request.params as { runId: string };
     const query = request.query as { ref?: string };
     return handler.evidence(runId, query.ref);
+  });
+
+  // --- Config ---
+  app.get("/config/:name", async (request, reply) => {
+    const { name } = request.params as { name: string };
+    if (!ALLOWED_CONFIGS.includes(name)) return reply.status(403).send({ error: `Config "${name}" not allowed. Use: ${ALLOWED_CONFIGS.join(", ")}` });
+    try {
+      const raw = await readFile(path.join(CONFIG_DIR, name), "utf-8");
+      const data = parse(raw);
+      return { name, yaml: raw, data };
+    } catch { return reply.status(404).send({ error: `Config "${name}" not found` }); }
+  });
+
+  app.put("/config/:name", async (request, reply) => {
+    const { name } = request.params as { name: string };
+    if (!ALLOWED_CONFIGS.includes(name)) return reply.status(403).send({ error: `Config "${name}" not allowed` });
+    const body = request.body as { yaml?: string; data?: Record<string, unknown> } | null;
+    if (!body) return reply.status(400).send({ error: "Missing body" });
+    try {
+      const content = body.yaml ?? (body.data ? stringify(body.data) : null);
+      if (!content) return reply.status(400).send({ error: "Missing yaml or data field" });
+      parse(content); // validate
+      await writeFile(path.join(CONFIG_DIR, name), content, "utf-8");
+      return { status: "ok", name };
+    } catch (e: any) { return reply.status(400).send({ error: `Invalid: ${e.message}` }); }
   });
 }

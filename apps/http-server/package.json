@@ -17,7 +17,8 @@
     "@embed-agent/stores": "workspace:*",
     "@fastify/sse": "^0.4.0",
     "fastify": "^5.8.5",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "yaml": "^2.7.1"
   },
   "devDependencies": {
     "@embed-agent/agent": "workspace:*",

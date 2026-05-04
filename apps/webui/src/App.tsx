@@ -4,8 +4,9 @@ import { Dashboard } from "./Dashboard";
 import { StartRun } from "./StartRun";
 import { History } from "./History";
 import { RunDetail } from "./RunDetail";
+import { Settings } from "./Settings";
 
-type View = "dash" | "start" | "hist" | { run: string };
+type View = "dash" | "start" | "hist" | "settings" | { run: string };
 
 export function App() {
   return <I18nProvider><AppInner /></I18nProvider>;
@@ -22,6 +23,7 @@ function AppInner() {
         <NavBtn icon="⌂" active={view === "dash"} onClick={() => setView("dash")} />
         <NavBtn icon="+" active={view === "start"} onClick={() => setView("start")} />
         <NavBtn icon="⌕" active={view === "hist"} onClick={() => setView("hist")} />
+        <NavBtn icon="⚙" active={view === "settings"} onClick={() => setView("settings")} />
         <div style={{ flex: 1 }} />
         <button onClick={toggle} title={t("lang.switch")} style={{ width: 36, height: 36, border: "none", background: "transparent", color: "var(--fg-tertiary)", cursor: "pointer", borderRadius: 8, fontSize: 11, fontWeight: 600, fontFamily: "var(--font-mono)", marginBottom: 8 }}>
           {t("lang.switch")}
@@ -31,6 +33,7 @@ function AppInner() {
         {view === "dash" ? <Dashboard onViewRun={(id) => setView({ run: id })} onStart={() => setView("start")} /> :
          view === "start" ? <StartRun onBack={() => setView("dash")} onCreated={(id) => setView({ run: id })} /> :
          view === "hist" ? <History onViewRun={(id) => setView({ run: id })} /> :
+         view === "settings" ? <Settings onBack={() => setView("dash")} /> :
          typeof view === "object" ? <RunDetail runId={view.run} onBack={() => setView("dash")} /> :
          null}
       </main>
