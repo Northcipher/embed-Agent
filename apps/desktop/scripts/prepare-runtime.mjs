@@ -28,7 +28,12 @@ async function exists(target) {
 
 function run(command, args, cwd = repoRoot) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd, stdio: "inherit", env: process.env });
+    const child = spawn(command, args, {
+      cwd,
+      stdio: "inherit",
+      env: process.env,
+      shell: process.platform === "win32",
+    });
     child.on("error", reject);
     child.on("close", (code) => {
       if (code === 0) resolve();
