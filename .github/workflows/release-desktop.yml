@@ -1,0 +1,60 @@
+name: Release Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "desktop-v*"
+
+jobs:
+  publish-windows:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./apps/desktop/src-tauri -> target"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate desktop icons
+        working-directory: apps/desktop
+        run: pnpm exec tauri icon src-tauri/icons/icon.png
+
+      - name: Build and publish Windows desktop bundle
+        uses: tauri-apps/tauri-action@action-v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tagName: desktop-v__VERSION__
+          releaseName: "Embed Agent Desktop v__VERSION__"
+          releaseBody: "Latest desktop build. Download the Windows setup executable from the release assets."
+          releaseDraft: false
+          prerelease: false
+          releaseCommitish: ${{ github.sha }}
+          includeUpdaterJson: false
+          args: --bundles nsis
+          assetNamePattern: "Embed-Agent-Desktop_[name]_[version]_[platform]_[arch].[ext]"
