@@ -69,6 +69,7 @@ export interface ValidateRequest {
   artifact: { path: string; type: string; version?: string; build_id?: string };
   target: string;
   expected: string;
+  deployment_mode?: "observe" | "flash" | "replace" | "install";
   task?: string;
   source?: { kind: "manual" | "task"; task_name?: string };
   /** Language for AI-written user-facing replies. Technical identifiers stay unchanged. */
@@ -99,6 +100,10 @@ interface EventEmitter {
 
 function generateId(): string {
   return `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function artifactRequiredForRequest(req: ValidateRequest): boolean {
+  return req.deployment_mode !== "observe";
 }
 
 // --- RunManager ---
@@ -209,8 +214,8 @@ export class RunManager {
 
   async createRun(req: ValidateRequest): Promise<{ status: string; run_id?: string; reasons?: string[]; failed_checks?: { check: string; error: string }[] }> {
     // 1. Validate params
-    if (!req.artifact?.path || !req.target || !req.expected) {
-      return { status: "invalid_request", reasons: ["artifact.path, target, and expected are required"] };
+    if (!req.target || !req.expected || (artifactRequiredForRequest(req) && !req.artifact?.path)) {
+      return { status: "invalid_request", reasons: [artifactRequiredForRequest(req) ? "artifact.path, target, and expected are required" : "target and expected are required"] };
     }
 
     // 2. Acquire target lock (atomic check-busy + set preparing via TargetManager)
@@ -300,7 +305,7 @@ export class RunManager {
 
     // 7. Pre-flight — derive required transports from plan steps
     const transports = this.requiredTransports(plan.steps, req.constraints?.no_flash ?? false);
-    const pf = await this.tm.preflight(req.target, transports, req.artifact.path);
+    const pf = await this.tm.preflight(req.target, transports, artifactRequiredForRequest(req) ? req.artifact.path : "");
     if (!pf.all_passed) {
       return await this.rejectRun(runId, req.target, "Pre-flight failed", "target_not_ready", pf.checks.map(c => ({ check: c.check, error: c.error ?? "failed" })));
     }

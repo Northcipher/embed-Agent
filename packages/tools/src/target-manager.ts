@@ -38,8 +38,10 @@ export class TargetManager {
     }
 
     // Use fs.access, not shell exec
-    try { await fs.access(artifactPath); checks.push({ check: "artifact_exists", passed: true }); }
-    catch { checks.push({ check: "artifact_exists", passed: false }); }
+    if (artifactPath) {
+      try { await fs.access(artifactPath); checks.push({ check: "artifact_exists", passed: true }); }
+      catch { checks.push({ check: "artifact_exists", passed: false }); }
+    }
 
     const failed = checks.filter(c => !c.passed);
     const failureType = failed.some(c => c.check.includes("serial") || c.check.includes("adb") || c.check.includes("fastboot")) ? "device" : "host";

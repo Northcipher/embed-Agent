@@ -111,6 +111,7 @@ export interface ValidationSpec {
   artifact: { path: string; type: string; version?: string; build_id?: string };
   target: string;
   expected: string;
+  deployment_mode?: "observe" | "flash" | "replace" | "install";
   task?: string;
   reply_language?: "zh" | "en";
   concerns?: string[];

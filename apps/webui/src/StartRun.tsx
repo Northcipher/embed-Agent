@@ -8,6 +8,7 @@ import {
   defaultReplacePath,
   deploymentModeHint,
   deploymentModeLabel,
+  deploymentRequiresArtifact,
   formatArtifactType,
   inferIntentDraft,
   type ArtifactType,
@@ -226,8 +227,9 @@ export function NewRun({ onBack, onCreated }: { onBack: () => void; onCreated: (
   }, [spec]);
 
   async function submitWithMode(nextMode: Mode): Promise<void> {
-    if (!spec.target || !spec.artifact.path || !spec.expected) {
-      setStatus({ key: "start.status.missingRequired" });
+    const artifactRequired = deploymentRequiresArtifact(deploymentMode);
+    if (!spec.target || !spec.expected || (artifactRequired && !spec.artifact.path)) {
+      setStatus({ key: artifactRequired ? "start.status.missingRequired" : "start.status.missingObserveRequired" });
       return;
     }
     if (preflight?.status === "blocked") {
@@ -511,12 +513,14 @@ export function NewRun({ onBack, onCreated }: { onBack: () => void; onCreated: (
             </summary>
             <div style={{ borderTop: "1px solid var(--border-light)", padding: 12, display: "grid", gap: 12 }}>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 8 }}>
-                <Field label={t("start.artifact")}>
-                  <input value={selectedArtifactPath} onChange={e => {
-                    setArtifactSource("path");
-                    setArtifactPath(e.target.value);
-                  }} style={{ ...inputStyle, fontFamily: "var(--font-mono)", fontSize: 12 }} />
-                </Field>
+                {deploymentRequiresArtifact(deploymentMode) && (
+                  <Field label={t("start.artifact")}>
+                    <input value={selectedArtifactPath} onChange={e => {
+                      setArtifactSource("path");
+                      setArtifactPath(e.target.value);
+                    }} style={{ ...inputStyle, fontFamily: "var(--font-mono)", fontSize: 12 }} />
+                  </Field>
+                )}
                 <Field label={t("start.maxDuration")}>
                   <input type="number" value={maxDur} onChange={e => setMaxDur(Number(e.target.value))} style={inputStyle} />
                 </Field>
@@ -737,6 +741,7 @@ function formatPreflightMessage(check: { name: string; message: string; details?
   }
   if (check.name === "artifact") {
     if (check.message === "artifact.path is required") return t("start.preflight.artifactRequired");
+    if (check.message === "artifact not required for observe mode") return t("start.preflight.artifactOptional");
     if (check.message === "file exists") return t("start.preflight.fileExists");
     if (check.message === "file not readable") return t("start.preflight.fileUnreadable");
   }

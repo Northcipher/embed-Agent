@@ -112,6 +112,38 @@ describe("start spec helpers", () => {
     ]);
   });
 
+  it("omits the artifact path for observe mode while keeping deployment mode", () => {
+    const spec = buildSpec({
+      artifactSource: "path",
+      artifactPath: "/builds/boot.img",
+      latestBuild: "",
+      watchPattern: "",
+      deploymentMode: "observe",
+      artifactType: "firmware",
+      replacePath: "/data/local/tmp/boot.img",
+      flashTool: "fastboot",
+      flashPartition: "boot",
+      target: "board-1",
+      expected: "device stays healthy",
+      whatChanged: "manual flash already done",
+      maxDur: 180,
+      allowShell: true,
+      successCriteria: "",
+      failureCriteria: "",
+      replyLanguage: "en",
+      t,
+    });
+
+    expect(spec.artifact).toEqual({ path: "", type: "firmware" });
+    expect(spec.deployment_mode).toBe("observe");
+    expect(spec.concerns).toEqual([
+      "change: manual flash already done",
+      "device flow: observe",
+      "content type: firmware",
+      "observe only",
+    ]);
+  });
+
   it("infers a runnable draft from a single engineer sentence", () => {
     const current: IntentDraft = {
       artifactSource: "path",

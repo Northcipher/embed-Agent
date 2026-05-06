@@ -111,6 +111,61 @@ describe("HTTP routes", () => {
     expect(res.json().checks.map((c: { name: string }) => c.name)).toEqual(["target", "capabilities", "artifact", "safety"]);
   });
 
+  it("POST /runs/preflight skips artifact checks for observe mode", async () => {
+    const app = await createApp();
+    const res = await app.inject({
+      method: "POST",
+      url: "/runs/preflight",
+      headers: { "content-type": "application/json" },
+      payload: {
+        artifact: { path: "", type: "firmware" },
+        target: "board-01",
+        deployment_mode: "observe",
+        constraints: { allow_flash: false, no_flash: true, allow_shell_exec: true },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ status: "ready" });
+    expect(res.json().checks).toContainEqual({
+      name: "artifact",
+      status: "ok",
+      message: "artifact not required for observe mode",
+    });
+  });
+
+  it("POST /runs accepts observe mode without an artifact path", async () => {
+    let captured: unknown = null;
+    const app = await createApp({
+      validate: async (body: unknown) => {
+        captured = body;
+        return { status: "accepted", run_id: "observe-run" };
+      },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/runs",
+      headers: { "content-type": "application/json" },
+      payload: {
+        artifact: { path: "", type: "firmware" },
+        target: "board-01",
+        deployment_mode: "observe",
+        expected: "device stays healthy",
+        constraints: { allow_flash: false, no_flash: true },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ status: "accepted", run_id: "observe-run" });
+    expect(captured).toMatchObject({
+      artifact: { path: "", type: "firmware" },
+      target: "board-01",
+      deployment_mode: "observe",
+      expected: "device stays healthy",
+    });
+  });
+
   it("PUT /config/llm.yml preserves an existing inline API key when form data omits it", async () => {
     const app = await createApp();
     await writeFile(join(currentConfigDir, "llm.yml"), [

@@ -12,6 +12,7 @@ export interface TaskValidationSpec {
   artifact: { path: string; type: string; version?: string; build_id?: string };
   target: string;
   expected: string;
+  deployment_mode?: "observe" | "flash" | "replace" | "install";
   task?: string;
   reply_language?: "zh" | "en";
   concerns?: string[];
@@ -150,9 +151,11 @@ function normalizeValidationSpec(value: unknown): TaskValidationSpec | null {
   const artifact = raw["artifact"];
   if (!artifact || typeof artifact !== "object") return null;
   const artifactRaw = artifact as Record<string, unknown>;
+  const deploymentMode = raw["deployment_mode"];
+  const artifactRequired = deploymentMode !== "observe";
   if (typeof raw["target"] !== "string" || !raw["target"]) return null;
   if (typeof raw["expected"] !== "string" || !raw["expected"]) return null;
-  if (typeof artifactRaw["path"] !== "string" || !artifactRaw["path"]) return null;
+  if (typeof artifactRaw["path"] !== "string" || (artifactRequired && !artifactRaw["path"])) return null;
 
   const spec: TaskValidationSpec = {
     target: raw["target"],
@@ -162,6 +165,9 @@ function normalizeValidationSpec(value: unknown): TaskValidationSpec | null {
     },
     expected: raw["expected"],
   };
+  if (deploymentMode === "observe" || deploymentMode === "flash" || deploymentMode === "replace" || deploymentMode === "install") {
+    spec.deployment_mode = deploymentMode;
+  }
   if (typeof raw["task"] === "string" && raw["task"]) spec.task = raw["task"];
   if (typeof artifactRaw["version"] === "string") spec.artifact.version = artifactRaw["version"];
   if (typeof artifactRaw["build_id"] === "string") spec.artifact.build_id = artifactRaw["build_id"];

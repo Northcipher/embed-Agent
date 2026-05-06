@@ -133,6 +133,44 @@ describe("E2E: createRun → result_ready", () => {
     expect(events.some(e => e.type === "step_started")).toBe(true);
   });
 
+  it("observe mode accepts an empty artifact path and skips artifact preflight", async () => {
+    (mockLLM as MockProvider).setResponse(JSON.stringify({
+      plan_id: "p1", estimated_duration_sec: 10,
+      steps: [{ id: "s1", capability: "shell_exec", action: "exec", command: "uname -a", timeout_sec: 5 }],
+      evidence_policy: { always: ["serial:full"], on_failure: ["logcat"] },
+      success_criteria: ["boot ok"], failure_signals: ["kernel panic"],
+    }));
+
+    let capturedArtifactPath = "__unset__";
+    const originalPreflight = mockTM.preflight;
+    mockTM.preflight = async (_target: string, _transports: string[], artifactPath: string) => {
+      capturedArtifactPath = artifactPath;
+      return { all_passed: true, checks: [] as { check: string; passed: boolean; error?: string }[] };
+    };
+
+    const result = await rm.createRun({
+      artifact: { path: "", type: "firmware" },
+      target: "t1",
+      expected: "Device remains stable",
+      deployment_mode: "observe",
+    });
+
+    expect(result.status).toBe("accepted");
+    expect(capturedArtifactPath).toBe("");
+
+    const deadline = Date.now() + 10_000;
+    let runState = "";
+    while (Date.now() < deadline) {
+      const run = await runStore.get(result.run_id!);
+      runState = run?.state ?? "";
+      if (["completed", "failed", "cancelled"].includes(runState)) break;
+      await new Promise(r => setTimeout(r, 200));
+    }
+    expect(["completed", "failed"]).toContain(runState);
+
+    mockTM.preflight = originalPreflight;
+  });
+
   it("error path: LLM garbage JSON → clarification_needed, run finalized", async () => {
     // Set LLM to return garbage
     (mockLLM as MockProvider).setResponse("not valid json {{{");

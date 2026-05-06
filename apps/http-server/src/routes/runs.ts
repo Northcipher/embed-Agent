@@ -16,6 +16,7 @@ const ALLOWED_CONFIGS = ["llm.yml", "system.yml"];
 interface CreateRunBody {
   artifact: { path: string; type: string; version?: string; build_id?: string };
   target: string;
+  deployment_mode?: "observe" | "flash" | "replace" | "install";
   task?: string;
   source?: { kind: "manual" | "task"; task_name?: string };
   reply_language?: "zh" | "en";
@@ -189,11 +190,13 @@ function validateTaskSpec(spec: unknown): spec is TaskValidationSpec {
   if (!spec || typeof spec !== "object") return false;
   const raw = spec as Record<string, unknown>;
   const artifact = raw["artifact"];
+  const deploymentMode = raw["deployment_mode"];
+  const artifactRequired = deploymentMode !== "observe";
   return typeof raw["target"] === "string" && raw["target"].length > 0
     && typeof raw["expected"] === "string" && raw["expected"].length > 0
     && Boolean(artifact) && typeof artifact === "object"
     && typeof (artifact as Record<string, unknown>)["path"] === "string"
-    && ((artifact as Record<string, unknown>)["path"] as string).length > 0;
+    && (!artifactRequired || ((artifact as Record<string, unknown>)["path"] as string).length > 0);
 }
 
 function validateTaskTrigger(trigger: unknown): trigger is TaskTrigger {
@@ -220,6 +223,7 @@ function taskRunBody(task: TaskRecord): Parameters<typeof CommandHandler.prototy
     task: task.validation_spec.task ?? task.name,
     source: { kind: "task", task_name: task.name },
   };
+  if (task.validation_spec.deployment_mode) req.deployment_mode = task.validation_spec.deployment_mode;
   if (task.validation_spec.concerns) req.concerns = task.validation_spec.concerns;
   if (task.validation_spec.reply_language) req.reply_language = task.validation_spec.reply_language;
   if (task.validation_spec.success_criteria) req.success_criteria = task.validation_spec.success_criteria;
@@ -301,8 +305,9 @@ export function registerRunRoutes(app: FastifyInstance, handler: CommandHandler)
   // --- Create run ---
   app.post("/runs", async (request) => {
     const body = request.body as CreateRunBody | null;
-    if (!body || !body.artifact?.path || !body.target) {
-      return { status: "invalid_request", reasons: ["artifact.path and target are required"] };
+    const artifactRequired = body?.deployment_mode !== "observe";
+    if (!body || !body.target || (artifactRequired && !body.artifact?.path)) {
+      return { status: "invalid_request", reasons: [artifactRequired ? "artifact.path and target are required" : "target is required"] };
     }
 
     // Map to ValidateRequest shape with full context fields
@@ -311,6 +316,7 @@ export function registerRunRoutes(app: FastifyInstance, handler: CommandHandler)
       target: body.target,
       expected: body.expected ?? body.context?.expected ?? "",
     };
+    if (body.deployment_mode) req.deployment_mode = body.deployment_mode;
     if (body.task) req.task = body.task;
     if (body.source) req.source = body.source;
     if (body.reply_language) req.reply_language = body.reply_language;
@@ -336,6 +342,7 @@ export function registerRunRoutes(app: FastifyInstance, handler: CommandHandler)
   app.post("/runs/preflight", async (request) => {
     const body = request.body as Partial<CreateRunBody> | null;
     const checks: HealthCheck[] = [];
+    const artifactRequired = body?.deployment_mode !== "observe";
     if (!body?.target) {
       checks.push({ name: "target", status: "error", message: "target is required" });
     } else {
@@ -364,7 +371,9 @@ export function registerRunRoutes(app: FastifyInstance, handler: CommandHandler)
       }
     }
 
-    if (!body?.artifact?.path) {
+    if (!artifactRequired) {
+      checks.push({ name: "artifact", status: "ok", message: "artifact not required for observe mode" });
+    } else if (!body?.artifact?.path) {
       checks.push({ name: "artifact", status: "error", message: "artifact.path is required" });
     } else {
       try {
@@ -418,7 +427,7 @@ export function registerRunRoutes(app: FastifyInstance, handler: CommandHandler)
       return reply.status(400).send(errorBody("INVALID_REQUEST", "name, validation_spec, and trigger are required"));
     }
     if (!validateTaskSpec(body.validation_spec)) {
-      return reply.status(422).send(errorBody("VALIDATION_ERROR", "validation_spec.target, validation_spec.expected, and validation_spec.artifact.path are required"));
+      return reply.status(422).send(errorBody("VALIDATION_ERROR", "validation_spec.target, validation_spec.expected, and validation_spec.artifact are required"));
     }
     if (!validateTaskTrigger(body.trigger)) {
       return reply.status(422).send(errorBody("VALIDATION_ERROR", "trigger is invalid"));

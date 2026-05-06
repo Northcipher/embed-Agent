@@ -76,6 +76,10 @@ export function deploymentModeHint(mode: DeploymentMode, t: TFunction): string {
   return t(`start.deployment.${mode}Hint`);
 }
 
+export function deploymentRequiresArtifact(mode: DeploymentMode): boolean {
+  return mode !== "observe";
+}
+
 export function formatArtifactType(type: string, t: TFunction): string {
   const translated = t(`start.contentType.${type}`);
   return translated.startsWith("start.contentType.") ? type : translated;
@@ -102,12 +106,14 @@ export function buildSpec(input: {
   t: TFunction;
 }): ValidationSpec {
   const path = artifactPathForSource(input.artifactSource, input.artifactPath, input.latestBuild, input.watchPattern);
+  const artifactPath = deploymentRequiresArtifact(input.deploymentMode) ? path : "";
   const type = input.artifactType;
   const allowFlash = input.deploymentMode === "flash";
   const spec: ValidationSpec = {
-    artifact: { path, type },
+    artifact: { path: artifactPath, type },
     target: input.target,
     expected: input.expected,
+    deployment_mode: input.deploymentMode,
     task: buildTaskDescription(input.deploymentMode, type, input.t),
     reply_language: input.replyLanguage,
     constraints: {

@@ -48,6 +48,7 @@ async function main() {
           const result = await (handler as any).validate({
             artifact: task.validation_spec.artifact,
             target: task.validation_spec.target,
+            deployment_mode: task.validation_spec.deployment_mode,
             task: task.name,
             source: { kind: "task", task_name: task.name },
             expected: task.validation_spec.expected,
