@@ -2,6 +2,11 @@ import type { ValidateRequest } from "@embed-agent/runtime";
 import type { ErrorResult } from "./command-handler.js";
 
 type JsonRecord = Record<string, unknown>;
+type HistoryItem = {
+  episode_id: string; run_id: string; result: string; summary: string;
+  recorded_at?: string; artifact_ref?: string; task?: string;
+  state?: string; elapsed_sec?: number; created_at?: string; started_at?: string; ended_at?: string;
+};
 
 export class HttpCommandHandler {
   constructor(private baseUrl = "http://127.0.0.1:8787") {
@@ -37,6 +42,7 @@ export class HttpCommandHandler {
   async status(runId: string) {
     return this.request<{
       run_id: string; state: string; current_step?: { id: string }; elapsed_sec: number; last_event_seq: number; evidence_path: string;
+      created_at?: string; started_at?: string; ended_at?: string;
     } | null>("GET", `/runs/${encodeURIComponent(runId)}/status`);
   }
 
@@ -57,6 +63,16 @@ export class HttpCommandHandler {
       run_id: string; state: string; result_available: boolean; summary?: string; suggested_next?: string; evidence_path?: string;
       key_evidence?: { summary: string; evidence_refs: string[] }[];
       criteria_results?: { criterion: string; status: string; evidence_refs: string[] }[];
+      target_id?: string; target_state?: string;
+      artifact?: { path: string; type: string; version?: string; build_id?: string };
+      source?: { kind: "manual" | "task"; task_name?: string; task?: string };
+      timing?: { created_at: string; started_at?: string; ended_at?: string; elapsed_sec: number };
+      task?: string; expected?: string; plan_id?: string; confidence?: number; failure_signature?: string;
+      steps?: { id: string; status: string; capability?: string; action?: string; command?: string; timeout_sec?: number; started_at?: string; ended_at?: string; exit_code?: number; evidence_refs: string[] }[];
+      evidence_index?: { ref: string; kind: string; bytes?: number; available: boolean }[];
+      missing_evidence_refs?: string[];
+      event_summary?: { total: number; warnings: number; fatals: number; interventions: number; llm_calls: number };
+      related_history?: HistoryItem[];
     }>("GET", `/runs/${encodeURIComponent(runId)}/result`);
   }
 
@@ -84,7 +100,7 @@ export class HttpCommandHandler {
     const params = new URLSearchParams();
     if (limit !== undefined) params.set("limit", String(limit));
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    return this.request<{ episode_id: string; result: string; summary: string }[]>("GET", `/targets/${encodeURIComponent(targetId)}/history${suffix}`);
+    return this.request<HistoryItem[]>("GET", `/targets/${encodeURIComponent(targetId)}/history${suffix}`);
   }
 
   async pause(runId: string, reason = "manual") {

@@ -1,4 +1,5 @@
 import type { RunRecord, RunState } from "@embed-agent/stores";
+import path from "node:path";
 import type { HookManager } from "./hook-manager.js";
 import { StepQueue, type Step } from "./step-queue.js";
 import type { StepExecutor } from "./step-executor.js";
@@ -68,6 +69,10 @@ export interface ValidateRequest {
   artifact: { path: string; type: string; version?: string; build_id?: string };
   target: string;
   expected: string;
+  task?: string;
+  source?: { kind: "manual" | "task"; task_name?: string };
+  /** Language for AI-written user-facing replies. Technical identifiers stay unchanged. */
+  reply_language?: "zh" | "en";
   concerns?: string[];
   /** User-specified success criteria — the ground truth for verdict evaluation. */
   success_criteria?: string[];
@@ -183,13 +188,19 @@ export class RunManager {
   }
 
   // EventStore reader — optionally injected for crash recovery
-  private eventReader?: { read(runId: string, afterSeq?: number, limit?: number): Promise<{ time: string }[]> };
-  setEventReader(reader: { read(runId: string, afterSeq?: number, limit?: number): Promise<{ time: string }[]> }): void {
+  private eventReader?: { read(runId: string, afterSeq?: number, limit?: number): Promise<{ time: string; type?: string; payload?: Record<string, unknown> }[]> };
+  setEventReader(reader: { read(runId: string, afterSeq?: number, limit?: number): Promise<{ time: string; type?: string; payload?: Record<string, unknown> }[]> }): void {
     this.eventReader = reader;
   }
 
-  private async eventStoreRead(runId: string, afterSeq: number, limit: number): Promise<{ time: string }[]> {
+  private async eventStoreRead(runId: string, afterSeq: number, limit: number): Promise<{ time: string; type?: string; payload?: Record<string, unknown> }[]> {
     return this.eventReader?.read(runId, afterSeq, limit) ?? [];
+  }
+
+  private async replyLanguageForRun(runId: string): Promise<"zh" | "en"> {
+    const events = await this.eventStoreRead(runId, 0, 100);
+    const runStarted = events.find(event => event.type === "run_started");
+    return runStarted?.payload?.reply_language === "zh" ? "zh" : "en";
   }
 
   // ============================================================
@@ -219,7 +230,7 @@ export class RunManager {
       artifact: req.artifact,
       elapsed_sec: 0,
       last_event_seq: 0,
-      evidence_root: `${this.dataRoot}/runs/${runId}`,
+      evidence_root: path.join(this.dataRoot, "runs", runId),
       created_at: new Date().toISOString(),
     };
     await this.runStore.create(run);
@@ -233,12 +244,13 @@ export class RunManager {
     }
 
     // 5. ContextAssembler → Planner → Plan
-    const taskInfo: { task: string; expected: string; concerns?: string[]; constraints?: Record<string, unknown>; test_hint?: unknown; success_criteria?: string[]; failure_criteria?: string[] } = {
-      task: `Validate ${req.artifact.type} on ${req.target}`,
+    const taskInfo: { task: string; expected: string; reply_language?: "zh" | "en"; concerns?: string[]; constraints?: Record<string, unknown>; test_hint?: unknown; success_criteria?: string[]; failure_criteria?: string[] } = {
+      task: req.task ?? `Validate ${req.artifact.type} on ${req.target}`,
       expected: req.expected,
       constraints: req.constraints as unknown as Record<string, unknown>,
       test_hint: req.test_hint,
     };
+    if (req.reply_language) taskInfo.reply_language = req.reply_language;
     if (req.concerns) taskInfo.concerns = req.concerns;
     if (req.success_criteria) taskInfo.success_criteria = req.success_criteria;
     if (req.failure_criteria) taskInfo.failure_criteria = req.failure_criteria;
@@ -308,8 +320,10 @@ export class RunManager {
       payload: {
         plan_id: plan.plan_id, target_id: req.target, estimated_duration_sec: plan.estimated_duration_sec,
         task: taskInfo.task, expected: req.expected,
+        reply_language: req.reply_language ?? "en",
         success_criteria: mergedSuccessCriteria, failure_signals: mergedFailureSignals,
         evidence_policy: plan.evidence_policy,
+        source: req.source ?? { kind: "manual" },
       },
     });
 
@@ -408,9 +422,12 @@ export class RunManager {
       }
     } catch (e) {
       console.error(`[RunManager] Reply generation failed for ${runId}:`, (e as Error).message);
+      const replyLanguage = await this.replyLanguageForRun(runId);
       reply = {
         run_id: runId, status,
-        summary: reason, suggested_next: "check evidence manually", evidence_path: `${this.dataRoot}/runs/${runId}`,
+        summary: replyLanguage === "zh" ? `结果生成失败：${reason}` : reason,
+        suggested_next: replyLanguage === "zh" ? "手动检查已采集的日志" : "check evidence manually",
+        evidence_path: path.join(this.dataRoot, "runs", runId),
         key_evidence: [], confidence: 0.3,
       } as AgentReply;
       // Reply layer failed; persist minimal reply so consumers have a fallback

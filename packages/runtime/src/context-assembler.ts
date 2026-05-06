@@ -119,6 +119,37 @@ function bullets(items: string[]): string {
   return items.map(i => `- ${i}`).join("\n");
 }
 
+function elapsedSecForRun(run: RunRecord | null): number {
+  if (!run) return 0;
+  const stored = Math.max(0, Math.floor(run.elapsed_sec));
+  const startedAt = timeMs(run.started_at) ?? timeMs(run.created_at);
+  if (startedAt === null) return stored;
+
+  const endedAt = timeMs(run.ended_at);
+  if (endedAt !== null) return Math.max(0, Math.floor((endedAt - startedAt) / 1000));
+  if (["completed", "failed", "cancelled"].includes(run.state)) return stored;
+  return Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+}
+
+function timeMs(value: string | undefined): number | null {
+  if (!value) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function outputLanguageInstruction(language: "zh" | "en"): string {
+  if (language === "zh") {
+    return "Write user-facing analysis, summaries, suggested next steps, and criteria wording in Chinese.";
+  }
+  return "Write user-facing analysis, summaries, suggested next steps, and criteria wording in English.";
+}
+
+function formatConnectionSummary(connections: Record<string, unknown>): string {
+  return Object.entries(connections)
+    .map(([name, value]) => `${name}:${JSON.stringify(value)}`)
+    .join(", ");
+}
+
 /** Read evidence content: return full content if ≤ maxBytes, otherwise head + tail to preserve both context and recency. */
 async function readEvidenceWindow(
   evidence: EvidenceReader,
@@ -162,7 +193,7 @@ export class ContextAssembler {
   // ============================================================
 
   async assemblePlannerContext(runId: string, taskInfo?: {
-    task: string; expected: string; concerns?: string[]; constraints?: Record<string, unknown>; test_hint?: unknown;
+    task: string; expected: string; reply_language?: "zh" | "en"; concerns?: string[]; constraints?: Record<string, unknown>; test_hint?: unknown;
   }): Promise<PlannerContext> {
     const run = await this.runStore.get(runId);
     if (!run) throw new Error(`Run not found: ${runId}`);
@@ -187,6 +218,14 @@ export class ContextAssembler {
     goalLines.push(`**Expected**: ${taskInfo?.expected ?? "Device operates normally"}`);
     if (taskInfo?.concerns?.length) goalLines.push(`**Concerns**: ${taskInfo.concerns.join(", ")}`);
     sections.push(h("Goal", ...goalLines));
+
+    // --- Output Language ---
+    if (taskInfo?.reply_language) {
+      sections.push(h("Output Language",
+        outputLanguageInstruction(taskInfo.reply_language),
+        "For generated plan fields that humans read, use this language. Keep capability names, action names, commands, paths, target IDs, and evidence refs unchanged.",
+      ));
+    }
 
     // --- Safety Constraints ---
     const constraints = taskInfo?.constraints;
@@ -216,7 +255,7 @@ export class ContextAssembler {
     tl.push(`**Artifact**: ${run.artifact.path} (${run.artifact.type}${run.artifact.version ? ` v${run.artifact.version}` : ""})`);
     const conns = target?.connections;
     if (conns && Object.keys(conns).length > 0) {
-      tl.push(`**Connections**: ${Object.entries(conns).map(([k, v]) => `${k}:${v}`).join(", ")}`);
+      tl.push(`**Connections**: ${formatConnectionSummary(conns)}`);
     }
     sections.push(h("Target", ...tl));
 
@@ -321,6 +360,15 @@ export class ContextAssembler {
     if (totalSteps != null) goalLines.push(`**Total steps**: ${totalSteps}`);
     sections.push(h("Run Goal", ...goalLines));
 
+    // --- Output Language ---
+    const replyLanguage = runPayload.reply_language === "zh" ? "zh" : runPayload.reply_language === "en" ? "en" : undefined;
+    if (replyLanguage) {
+      sections.push(h("Output Language",
+        outputLanguageInstruction(replyLanguage),
+        "For observer reasons, suggested handling, and any human-readable analysis, use this language. Keep event types, rule IDs, commands, target IDs, and evidence refs unchanged.",
+      ));
+    }
+
     // --- Known Issues ---
     if (facts.length > 0) {
       const lines = facts.map(f => {
@@ -404,7 +452,7 @@ export class ContextAssembler {
     // ========================
 
     // --- Run State + Time ---
-    const elapsed = run?.elapsed_sec ?? 0;
+    const elapsed = elapsedSecForRun(run);
     const maxDur = (runPayload.estimated_duration_sec as number) ?? 600;
     const remaining = Math.max(0, maxDur - elapsed);
     sections.push(h("Run State",

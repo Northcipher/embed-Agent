@@ -1,10 +1,11 @@
 export { EventStore, type EventRecord, type AppendEvent } from "./event-store.js";
 export { EvidenceStore, type EvidenceRef, type KeyEvent, type EvidenceIndex, type RetentionConfig } from "./evidence-store.js";
 export { RunStore, type RunState, type RunRecord } from "./run-store.js";
+export { RunCleanupStore, type DeleteRunResult } from "./run-cleanup-store.js";
 export { TargetStore, type TargetState, type TargetProfile, type TargetRuntimeState } from "./target-store.js";
 export { MemoryStore, type WorkingMemoryEntry, type Episode, type SemanticFact, type RunProfile } from "./memory-store.js";
 export { SkillStore, type Skill } from "./skill-store.js";
-export { TaskStore, type TaskRecord } from "./task-store.js";
+export { TaskStore, type TaskPolicy, type TaskRecord, type TaskTrigger, type TaskValidationSpec } from "./task-store.js";
 export { validateId, generateId, extractJson } from "./validate.js";
 export { Logger, type LogLevel, type LoggerOptions } from "./logger.js";
 export { ConfigLoader, type ConfigLoadResult } from "./config-loader.js";

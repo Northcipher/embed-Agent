@@ -35,6 +35,21 @@ describe("schemas", () => {
     expect(result.success).toBe(true);
   });
 
+  it("LLMConfigSchema accepts an inline API key for WebUI-managed config", () => {
+    const result = LLMConfigSchema.safeParse({
+      default_provider: "openai",
+      providers: {
+        openai: {
+          type: "openai",
+          api_key_env: "OPENAI_API_KEY",
+          api_key: "sk-test",
+          models: { planner: "gpt-5.2", observer: "gpt-5.2", reply: "gpt-5.2" },
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
   it("HookConfigSchema validates valid hooks", () => {
     const result = HookConfigSchema.safeParse({
       hooks: [{ name: "test", on: "PreRunStart", command: "./test.sh", timeout: 30 }],

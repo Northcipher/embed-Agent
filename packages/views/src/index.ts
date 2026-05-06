@@ -1,1 +1,1 @@
-export { Views } from "./views.js";
+export { Views, type RunResultView } from "./views.js";

@@ -49,6 +49,8 @@ interface RunInfo {
   task?: string;
 }
 
+type ReplyLanguage = "zh" | "en";
+
 const FAILURE_TYPES = new Set(["step_failed", "run_failed"]);
 
 // Per-criterion evaluation prompt — focused, single-task
@@ -80,6 +82,47 @@ Use the submitReply tool to output the final reply.`;
 
 const DEFAULT_REPLY_PROMPT = SYNTHESIS_PROMPT;
 
+function parseReplyLanguage(payload: Record<string, unknown>): ReplyLanguage {
+  return payload.reply_language === "zh" ? "zh" : "en";
+}
+
+function replyLanguageInstruction(language: ReplyLanguage): string {
+  if (language === "zh") {
+    return "Write user-facing summaries, suggested next steps, criterion reasoning, and key evidence explanations in Chinese.";
+  }
+  return "Write user-facing summaries, suggested next steps, criterion reasoning, and key evidence explanations in English.";
+}
+
+function replyLanguageJsonInstruction(language: ReplyLanguage): string {
+  if (language === "zh") {
+    return "Write all user-facing JSON string values in Chinese. Keep commands, paths, target IDs, event types, and evidence refs unchanged.";
+  }
+  return "Write all user-facing JSON string values in English. Keep commands, paths, target IDs, event types, and evidence refs unchanged.";
+}
+
+function localizeFallbackReason(reason: string): string {
+  if (reason === "Failed to parse LLM reply") return "模型返回内容无法解析，已生成最小结果";
+  if (reason === "LLM degraded — CB4 active") return "模型当前处于降级状态，已生成最小结果";
+  if (reason === "LLM degraded after tool fallback") return "模型工具调用降级后仍不可用，已生成最小结果";
+  if (reason === "LLM unavailable") return "模型不可用，已生成最小结果";
+  if (reason.startsWith("Plan generation failed:")) return `生成执行步骤失败：${reason.slice("Plan generation failed:".length).trim()}`;
+  if (reason.startsWith("PreRunStart hook blocked:")) return `运行前 Hook 阻止了验证：${reason.slice("PreRunStart hook blocked:".length).trim()}`;
+  if (reason.startsWith("Plan rejected:")) return `执行步骤被拒绝：${reason.slice("Plan rejected:".length).trim()}`;
+  if (reason.startsWith("Pre-flight failed")) return "运行前检查未通过";
+  if (reason.startsWith("Clarification needed:")) return `信息不足：${reason.slice("Clarification needed:".length).trim()}`;
+  if (reason.startsWith("Host crash:")) return `宿主机中断：${reason.slice("Host crash:".length).trim()}`;
+  if (reason.startsWith("Execution error:")) return `执行过程出错：${reason.slice("Execution error:".length).trim()}`;
+  return reason;
+}
+
+function parseReplyLanguageFromContext(context: string): ReplyLanguage {
+  return context.includes(" in Chinese.") || context.includes(" in Chinese\n") ? "zh" : "en";
+}
+
+function criteriaFallbackReason(language: ReplyLanguage): string {
+  return language === "zh" ? "模型不可用，无法判断这条通过条件" : "LLM unavailable";
+}
+
 export class ReplyGenerator {
   private replyPrompt: string;
 
@@ -94,6 +137,10 @@ export class ReplyGenerator {
     replyPrompt?: string,
   ) {
     this.replyPrompt = replyPrompt ?? DEFAULT_REPLY_PROMPT;
+  }
+
+  private evidencePath(runId: string): string {
+    return path.join(this.dataRoot, "runs", runId);
   }
 
   // ============================================================
@@ -111,6 +158,7 @@ export class ReplyGenerator {
     const eventStatus = this.determineStatus(events);
     const planEvent = events.find(e => e.type === "run_started");
     const planPayload = (planEvent?.payload ?? {}) as Record<string, unknown>;
+    const replyLanguage = parseReplyLanguage(planPayload);
     const criteria = (planPayload.success_criteria as string[]) ?? [];
 
     // Load baseline for comparison
@@ -148,11 +196,11 @@ export class ReplyGenerator {
       // Phase 2: Synthesis — combine per-criterion results into final reply.
       // Final status considers both events AND criteria evaluation.
       const finalStatus = this.determineStatus(events, criteriaResults);
-      reply = await this.synthesize(runId, finalStatus, criteriaResults, sharedContext, baseline);
+      reply = await this.synthesize(runId, finalStatus, criteriaResults, sharedContext, baseline, replyLanguage);
     } else {
       // Single-pass fallback: one LLM call does everything
       const singlePassEvidence = evidenceContent || await this.readEvidenceContent(runId, evidence);
-      reply = await this.singlePassGenerate(runId, eventStatus, events, evidence, planPayload, singlePassEvidence);
+      reply = await this.singlePassGenerate(runId, eventStatus, events, evidence, planPayload, singlePassEvidence, replyLanguage);
     }
 
     await this.persistReply(runId, reply);
@@ -167,6 +215,7 @@ export class ReplyGenerator {
       confidence: reply.confidence,
     };
     if (reply.criteria_results) payload.criteria_results = reply.criteria_results;
+    payload.reply_language = replyLanguage;
     await this.eb.emit({
       type: "result_ready", run_id: runId, source: "reply_generator",
       summary: reply.summary,
@@ -212,7 +261,7 @@ export class ReplyGenerator {
           return { criterion, status: "unknown", confidence: 0.3, reasoning: "Parse failed", evidence_refs: [] };
         }
       },
-      fallback: () => ({ criterion, status: "unknown", confidence: 0.3, reasoning: "LLM unavailable", evidence_refs: [] }),
+      fallback: () => ({ criterion, status: "unknown", confidence: 0.3, reasoning: criteriaFallbackReason(parseReplyLanguageFromContext(sharedContext)), evidence_refs: [] }),
       outputTool: {
         name: "submitCriterionResult",
         schema: submitCriterionResultTool.inputSchema,
@@ -222,7 +271,7 @@ export class ReplyGenerator {
         },
       },
       stepCount: 2,
-      textFallbackPrefix: 'You are a criterion evaluator. Output ONLY JSON: {"criterion":"<exact>","status":"pass|fail|unknown","confidence":0.0-1.0,"reasoning":"<why>","evidence_refs":["<ref>"]}',
+      textFallbackPrefix: `${replyLanguageJsonInstruction(parseReplyLanguageFromContext(sharedContext))} You are a criterion evaluator. Output ONLY JSON: {"criterion":"<exact>","status":"pass|fail|unknown","confidence":0.0-1.0,"reasoning":"<why>","evidence_refs":["<ref>"]}`,
     };
 
     const agent = new Agent("reply", this.llm, config, this.eb);
@@ -239,6 +288,7 @@ export class ReplyGenerator {
     criteriaResults: { criterion: string; status: "pass" | "fail" | "unknown"; confidence: number; reasoning: string; evidence_refs: string[] }[],
     sharedContext: string,
     baseline?: { final_metrics: Record<string, number> } | null,
+    replyLanguage: ReplyLanguage = "en",
   ): Promise<AgentReply> {
     const baselineSection = baseline?.final_metrics ? [
       "## Baseline Comparison",
@@ -249,6 +299,10 @@ export class ReplyGenerator {
     ].join("\n") : "";
 
     const context = [
+      "## Output Language",
+      replyLanguageInstruction(replyLanguage),
+      "Keep commands, paths, target IDs, event types, and evidence refs unchanged.",
+      "",
       `## Run Status (pre-determined)`,
       `Status: **${status}**`,
       "",
@@ -262,15 +316,15 @@ export class ReplyGenerator {
     ].join("\n");
 
     const replyConfig: AgentConfig<AgentReply> = {
-      parse: (content: string) => this.parseReply(runId, status, content),
-      fallback: (reason: string) => this.buildMinimal(runId, status, reason),
+      parse: (content: string) => this.parseReply(runId, status, content, replyLanguage),
+      fallback: (reason: string) => this.buildMinimal(runId, status, reason, replyLanguage),
       outputTool: {
         name: "submitReply",
         schema: submitReplyTool.inputSchema,
         handler: (args: Record<string, unknown>) => this.toolArgsToReply(runId, status, args as SubmitReplyInput),
       },
       stepCount: 2,
-      textFallbackPrefix: 'You are a Reply Generator. Output ONLY JSON, no explanation: {"summary":"<2-4 sentences>","suggested_next":"<action>","key_evidence":[{"summary":"<finding>","evidence_refs":["ref"]}],"criteria_results":[{"criterion":"<exact>","status":"pass|fail|unknown","evidence_refs":["ref"]}],"confidence":0.0-1.0}',
+      textFallbackPrefix: `${replyLanguageJsonInstruction(replyLanguage)} Output ONLY JSON, no explanation: {"summary":"<2-4 sentences>","suggested_next":"<action>","key_evidence":[{"summary":"<finding>","evidence_refs":["ref"]}],"criteria_results":[{"criterion":"<exact>","status":"pass|fail|unknown","evidence_refs":["ref"]}],"confidence":0.0-1.0}`,
     };
 
     const replyAgent = new Agent("reply", this.llm, replyConfig, this.eb);
@@ -299,6 +353,7 @@ export class ReplyGenerator {
     evidence: { refs: { ref: string; kind: string; bytes?: number; available: boolean }[]; key_events: { seq: number; summary: string; evidence_refs: string[] }[] },
     planPayload: Record<string, unknown>,
     evidenceContent: string,
+    replyLanguage: ReplyLanguage,
   ): Promise<AgentReply> {
     const importantEvents = events.filter(e => e.severity === "fatal" || e.severity === "warning" || e.type === "decision_made" || e.type === "result_ready");
     const recentEvents = events.slice(-50);
@@ -311,6 +366,10 @@ export class ReplyGenerator {
     }
 
     const context = [
+      "## Output Language",
+      replyLanguageInstruction(replyLanguage),
+      "Keep commands, paths, target IDs, event types, and evidence refs unchanged.",
+      "",
       "## Success Criteria",
       ...((planPayload.success_criteria as string[])?.map(c => `- ${c}`) ?? ["- (none specified)"]),
       "",
@@ -334,15 +393,15 @@ export class ReplyGenerator {
     ].join("\n");
 
     const replyConfig: AgentConfig<AgentReply> = {
-      parse: (content: string) => this.parseReply(runId, status, content),
-      fallback: (reason: string) => this.buildMinimal(runId, status, reason),
+      parse: (content: string) => this.parseReply(runId, status, content, replyLanguage),
+      fallback: (reason: string) => this.buildMinimal(runId, status, reason, replyLanguage),
       outputTool: {
         name: "submitReply",
         schema: submitReplyTool.inputSchema,
         handler: (args: Record<string, unknown>) => this.toolArgsToReply(runId, status, args as SubmitReplyInput),
       },
       stepCount: 2,
-      textFallbackPrefix: 'You are a Reply Generator. Output ONLY JSON, no explanation: {"summary":"<2-4 sentences>","suggested_next":"<action>","key_evidence":[{"summary":"<finding>","evidence_refs":["ref"]}],"criteria_results":[{"criterion":"<exact>","status":"pass|fail|unknown","evidence_refs":["ref"]}],"confidence":0.0-1.0}',
+      textFallbackPrefix: `${replyLanguageJsonInstruction(replyLanguage)} Output ONLY JSON, no explanation: {"summary":"<2-4 sentences>","suggested_next":"<action>","key_evidence":[{"summary":"<finding>","evidence_refs":["ref"]}],"criteria_results":[{"criterion":"<exact>","status":"pass|fail|unknown","evidence_refs":["ref"]}],"confidence":0.0-1.0}`,
     };
 
     const replyAgent = new Agent("reply", this.llm, replyConfig, this.eb);
@@ -359,7 +418,12 @@ export class ReplyGenerator {
     planPayload: Record<string, unknown>,
   ): string {
     const importantEvents = events.filter(e => e.severity === "fatal" || e.severity === "warning" || e.type === "decision_made");
+    const replyLanguage = parseReplyLanguage(planPayload);
     return [
+      "## Output Language",
+      replyLanguageInstruction(replyLanguage),
+      "Keep commands, paths, target IDs, event types, and evidence refs unchanged.",
+      "",
       "## Run Summary",
       `Events: ${events.length} total, ${events.filter(e => e.severity === "fatal").length} fatal, ${events.filter(e => FAILURE_TYPES.has(e.type)).length} failures`,
       `Expected: ${(planPayload.expected as string) ?? "device operates normally"}`,
@@ -411,7 +475,8 @@ export class ReplyGenerator {
   // ============================================================
 
   async generateMinimal(runId: string, reason: string, runInfo?: RunInfo): Promise<AgentReply> {
-    const reply = this.buildMinimal(runId, "failed", reason);
+    const replyLanguage = await this.replyLanguageForRun(runId);
+    const reply = this.buildMinimal(runId, "failed", reason, replyLanguage);
     await this.persistReply(runId, reply);
     await this.writeArtifacts(runId, reply, [], runInfo);
     await this.eb.emit({
@@ -423,18 +488,20 @@ export class ReplyGenerator {
         evidence_path: reply.evidence_path,
         key_evidence: reply.key_evidence,
         confidence: reply.confidence,
+        reply_language: replyLanguage,
       },
     });
     return reply;
   }
 
   async generateCancelled(runId: string, reason: string, runInfo?: RunInfo): Promise<AgentReply> {
+    const replyLanguage = await this.replyLanguageForRun(runId);
     const reply: AgentReply = {
       run_id: runId,
       status: "cancelled",
       summary: reason,
-      suggested_next: "re-run with corrected parameters",
-      evidence_path: `${this.dataRoot}/runs/${runId}`,
+      suggested_next: replyLanguage === "zh" ? "修正参数后重新运行这次验证" : "re-run with corrected parameters",
+      evidence_path: this.evidencePath(runId),
       key_evidence: [],
       confidence: 1.0,
     };
@@ -449,6 +516,7 @@ export class ReplyGenerator {
         evidence_path: reply.evidence_path,
         key_evidence: reply.key_evidence,
         confidence: reply.confidence,
+        reply_language: replyLanguage,
       },
     });
     return reply;
@@ -466,16 +534,16 @@ export class ReplyGenerator {
     return "completed";
   }
 
-  private parseReply(runId: string, status: AgentReply["status"], content: string): AgentReply {
+  private parseReply(runId: string, status: AgentReply["status"], content: string, replyLanguage: ReplyLanguage): AgentReply {
     try {
       const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
       const json = jsonMatch ? jsonMatch[1]!.trim() : content.trim();
       const parsed = JSON.parse(json);
       const reply: AgentReply = {
         run_id: runId, status,
-        summary: parsed.summary ?? "Validation completed",
-        suggested_next: parsed.suggested_next ?? "review evidence",
-        evidence_path: `${this.dataRoot}/runs/${runId}`,
+        summary: parsed.summary ?? (replyLanguage === "zh" ? "验证已完成" : "Validation completed"),
+        suggested_next: parsed.suggested_next ?? (replyLanguage === "zh" ? "检查已采集的日志" : "review evidence"),
+        evidence_path: this.evidencePath(runId),
         key_evidence: parsed.key_evidence ?? [],
         confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.7,
       };
@@ -484,7 +552,7 @@ export class ReplyGenerator {
       }
       return reply;
     } catch {
-      return this.buildMinimal(runId, status, "Failed to parse LLM reply");
+      return this.buildMinimal(runId, status, "Failed to parse LLM reply", replyLanguage);
     }
   }
 
@@ -493,7 +561,7 @@ export class ReplyGenerator {
       run_id: runId, status,
       summary: args.summary,
       suggested_next: args.suggested_next,
-      evidence_path: `${this.dataRoot}/runs/${runId}`,
+      evidence_path: this.evidencePath(runId),
       key_evidence: args.key_evidence,
       confidence: args.confidence,
     };
@@ -501,15 +569,25 @@ export class ReplyGenerator {
     return reply;
   }
 
-  private buildMinimal(runId: string, status: AgentReply["status"], reason: string): AgentReply {
+  private buildMinimal(runId: string, status: AgentReply["status"], reason: string, replyLanguage: ReplyLanguage = "en"): AgentReply {
     return {
       run_id: runId, status,
-      summary: reason,
-      suggested_next: "check evidence manually",
-      evidence_path: `${this.dataRoot}/runs/${runId}`,
+      summary: replyLanguage === "zh" ? localizeFallbackReason(reason) : reason,
+      suggested_next: replyLanguage === "zh" ? "手动检查已采集的日志" : "check evidence manually",
+      evidence_path: this.evidencePath(runId),
       key_evidence: [],
       confidence: 0.5,
     };
+  }
+
+  private async replyLanguageForRun(runId: string): Promise<ReplyLanguage> {
+    try {
+      const events = await this.eventStore.read(runId, 0, 100);
+      const planEvent = events.find(e => e.type === "run_started");
+      return parseReplyLanguage((planEvent?.payload ?? {}) as Record<string, unknown>);
+    } catch {
+      return "en";
+    }
   }
 
   private async persistReply(runId: string, reply: AgentReply): Promise<void> {

@@ -118,8 +118,12 @@ export interface LLMCallPayload {
   token_output?: number;
   degraded: boolean;
   fallback: boolean;
+  source: string;
   model?: string;
   error?: string;
+  input_preview: string;
+  messages_preview: { role: "system" | "user" | "assistant"; content: string }[];
+  raw_content: string;
 }
 
 export type EventPayload =

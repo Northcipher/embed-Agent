@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { StepQueue } from "../src/step-queue.js";
-import { StepRetryBreaker } from "../src/step-executor.js";
+import { StepExecutor, StepRetryBreaker } from "../src/step-executor.js";
 import { ObserverOverrideBreaker, WarningAccumulator } from "../src/decision-handler.js";
-import { HookManager } from "../src/hook-manager.js";
+import { HookManager, isLocalHookScriptPath } from "../src/hook-manager.js";
+import type { Connection } from "@embed-agent/tools";
 
 // --- StepQueue ---
 
@@ -96,6 +97,163 @@ describe("StepRetryBreaker", () => {
     expect(breaker.shouldRetry("connection_lost")).toBe(false); // count=3, trips
   });
 });
+
+// --- StepExecutor stream semantics ---
+
+describe("StepExecutor", () => {
+  it("treats the stream time budget as a completed observation window", async () => {
+    const events: Record<string, unknown>[] = [];
+    const conn = new ContinuousStreamConnection();
+    const pipe = new CapturingPipe();
+    const executor = new StepExecutor(
+      "run-stream-window",
+      { target_id: "t1", connections: { serial: { port: "/dev/mock" } } },
+      { emit: async (event) => { events.push(event); } },
+      new HookManager([]),
+      { getForStep: () => conn },
+      () => pipe,
+      { maxRetries: 0, intervals: [], retryable: ["timeout"] },
+    );
+
+    const result = await executor.executeStep({
+      id: "stream-serial",
+      capability: "serial_output",
+      action: "stream",
+      timeout_sec: 0.05,
+    });
+
+    expect(result).toEqual({ completed: true });
+    expect(conn.disconnects).toBe(1);
+    expect(pipe.flushed).toBeGreaterThan(0);
+    expect(pipe.silenceDisabled).toBe(true);
+    expect(events.some(event => event.type === "step_completed")).toBe(true);
+    expect(events.some(event => event.type === "step_failed")).toBe(false);
+  });
+
+  it("keeps a Windows host path intact when parsing push command fallback", async () => {
+    const conn = new RecordingConnection();
+    const executor = new StepExecutor(
+      "run-push-windows-path",
+      { target_id: "t1", connections: { adb: { device_id: "emu" } } },
+      { emit: async () => {} },
+      new HookManager([]),
+      { getForStep: () => conn },
+    );
+
+    const result = await executor.executeStep({
+      id: "push-libcamera",
+      capability: "push",
+      action: "push",
+      command: String.raw`C:\builds\s820\libcamera.so:/vendor/lib64/libcamera.so`,
+      timeout_sec: 5,
+    });
+
+    expect(result).toEqual({ completed: true });
+    expect(conn.pushArgs).toEqual([
+      String.raw`C:\builds\s820\libcamera.so`,
+      "/vendor/lib64/libcamera.so",
+    ]);
+  });
+
+  it("keeps a Windows host path intact when parsing flash command fallback", async () => {
+    const conn = new RecordingConnection();
+    const executor = new StepExecutor(
+      "run-flash-windows-path",
+      { target_id: "t1", connections: { fastboot: { device_id: "fb" } } },
+      { emit: async () => {} },
+      new HookManager([]),
+      { getForStep: () => conn },
+    );
+
+    const result = await executor.executeStep({
+      id: "flash-boot",
+      capability: "flash",
+      action: "flash",
+      command: String.raw`C:\builds\s820\nightly\boot.img:boot`,
+      timeout_sec: 5,
+    });
+
+    expect(result).toEqual({ completed: true });
+    expect(conn.flashArgs).toEqual([
+      String.raw`C:\builds\s820\nightly\boot.img`,
+      "boot",
+    ]);
+  });
+});
+
+class ContinuousStreamConnection implements Connection {
+  private currentState: "connected" | "disconnected" | "error" = "disconnected";
+  disconnects = 0;
+
+  async connect(): Promise<void> {
+    this.currentState = "connected";
+  }
+
+  async disconnect(): Promise<void> {
+    this.currentState = "disconnected";
+    this.disconnects++;
+  }
+
+  state(): "connected" | "disconnected" | "error" {
+    return this.currentState;
+  }
+
+  async *stream(): AsyncIterable<string> {
+    let line = 0;
+    while (this.currentState === "connected") {
+      await new Promise(resolve => setTimeout(resolve, 1));
+      yield `line ${line++}`;
+    }
+  }
+}
+
+class CapturingPipe {
+  chunks: string[] = [];
+  flushed = 0;
+  silenceDisabled = false;
+
+  async feedStream(chunk: string): Promise<void> {
+    this.chunks.push(chunk);
+  }
+
+  async feedExec(): Promise<void> {}
+
+  async flush(): Promise<void> {
+    this.flushed++;
+  }
+
+  disableSilence(): void {
+    this.silenceDisabled = true;
+  }
+
+  setConnection(): void {}
+}
+
+class RecordingConnection implements Connection {
+  private currentState: "connected" | "disconnected" | "error" = "disconnected";
+  pushArgs: [string, string] | null = null;
+  flashArgs: [string, string] | null = null;
+
+  async connect(): Promise<void> {
+    this.currentState = "connected";
+  }
+
+  async disconnect(): Promise<void> {
+    this.currentState = "disconnected";
+  }
+
+  state(): "connected" | "disconnected" | "error" {
+    return this.currentState;
+  }
+
+  async push(src: string, dst: string): Promise<void> {
+    this.pushArgs = [src, dst];
+  }
+
+  async flash(image: string, partition: string): Promise<void> {
+    this.flashArgs = [image, partition];
+  }
+}
 
 // --- CB1: ObserverOverrideBreaker ---
 
@@ -192,5 +350,18 @@ describe("HookManager", () => {
     // Non-matching capability — hook should not run, returns default proceed
     const result = await hm.execute("PreStepExecute", { run_id: "r1", capability: "shell_exec" });
     expect(result.decision).toBe("proceed");
+  });
+
+  it("accepts Windows local script paths without treating backslashes as shell metacharacters", () => {
+    expect(isLocalHookScriptPath(String.raw`.\scripts\pre-check.cmd`, "win32")).toBe(true);
+    expect(isLocalHookScriptPath(String.raw`C:\work\embed-agent\scripts\pre-check.cmd`, "win32")).toBe(true);
+    expect(isLocalHookScriptPath(String.raw`.\scripts\pre-check.cmd;rm -rf`, "win32")).toBe(false);
+    expect(isLocalHookScriptPath(String.raw`..\scripts\pre-check.cmd`, "win32")).toBe(false);
+  });
+
+  it("keeps Unix hook paths strict on Unix hosts", () => {
+    expect(isLocalHookScriptPath("./scripts/pre-check.sh", "darwin")).toBe(true);
+    expect(isLocalHookScriptPath("/opt/embed-agent/pre-check.sh", "linux")).toBe(true);
+    expect(isLocalHookScriptPath(String.raw`.\scripts\pre-check.cmd`, "darwin")).toBe(false);
   });
 });

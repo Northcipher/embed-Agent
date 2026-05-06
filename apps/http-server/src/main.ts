@@ -10,6 +10,7 @@ const fastifySSE = (pkg as unknown as { default: typeof pkg; fastifySSE: typeof 
 import { bootstrap } from "@embed-agent/cli";
 import { TaskStore } from "@embed-agent/stores";
 import { registerRunRoutes } from "./routes/runs.js";
+import { registerWebUi } from "./register-web-ui.js";
 
 // Lazy-load cron to avoid requiring it for typecheck when not installed
 async function loadCron() {
@@ -24,6 +25,7 @@ async function main() {
   const { handler } = await bootstrap();
 
   registerRunRoutes(app, handler);
+  await registerWebUi(app);
 
   // ── Scheduled tasks ──────────────────────────────────────
   const taskStore = new TaskStore(process.env["EMBED_AGENT_DATA"] ?? ".embed-agent");
@@ -32,17 +34,27 @@ async function main() {
     const tasks = await taskStore.list();
     for (const task of tasks) {
       if (!task.enabled) continue;
-      if (!cron.validate(task.cron)) {
-        app.log.warn(`Task "${task.name}": invalid cron expression "${task.cron}" — skipping`);
+      if (task.trigger.kind !== "cron") {
+        app.log.info(`Task "${task.name}": trigger "${task.trigger.kind}" is not scheduled by cron`);
         continue;
       }
-      cron.schedule(task.cron, async () => {
+      if (!cron.validate(task.trigger.cron)) {
+        app.log.warn(`Task "${task.name}": invalid cron expression "${task.trigger.cron}" — skipping`);
+        continue;
+      }
+      cron.schedule(task.trigger.cron, async () => {
         app.log.info(`Task "${task.name}" triggered`);
         try {
           const result = await (handler as any).validate({
-            artifact: { path: task.artifactPath, type: task.artifactType },
-            target: task.target,
-            expected: task.expected,
+            artifact: task.validation_spec.artifact,
+            target: task.validation_spec.target,
+            task: task.name,
+            source: { kind: "task", task_name: task.name },
+            expected: task.validation_spec.expected,
+            concerns: task.validation_spec.concerns,
+            success_criteria: task.validation_spec.success_criteria,
+            failure_criteria: task.validation_spec.failure_criteria,
+            constraints: task.validation_spec.constraints,
           });
           if (result?.run_id) {
             await taskStore.updateLastRun(task.name, result.run_id);
@@ -52,7 +64,7 @@ async function main() {
           app.log.error(`Task "${task.name}" failed: ${(e as Error).message}`);
         }
       });
-      app.log.info(`Task "${task.name}" scheduled: ${task.cron}`);
+      app.log.info(`Task "${task.name}" scheduled: ${task.trigger.cron}`);
     }
   }
 

@@ -20,6 +20,19 @@ cd embed-Agent
 pnpm install
 ```
 
+最省事的路径是直接跑：
+
+- macOS: 双击 `Open Embed Agent.command`
+- Windows: 双击 `Open Embed Agent.bat`
+
+或命令行：
+
+```bash
+pnpm desktop:open
+```
+
+这会自动安装依赖、构建、创建默认 `.embed-agent/` 配置、更新项目 `.mcp.json`，然后打开浏览器到 Web UI。
+
 ## Quick Verification
 
 This should pass immediately — no API key, no hardware, no config needed:
@@ -175,7 +188,8 @@ node apps/mcp-server/dist/main.js
 
 To connect Claude Code:
 ```bash
-claude mcp add embed-agent -e ANTHROPIC_AUTH_TOKEN=<your-key> -- node apps/mcp-server/dist/main.js
+pnpm desktop:setup
+claude mcp get embed-agent
 ```
 
 10 tools available: `list_targets`, `get_target_capabilities`, `validate_artifact`, `get_run_status`, `watch_run`, `get_run_events`, `get_evidence`, `get_run_result`, `intervene_run`, `cancel_run`.
@@ -186,6 +200,10 @@ claude mcp add embed-agent -e ANTHROPIC_AUTH_TOKEN=<your-key> -- node apps/mcp-s
 node apps/http-server/dist/main.js
 # Listening on http://127.0.0.1:8787
 ```
+
+Built Web UI is also served from the same process:
+
+- [http://127.0.0.1:8787/#/start](http://127.0.0.1:8787/#/start)
 
 ```bash
 # Create a run

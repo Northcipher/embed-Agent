@@ -45,6 +45,8 @@ export interface ValidateRequest {
     sha256?: string;
   };
   target: string;
+  /** Language for AI-written user-facing replies. Technical identifiers stay unchanged. */
+  reply_language?: "zh" | "en";
   constraints?: {
     max_duration_sec?: number;
     allow_flash?: boolean;

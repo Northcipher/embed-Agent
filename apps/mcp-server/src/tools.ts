@@ -7,6 +7,7 @@ export const ValidateArtifactInput = z.object({
   artifact_path: z.string(),
   artifact_type: z.string(),
   expected: z.string(),
+  reply_language: z.enum(["zh", "en"]).optional(),
   success_criteria: z.array(z.string()).optional(),
   failure_criteria: z.array(z.string()).optional(),
   max_duration_sec: z.number().optional(),
@@ -84,6 +85,7 @@ export const TOOL_DEFINITIONS = [
         artifact_path: { type: "string", description: "Path to firmware/artifact file" },
         artifact_type: { type: "string", description: "Type: firmware, apk, binary, config, other" },
         expected: { type: "string", description: "What should happen (e.g. 'Device boots to login prompt')" },
+        reply_language: { type: "string", enum: ["zh", "en"], description: "Language for AI-written result summaries and suggested next steps" },
         success_criteria: { type: "array", items: { type: "string" }, description: "Explicit pass conditions" },
         failure_criteria: { type: "array", items: { type: "string" }, description: "Known failure signals to watch for" },
         max_duration_sec: { type: "number", description: "Max run duration in seconds" },
@@ -184,4 +186,3 @@ export const TOOL_DEFINITIONS = [
     },
   },
 ];
-

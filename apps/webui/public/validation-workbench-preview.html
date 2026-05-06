@@ -1,0 +1,937 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Embed Agent - 验证工作台预览</title>
+  <style>
+    :root {
+      --bg: #f7f7f4;
+      --surface: #ffffff;
+      --surface-2: #f0f0eb;
+      --surface-3: #e8e8df;
+      --ink: #151512;
+      --muted: #66665d;
+      --faint: #99998e;
+      --line: #dfdfd5;
+      --line-soft: #ecece4;
+      --green: #1f7a3d;
+      --amber: #a66b05;
+      --red: #bd382f;
+      --blue: #2458b8;
+      --cyan: #0f6f78;
+      --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input, textarea, select { font: inherit; }
+    button { cursor: pointer; }
+
+    .app {
+      height: 100vh;
+      display: grid;
+      grid-template-columns: 58px minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .rail {
+      border-right: 1px solid var(--line);
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px 0;
+      gap: 10px;
+    }
+
+    .mark {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      background: var(--surface-2);
+    }
+
+    .rail button {
+      width: 36px;
+      height: 34px;
+      border: 0;
+      background: transparent;
+      color: var(--faint);
+      font-family: var(--mono);
+      font-size: 13px;
+      border-radius: 4px;
+    }
+
+    .rail button.active {
+      background: var(--surface-2);
+      color: var(--ink);
+    }
+
+    .main {
+      min-width: 0;
+      height: 100vh;
+      overflow: auto;
+      padding: 22px 26px 28px;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: start;
+      margin-bottom: 16px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .sub {
+      margin-top: 3px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .health {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--muted);
+      padding: 4px 7px;
+      border-radius: 4px;
+      font-family: var(--mono);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 6px;
+      background: var(--faint);
+      display: inline-block;
+    }
+
+    .ok { color: var(--green); }
+    .warn { color: var(--amber); }
+    .bad { color: var(--red); }
+    .blue { color: var(--blue); }
+    .dot.ok { background: var(--green); }
+    .dot.warn { background: var(--amber); }
+    .dot.bad { background: var(--red); }
+    .dot.blue { background: var(--blue); }
+
+    .modebar {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-bottom: 16px;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .modebar button {
+      border: 0;
+      background: var(--surface);
+      padding: 12px 14px;
+      text-align: left;
+      border-right: 1px solid var(--line);
+      min-width: 0;
+    }
+
+    .modebar button:last-child { border-right: 0; }
+    .modebar button.active {
+      background: var(--ink);
+      color: var(--surface);
+    }
+
+    .mode-title {
+      display: block;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .mode-meta {
+      display: block;
+      margin-top: 3px;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: inherit;
+      opacity: .7;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .workbench {
+      display: grid;
+      grid-template-columns: minmax(330px, .92fr) minmax(360px, 1.08fr) minmax(340px, .96fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .panel {
+      min-width: 0;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .panel-head {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: #fbfbf9;
+    }
+
+    .panel-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: .06em;
+    }
+
+    .panel-body {
+      padding: 14px;
+    }
+
+    .field { margin-bottom: 14px; }
+    .field:last-child { margin-bottom: 0; }
+    .label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 5px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      color: var(--muted);
+    }
+
+    .hint {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--faint);
+      text-transform: none;
+      letter-spacing: 0;
+      font-weight: 500;
+    }
+
+    .input, textarea, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+      border-radius: 4px;
+      padding: 9px 10px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    textarea { min-height: 72px; resize: vertical; line-height: 1.45; }
+    .input:focus, textarea:focus, select:focus { border-color: #9c9c8d; box-shadow: 0 0 0 2px rgba(36, 88, 184, .09); }
+
+    .seg {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      background: var(--line);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .seg button {
+      border: 0;
+      background: var(--surface);
+      color: var(--muted);
+      padding: 8px 8px;
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .seg button.active {
+      background: var(--surface-2);
+      color: var(--ink);
+    }
+
+    .criteria {
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .criterion {
+      display: grid;
+      grid-template-columns: 16px minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line-soft);
+      font-size: 12px;
+    }
+
+    .criterion:last-child { border-bottom: 0; }
+    .criterion .num {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--faint);
+    }
+
+    .target-tools {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+
+    .filter {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--muted);
+      border-radius: 4px;
+      padding: 5px 8px;
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+
+    .filter.active {
+      background: var(--ink);
+      color: var(--surface);
+      border-color: var(--ink);
+    }
+
+    .target-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .target {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      border-radius: 4px;
+      padding: 10px;
+      text-align: left;
+      width: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+    }
+
+    .target.active {
+      border-color: #7f8f74;
+      box-shadow: inset 3px 0 0 #7f8f74;
+      background: #fbfcf8;
+    }
+
+    .target.busy { opacity: .86; }
+    .target.offline { opacity: .55; }
+
+    .target-name {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+
+    .target-desc {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+      margin-bottom: 7px;
+    }
+
+    .stack {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+
+    .mini {
+      border: 1px solid var(--line-soft);
+      background: var(--surface-2);
+      color: var(--muted);
+      border-radius: 3px;
+      padding: 2px 5px;
+      font-family: var(--mono);
+      font-size: 9px;
+    }
+
+    .target-side {
+      display: grid;
+      gap: 4px;
+      align-content: start;
+      justify-items: end;
+    }
+
+    .status-pill {
+      border-radius: 3px;
+      padding: 2px 7px;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      border: 1px solid transparent;
+    }
+
+    .status-pill.ready { color: var(--green); background: #eaf3ea; }
+    .status-pill.busy { color: var(--amber); background: #fbf0dc; }
+    .status-pill.offline { color: var(--faint); background: var(--surface-2); }
+
+    .readiness {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .readiness div {
+      padding: 10px 8px;
+      border-right: 1px solid var(--line);
+      background: #fbfbf9;
+    }
+
+    .readiness div:last-child { border-right: 0; }
+    .metric {
+      display: block;
+      font-family: var(--mono);
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .metric-label {
+      margin-top: 2px;
+      display: block;
+      font-family: var(--mono);
+      font-size: 9px;
+      color: var(--faint);
+    }
+
+    .run-options {
+      display: grid;
+      gap: 10px;
+    }
+
+    .option-block {
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 10px;
+      background: #fbfbf9;
+    }
+
+    .option-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .two {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 1px;
+      background: var(--line-soft);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .event {
+      background: var(--surface);
+      padding: 8px 10px;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+      font-size: 11px;
+    }
+
+    .event-code {
+      font-family: var(--mono);
+      color: var(--faint);
+      font-size: 10px;
+    }
+
+    .actions {
+      position: sticky;
+      bottom: 0;
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, .94);
+      backdrop-filter: blur(6px);
+      border-radius: 4px;
+      padding: 10px;
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .btn.primary {
+      background: var(--ink);
+      border-color: var(--ink);
+      color: var(--surface);
+    }
+
+    .btn.blue {
+      background: #1f4f9d;
+      border-color: #1f4f9d;
+      color: var(--surface);
+    }
+
+    .request {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      background: #191915;
+      color: #d7d7ca;
+      border-radius: 4px;
+      padding: 10px;
+      font-family: var(--mono);
+      font-size: 10px;
+      line-height: 1.55;
+      overflow: auto;
+      max-height: 210px;
+    }
+
+    .muted { color: var(--faint); }
+    .hide { display: none !important; }
+
+    @media (max-width: 1180px) {
+      .workbench { grid-template-columns: 1fr; }
+      .main { padding: 18px; }
+      .topbar { grid-template-columns: 1fr; }
+      .health { justify-content: flex-start; }
+      .actions { position: static; }
+    }
+
+    @media (max-width: 680px) {
+      .app { grid-template-columns: 1fr; }
+      .rail { display: none; }
+      .modebar, .readiness, .two { grid-template-columns: 1fr; }
+      .modebar button { border-right: 0; border-bottom: 1px solid var(--line); }
+      .modebar button:last-child { border-bottom: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="rail" aria-label="预览导航">
+      <div class="mark">EA</div>
+      <button class="active" title="工作台">WB</button>
+      <button title="运行">RN</button>
+      <button title="自动化">AU</button>
+      <button title="目标资源">TG</button>
+      <div style="flex:1"></div>
+      <button title="设置">ST</button>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div>
+          <h1>验证工作台</h1>
+          <div class="sub">一次定义验证意图，可立即执行，也可沉淀为自动化任务。</div>
+        </div>
+        <div class="health" aria-label="系统健康状态">
+          <span class="chip"><span class="dot ok"></span>http ok</span>
+          <span class="chip"><span class="dot ok"></span>llm ready</span>
+          <span class="chip"><span class="dot warn"></span>1 个目标忙碌</span>
+          <span class="chip"><span class="dot blue"></span>3 个自动化</span>
+        </div>
+      </div>
+
+      <div class="modebar" role="tablist" aria-label="执行模式">
+        <button class="active" data-mode="once" role="tab" aria-selected="true">
+          <span class="mode-title">立即验证</span>
+          <span class="mode-meta">从当前验证定义创建一次 Run</span>
+        </button>
+        <button data-mode="auto" role="tab" aria-selected="false">
+          <span class="mode-title">保存自动化</span>
+          <span class="mode-meta">创建带触发器和策略的 Task</span>
+        </button>
+        <button data-mode="both" role="tab" aria-selected="false">
+          <span class="mode-title">保存并立即验证</span>
+          <span class="mode-meta">先创建 Task，再启动首次 Run</span>
+        </button>
+      </div>
+
+      <section class="workbench">
+        <section class="panel" aria-labelledby="definition-title">
+          <div class="panel-head">
+            <div class="panel-title" id="definition-title">1. 验证定义</div>
+            <span class="chip"><span class="dot blue"></span>spec draft</span>
+          </div>
+          <div class="panel-body">
+            <div class="field">
+              <div class="label">变更内容 <span class="hint">给 Planner 的上下文</span></div>
+              <input class="input" value="CI build #1842 产出的新 boot image" />
+            </div>
+
+            <div class="field">
+              <div class="label">期望结果</div>
+              <textarea>设备完成启动，网络拉起，shell 可响应，首个启动窗口内没有 kernel panic 或 fatal rule 命中。</textarea>
+            </div>
+
+            <div class="field">
+              <div class="label">制品来源</div>
+              <div class="seg source-seg">
+                <button class="active" data-source="path" type="button">固定路径</button>
+                <button data-source="latest" type="button">最新构建</button>
+                <button data-source="watch" type="button">监听目录</button>
+              </div>
+            </div>
+
+            <div class="field source-path">
+              <div class="label">制品路径</div>
+              <input class="input" value="/builds/s820/nightly/boot.img" />
+            </div>
+
+            <div class="field source-latest hide">
+              <div class="label">构建选择器</div>
+              <input class="input" value="ci://s820/nightly/latest-successful/boot.img" />
+            </div>
+
+            <div class="field source-watch hide">
+              <div class="label">监听目录</div>
+              <input class="input" value="/builds/s820/dropbox/*.img" />
+            </div>
+
+            <div class="field">
+              <div class="label">通过条件</div>
+              <div class="criteria">
+                <div class="criterion"><span class="num">01</span><span>ADB shell 在 120s 内响应</span><span class="mini ok">required</span></div>
+                <div class="criterion"><span class="num">02</span><span>boot markers 到达 user space</span><span class="mini ok">required</span></div>
+                <div class="criterion"><span class="num">03</span><span>网络接口拿到地址</span><span class="mini">observe</span></div>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="label">失败信号</div>
+              <div class="criteria">
+                <div class="criterion"><span class="num">F1</span><span>KERNEL PANIC 或 fatal rule 命中</span><span class="mini bad">stop</span></div>
+                <div class="criterion"><span class="num">F2</span><span>启动阶段静默超过 60s</span><span class="mini warn">observe</span></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="environment-title">
+          <div class="panel-head">
+            <div class="panel-title" id="environment-title">2. 目标资源</div>
+            <button class="filter active" type="button">单目标</button>
+          </div>
+          <div class="panel-body">
+            <div class="target-tools">
+              <button class="filter active" type="button">可用</button>
+              <button class="filter" type="button">可刷机</button>
+              <button class="filter" type="button">可执行 shell</button>
+              <button class="filter" type="button">有串口</button>
+              <button class="filter" type="button">资源池: s820</button>
+            </div>
+
+            <div class="target-list" aria-label="目标资源选择器">
+              <button class="target active" type="button" data-target="board-01">
+                <span>
+                  <span class="target-name">board-01</span>
+                  <span class="target-desc">S820 开发板。18 分钟前通过基线验证，当前空闲，可直接锁定执行。</span>
+                  <span class="stack">
+                    <span class="mini ok">serial</span>
+                    <span class="mini ok">adb</span>
+                    <span class="mini">fastboot</span>
+                    <span class="mini">shell_exec</span>
+                    <span class="mini">no_flash</span>
+                  </span>
+                </span>
+                <span class="target-side">
+                  <span class="status-pill ready">空闲</span>
+                  <span class="mini ok">最匹配</span>
+                </span>
+              </button>
+
+              <button class="target busy" type="button" data-target="board-02">
+                <span>
+                  <span class="target-name">board-02</span>
+                  <span class="target-desc">正在执行 run-2184。自动化可按重叠策略排队或跳过。</span>
+                  <span class="stack">
+                    <span class="mini ok">serial</span>
+                    <span class="mini ok">adb</span>
+                    <span class="mini ok">fastboot</span>
+                    <span class="mini">flash</span>
+                  </span>
+                </span>
+                <span class="target-side">
+                  <span class="status-pill busy">忙碌</span>
+                  <span class="mini warn">run-2184</span>
+                </span>
+              </button>
+
+              <button class="target offline" type="button" data-target="board-03">
+                <span>
+                  <span class="target-name">board-03</span>
+                  <span class="target-desc">冷启动较慢，当前缺少 ADB 和串口心跳，不允许创建 Run。</span>
+                  <span class="stack">
+                    <span class="mini">serial off</span>
+                    <span class="mini">adb off</span>
+                    <span class="mini">fastboot off</span>
+                  </span>
+                </span>
+                <span class="target-side">
+                  <span class="status-pill offline">离线</span>
+                  <span class="mini">blocked</span>
+                </span>
+              </button>
+            </div>
+
+            <div class="readiness" aria-label="准入摘要">
+              <div><span class="metric ok">4/4</span><span class="metric-label">预检</span></div>
+              <div><span class="metric ok">3</span><span class="metric-label">可用能力</span></div>
+              <div><span class="metric warn">1</span><span class="metric-label">风险提示</span></div>
+              <div><span class="metric blue">92%</span><span class="metric-label">基线匹配</span></div>
+            </div>
+
+            <div class="timeline" style="margin-top:12px">
+              <div class="event"><span class="event-code">PF1</span><span>Host 上制品可读</span><span class="ok">ok</span></div>
+              <div class="event"><span class="event-code">PF2</span><span>ADB online，shell_exec 被策略允许</span><span class="ok">ok</span></div>
+              <div class="event"><span class="event-code">PF3</span><span>本次验证禁用 flash</span><span class="warn">safe</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="execution-title">
+          <div class="panel-head">
+            <div class="panel-title" id="execution-title">3. 执行方式</div>
+            <span class="chip mode-chip"><span class="dot ok"></span>立即验证</span>
+          </div>
+          <div class="panel-body">
+            <div class="run-options once-options">
+              <div class="option-block">
+                <div class="option-title">Run 准入 <span class="ok">ready</span></div>
+                <div class="timeline">
+                  <div class="event"><span class="event-code">UI</span><span>发送 create_run Command，不持有运行状态</span><span class="muted">interface</span></div>
+                  <div class="event"><span class="event-code">RM</span><span>组装 Context，调用 Planner，创建 Run</span><span class="muted">runtime</span></div>
+                  <div class="event"><span class="event-code">DH</span><span>订阅 Signal，必要时允许人工干预</span><span class="muted">live</span></div>
+                </div>
+              </div>
+
+              <div class="option-block">
+                <div class="option-title">运行中人工干预 <span class="muted">通过 Command 进入 Runtime</span></div>
+                <div class="stack">
+                  <span class="mini">pause</span>
+                  <span class="mini">add_instruction</span>
+                  <span class="mini">ignore_rule</span>
+                  <span class="mini">override_decision</span>
+                  <span class="mini">collect_more</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="run-options automation-options hide">
+              <div class="option-block">
+                <div class="option-title">触发器</div>
+                <div class="seg trigger-seg">
+                  <button class="active" type="button">Cron</button>
+                  <button type="button">文件事件</button>
+                  <button type="button">持续运行</button>
+                </div>
+                <div class="two" style="margin-top:10px">
+                  <div>
+                    <div class="label">调度</div>
+                    <input class="input" value="工作日 02:30" />
+                  </div>
+                  <div>
+                    <div class="label">时区</div>
+                    <input class="input" value="Asia/Shanghai" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="option-block">
+                <div class="option-title">自动化策略</div>
+                <div class="two">
+                  <div>
+                    <div class="label">目标忙碌时</div>
+                    <select><option>跳过本次触发</option><option>排队等待目标</option><option>取消旧 Run</option></select>
+                  </div>
+                  <div>
+                    <div class="label">失败策略</div>
+                    <select><option>通知并保持启用</option><option>连续 3 次失败后暂停</option><option>进入 finalizing 前补采证据</option></select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="option-block">
+                <div class="option-title">Task 视图 <span class="blue">会进入 Dashboard</span></div>
+                <div class="timeline">
+                  <div class="event"><span class="event-code">Task</span><span>s820-nightly-boot-validation</span><span class="ok">enabled</span></div>
+                  <div class="event"><span class="event-code">Next</span><span>明天 02:30，目标忙碌时跳过</span><span class="muted">cron</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="request" aria-label="Command preview">{
+  "command": "create_run",
+  "validation_spec": {
+    "target": "board-01",
+    "artifact": { "source": "fixed_path", "path": "/builds/s820/nightly/boot.img" },
+    "expected": "boot ok, network ok, shell responds, no kernel panic",
+    "constraints": { "no_flash": true, "allow_shell_exec": true }
+  },
+  "run_method": "run_once"
+}</div>
+
+            <div class="actions">
+              <button class="btn">保存草稿</button>
+              <button class="btn primary action-main">立即验证</button>
+              <button class="btn blue action-secondary hide">保存并立即验证</button>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const modeButtons = Array.from(document.querySelectorAll(".modebar button"));
+    const modeChip = document.querySelector(".mode-chip");
+    const onceOptions = document.querySelector(".once-options");
+    const automationOptions = document.querySelector(".automation-options");
+    const actionMain = document.querySelector(".action-main");
+    const actionSecondary = document.querySelector(".action-secondary");
+    const request = document.querySelector(".request");
+
+    function setMode(mode) {
+      modeButtons.forEach((button) => {
+        const active = button.dataset.mode === mode;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      const automation = mode === "auto" || mode === "both";
+      onceOptions.classList.toggle("hide", automation);
+      automationOptions.classList.toggle("hide", !automation);
+      actionMain.textContent = mode === "once" ? "立即验证" : mode === "auto" ? "保存自动化" : "保存并立即验证";
+      actionSecondary.classList.add("hide");
+      modeChip.innerHTML = mode === "once"
+        ? '<span class="dot ok"></span>立即验证'
+        : mode === "auto"
+          ? '<span class="dot blue"></span>自动化'
+          : '<span class="dot blue"></span>保存 + 验证';
+      const command = mode === "once" ? "create_run" : mode === "auto" ? "create_task" : "create_task_then_run";
+      request.textContent = JSON.stringify({
+        command,
+        validation_spec: {
+          target: document.querySelector(".target.active .target-name").textContent,
+          artifact: { source: activeSource(), path: activeArtifact() },
+          expected: "boot ok, network ok, shell responds, no kernel panic",
+          constraints: { no_flash: true, allow_shell_exec: true }
+        },
+        run_method: mode === "once" ? "run_once" : mode === "auto" ? "save_task" : "save_task_and_run",
+        trigger: automation ? { kind: "cron", schedule: "weekdays 02:30", timezone: "Asia/Shanghai" } : undefined,
+        policy: automation ? { overlap: "skip_if_target_busy", failure: "notify_and_keep_enabled" } : undefined
+      }, null, 2);
+    }
+
+    function activeSource() {
+      const active = document.querySelector(".source-seg button.active");
+      return active ? active.dataset.source : "path";
+    }
+
+    function activeArtifact() {
+      const source = activeSource();
+      if (source === "latest") return "ci://s820/nightly/latest-successful/boot.img";
+      if (source === "watch") return "/builds/s820/dropbox/*.img";
+      return "/builds/s820/nightly/boot.img";
+    }
+
+    modeButtons.forEach((button) => {
+      button.addEventListener("click", () => setMode(button.dataset.mode));
+    });
+
+    document.querySelectorAll(".source-seg button").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".source-seg button").forEach((b) => b.classList.remove("active"));
+        button.classList.add("active");
+        document.querySelector(".source-path").classList.toggle("hide", button.dataset.source !== "path");
+        document.querySelector(".source-latest").classList.toggle("hide", button.dataset.source !== "latest");
+        document.querySelector(".source-watch").classList.toggle("hide", button.dataset.source !== "watch");
+        const activeMode = document.querySelector(".modebar button.active").dataset.mode;
+        setMode(activeMode);
+      });
+    });
+
+    document.querySelectorAll(".target").forEach((target) => {
+      target.addEventListener("click", () => {
+        document.querySelectorAll(".target").forEach((item) => item.classList.remove("active"));
+        target.classList.add("active");
+        const activeMode = document.querySelector(".modebar button.active").dataset.mode;
+        setMode(activeMode);
+      });
+    });
+
+    document.querySelectorAll(".filter").forEach((filter) => {
+      filter.addEventListener("click", () => filter.classList.toggle("active"));
+    });
+
+    document.querySelectorAll(".trigger-seg button").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".trigger-seg button").forEach((b) => b.classList.remove("active"));
+        button.classList.add("active");
+      });
+    });
+  </script>
+</body>
+</html>

@@ -17,7 +17,7 @@ export interface BootstrapResult {
  * Production bootstrap: loads config, creates all services, wires them together.
  * Uses AnthropicProvider if ANTHROPIC_API_KEY is set, otherwise MockProvider for dev.
  */
-export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapResult> {
+export async function bootstrap(configRoot = process.env["EMBED_AGENT_DATA"] ?? ".embed-agent"): Promise<BootstrapResult> {
   const logger = new Logger({ module: "bootstrap", pretty: true });
 
   // 1. Load configs with real Zod schema validation
@@ -78,7 +78,13 @@ export async function bootstrap(configRoot = ".embed-agent"): Promise<BootstrapR
   const providerType = (providerCfg?.type as string) ?? "mock";
   const providerApiKeyEnv = providerCfg?.api_key_env as string | undefined;
   const providerBaseUrl = providerCfg?.base_url as string | undefined;
-  const providerApiKey = providerApiKeyEnv ? (process.env[providerApiKeyEnv] ?? "") : "";
+  let providerApiKey = "";
+  if (providerApiKeyEnv) {
+    providerApiKey = process.env[providerApiKeyEnv] ?? "";
+  }
+  if (!providerApiKey && providerCfg?.api_key) {
+    providerApiKey = providerCfg.api_key as string;
+  }
 
   let llmProvider: LLMProvider;
   if (providerType === "mock") {

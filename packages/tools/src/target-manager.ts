@@ -10,6 +10,12 @@ interface TargetStore {
 
 interface PreflightCheck { check: string; passed: boolean; error?: string; }
 
+function splitImagePartition(value: string): [string | undefined, string | undefined] {
+  const separator = value.lastIndexOf(":");
+  if (separator <= 0 || separator === value.length - 1) return [undefined, undefined];
+  return [value.slice(0, separator), value.slice(separator + 1)];
+}
+
 export class TargetManager {
   constructor(private cm: ConnectionManager, private store: TargetStore) {}
 
@@ -51,9 +57,7 @@ export class TargetManager {
       const fbConn = this.cm.get(t, "fastboot");
       if (fbConn?.flash) {
         try {
-          const parts = t.recovery.stable_artifact.split(":");
-          const image = parts[0];
-          const partition = parts[1];
+          const [image, partition] = splitImagePartition(t.recovery.stable_artifact);
           if (image && partition) {
             await fbConn.flash(image, partition);
           } else {

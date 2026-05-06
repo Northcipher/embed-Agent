@@ -29,6 +29,15 @@ const DEFAULT_RETRY: RetryConfig = {
   retryable: ["timeout", "connection_lost", "device_not_ready", "transient"],
 };
 
+const STREAM_POLL_MS = 250;
+
+function splitCommandPair(command: string | undefined): [string | undefined, string | undefined] {
+  if (!command) return [undefined, undefined];
+  const separator = command.lastIndexOf(":");
+  if (separator <= 0 || separator === command.length - 1) return [undefined, undefined];
+  return [command.slice(0, separator), command.slice(separator + 1)];
+}
+
 export class StepRetryBreaker {
   private consecutive: { type: string; count: number } | null = null;
 
@@ -232,41 +241,59 @@ export class StepExecutor {
           const sampleInterval = step.observe?.sampling_commands?.length
             ? (step.observe.interval ?? 60) * 1000
             : 0;
+          const iterator = conn.stream(timeout)[Symbol.asyncIterator]();
+          let pendingNext: Promise<IteratorResult<string>> | null = null;
 
-          for await (const line of conn.stream(timeout)) {
-            if (this._interrupted) { await pipe?.flush(); break; }
-            if (pipe) await pipe.feedStream(line + "\n");
-            // Dynamic timeout: extendTimeout() can increase _timeoutExtension during streaming
-            const effectiveTimeout = (step.timeout_sec + this._timeoutExtension) * 1000;
-            if (Date.now() - streamStart > effectiveTimeout) {
-              await pipe?.flush();
-              return { success: false, error: "stream timeout", failureType: "timeout" };
-            }
-            // Active sampling: periodically run observe.sampling_commands
-            if (sampleInterval > 0 && Date.now() - lastSample >= sampleInterval) {
-              lastSample = Date.now();
-              for (const cmd of (step.observe?.sampling_commands ?? [])) {
-                if (conn.exec && (this.cm.isShellCommandAllowed?.(cmd) ?? true)) {
-                  const r = await conn.exec(cmd, 10);
-                  if (pipe) await pipe.feedExec(r.stdout, r.stderr, r.exit_code);
-                  await this.eb.emit({
-                    type: "observation", run_id: this.runId, source: "step_executor",
-                    summary: `Sampling: ${cmd} (exit ${r.exit_code})`,
-                    payload: { sampling_command: cmd, exit_code: r.exit_code },
-                  });
+          try {
+            while (!this._interrupted) {
+              // A stream step is an observation window. Reaching the time budget
+              // means we collected enough evidence; it is not a device failure.
+              const effectiveTimeout = (step.timeout_sec + this._timeoutExtension) * 1000;
+              if (Date.now() - streamStart > effectiveTimeout) break;
+
+              pendingNext ??= iterator.next();
+              const remaining = Math.max(1, effectiveTimeout - (Date.now() - streamStart));
+              const next = await this.waitForStreamLine(pendingNext, Math.min(remaining, STREAM_POLL_MS));
+              if (next === "timeout") continue;
+              pendingNext = null;
+              if (next.done) break;
+
+              if (pipe) await pipe.feedStream(next.value + "\n");
+              // Active sampling: periodically run observe.sampling_commands
+              if (sampleInterval > 0 && Date.now() - lastSample >= sampleInterval) {
+                lastSample = Date.now();
+                for (const cmd of (step.observe?.sampling_commands ?? [])) {
+                  if (conn.exec && (this.cm.isShellCommandAllowed?.(cmd) ?? true)) {
+                    const r = await conn.exec(cmd, 10);
+                    if (pipe) await pipe.feedExec(r.stdout, r.stderr, r.exit_code);
+                    await this.eb.emit({
+                      type: "observation", run_id: this.runId, source: "step_executor",
+                      summary: `Sampling: ${cmd} (exit ${r.exit_code})`,
+                      payload: { sampling_command: cmd, exit_code: r.exit_code },
+                    });
+                  }
                 }
               }
             }
+          } finally {
+            if (pendingNext) {
+              pendingNext.catch(() => {});
+              try { await conn.disconnect(); } catch { /* executeStep finalizer also disconnects */ }
+              const returnResult = iterator.return?.();
+              if (returnResult) returnResult.catch(() => {});
+            }
+            await pipe?.flush();
+            pipe?.disableSilence?.();
           }
-          await pipe?.flush();
-          pipe?.disableSilence?.();
+          if (this._interrupted) return { success: false, error: "interrupted" };
           return { success: true };
         }
 
         case "push": {
           if (!conn.push) return { success: false, error: "push not supported", failureType: "unsupported" };
-          const src = (step as any).src ?? (step.command ?? ":").split(":")[0];
-          const dst = (step as any).dst ?? (step.command ?? ":").split(":")[1];
+          const [commandSrc, commandDst] = splitCommandPair(step.command);
+          const src = step.src ?? commandSrc;
+          const dst = step.dst ?? commandDst;
           if (!src || !dst) return { success: false, error: "push requires src:dst (or step.src + step.dst)", failureType: "invalid_args" };
           await conn.push(src, dst, timeout);
           return { success: true };
@@ -274,10 +301,11 @@ export class StepExecutor {
 
         case "flash": {
           if (!conn.flash) return { success: false, error: "flash not supported", failureType: "unsupported" };
-          const image = (step as any).image ?? (step.command ?? ":").split(":")[0];
-          const partition = (step as any).partition ?? (step.command ?? ":").split(":")[1];
+          const [commandImage, commandPartition] = splitCommandPair(step.command);
+          const image = step.image ?? commandImage;
+          const partition = step.partition ?? commandPartition;
           if (!image || !partition) return { success: false, error: "flash requires image:partition (or step.image + step.partition)", failureType: "invalid_args" };
-          await conn.flash(image!, partition!);
+          await conn.flash(image, partition);
           return { success: true };
         }
 
@@ -302,6 +330,23 @@ export class StepExecutor {
         return { success: false, error: msg, failureType: "connection_lost" };
       }
       return { success: false, error: msg, failureType: "unknown" };
+    }
+  }
+
+  private async waitForStreamLine(
+    pendingNext: Promise<IteratorResult<string>>,
+    timeoutMs: number,
+  ): Promise<IteratorResult<string> | "timeout"> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        pendingNext,
+        new Promise<"timeout">(resolve => {
+          timer = setTimeout(() => resolve("timeout"), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 }

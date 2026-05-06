@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs/promises";
+import path from "node:path";
 
 const execFileP = promisify(execFile);
 
@@ -44,6 +45,26 @@ const ALLOWED_DECISIONS: Record<HookPoint, string[]> = {
 /** Check if a HookPoint can return a decision (non-empty allowed list). */
 function canReturnDecision(point: HookPoint): boolean {
   return (ALLOWED_DECISIONS[point] ?? []).length > 0;
+}
+
+function hasParentTraversal(scriptPath: string): boolean {
+  return scriptPath.split(/[\\/]+/).includes("..");
+}
+
+export function isLocalHookScriptPath(scriptPath: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (scriptPath.trim() !== scriptPath || scriptPath.length === 0) return false;
+  if (/[;&|`$(){}]/.test(scriptPath)) return false;
+  if (hasParentTraversal(scriptPath)) return false;
+
+  if (platform === "win32") {
+    return scriptPath.startsWith(`.${path.win32.sep}`)
+      || scriptPath.startsWith("./")
+      || /^[A-Za-z]:[\\/]/.test(scriptPath)
+      || /^\\\\[^\\]+\\[^\\]+/.test(scriptPath);
+  }
+
+  if (scriptPath.includes("\\")) return false;
+  return scriptPath.startsWith("./") || scriptPath.startsWith("/");
 }
 
 interface AuditEmitter {
@@ -154,12 +175,8 @@ export class HookManager {
    * Template variables ({{var}}) in the command are handled by runHook, not rejected here.
    */
   private async validateCommand(scriptPath: string): Promise<void> {
-    if (!/^\.?\/|^\//.test(scriptPath)) {
+    if (!isLocalHookScriptPath(scriptPath)) {
       throw new Error(`Hook script must be a file path, got: ${scriptPath}`);
-    }
-    // Reject shell metacharacters in the script path itself
-    if (/[;&|`$(){}\\]/.test(scriptPath)) {
-      throw new Error(`Hook script path contains shell metacharacters: ${scriptPath}`);
     }
     await fs.access(scriptPath, fs.constants.R_OK);
   }

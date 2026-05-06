@@ -51,6 +51,7 @@ export const LLMConfigSchema = z.object({
   providers: z.record(z.string(), z.object({
     type: z.enum(["anthropic", "openai", "openai-compatible", "mock", "deepseek", "deepseek-openai"]),
     api_key_env: z.string(),
+    api_key: z.string().optional(),
     base_url: z.string().optional(),
     models: z.object({
       planner: z.string(),

@@ -21,6 +21,10 @@ const DEFAULT_POLICY: SecurityPolicy = {
   ],
 };
 
+function normalizeForBlockedPathCheck(value: string): string {
+  return process.platform === "win32" ? value.toLowerCase() : value;
+}
+
 export class LocalConnection implements Connection {
   private policy: SecurityPolicy;
 
@@ -57,7 +61,9 @@ export class LocalConnection implements Connection {
     // Security: resolve absolute path before checking against blocked paths
     const resolved = path.resolve(dst);
     for (const blocked of this.policy.blocked_push_paths) {
-      if (resolved === blocked || resolved.startsWith(blocked + path.sep)) {
+      const normalizedResolved = normalizeForBlockedPathCheck(resolved);
+      const normalizedBlocked = normalizeForBlockedPathCheck(path.resolve(blocked));
+      if (normalizedResolved === normalizedBlocked || normalizedResolved.startsWith(normalizedBlocked + path.sep)) {
         throw new Error(`Push blocked: destination "${dst}" (resolved: "${resolved}") matches blocked path "${blocked}"`);
       }
     }

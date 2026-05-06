@@ -7,7 +7,7 @@
  */
 import type { ToolSet } from "ai";
 import type { Step, Plan } from "@embed-agent/contracts";
-import { Agent, type AgentConfig } from "./agent.js";
+import { Agent, type AgentConfig, type AgentFallbackInput } from "./agent.js";
 import type { LLMCallManager } from "./llm.js";
 import { submitPlanTool, type SubmitPlanInput } from "./output-tools.js";
 
@@ -33,6 +33,66 @@ export const FALLBACK_PLAN: Plan = {
 };
 
 function generateId(): string { return `plan-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`; }
+
+function contextHas(formattedContext: string, pattern: RegExp): boolean {
+  return pattern.test(formattedContext);
+}
+
+function maxDurationFromContext(formattedContext: string): number | undefined {
+  const match = formattedContext.match(/max_duration_sec:\s*(\d+)s?/i);
+  if (!match?.[1]) return undefined;
+  const value = Number.parseInt(match[1], 10);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function serialFallbackPlan(input: AgentFallbackInput): Plan {
+  const maxDuration = maxDurationFromContext(input.formattedContext);
+  const streamTimeout = Math.max(10, Math.min(maxDuration ?? 60, 60));
+  return {
+    plan_id: generateId(),
+    estimated_duration_sec: streamTimeout,
+    steps: [
+      {
+        id: "fb_serial_stream",
+        capability: "serial_output",
+        action: "stream",
+        timeout_sec: streamTimeout,
+        on_failure: "stop",
+      },
+    ],
+    evidence_policy: {
+      always: ["serial:full", "events"],
+      on_failure: ["serial:last-window", "events"],
+    },
+    success_criteria: [
+      "serial port opens successfully",
+      "serial stream is readable or the run reaches the requested observation timeout without transport errors",
+    ],
+    failure_signals: [
+      "serial port cannot be opened",
+      "permission denied",
+      "device disconnected",
+      "kernel panic",
+      "fatal error",
+    ],
+  };
+}
+
+function fallbackPlanForContext(input: AgentFallbackInput): PlanResult {
+  const ctx = input.formattedContext;
+  const hasSerial = contextHas(ctx, /serial\s*:\s*\[object Object\]|serial\s*:/i);
+  const hasAdb = contextHas(ctx, /adb\s*:\s*\[object Object\]|adb\s*:/i);
+  const hasFastboot = contextHas(ctx, /fastboot\s*:\s*\[object Object\]|fastboot\s*:/i);
+  const forbidsFlash = contextHas(ctx, /no_flash:\s*true|allow_flash:\s*false/i);
+  const forbidsShell = contextHas(ctx, /allow_shell_exec:\s*false/i);
+  const serialTask = contextHas(ctx, /serial|串口|usbmodem|uart/i);
+
+  if (hasSerial && (serialTask || (forbidsFlash && forbidsShell) || (!hasAdb && !hasFastboot))) {
+    return { status: "planned", plan: serialFallbackPlan(input) };
+  }
+
+  return { status: "planned", plan: { ...FALLBACK_PLAN, plan_id: generateId() } };
+}
 
 interface PlanEmitter {
   emit(e: Record<string, unknown>): Promise<void>;
@@ -131,7 +191,7 @@ export class Planner {
   constructor(llm: LLMCallManager, eb?: PlanEmitter, tools?: ToolSet, stepCount = 8) {
     const config: AgentConfig<PlanResult> = {
       parse: parsePlan,
-      fallback: () => ({ status: "planned", plan: { ...FALLBACK_PLAN, plan_id: generateId() } }),
+      fallback: (_reason: string, input: AgentFallbackInput) => fallbackPlanForContext(input),
       outputTool: {
         name: "submitPlan",
         schema: submitPlanTool.inputSchema,

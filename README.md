@@ -4,6 +4,12 @@
 
 刷镜像 → 看串口 → 发现异常 → 自动判断 → 收集证据 → 输出结论。全程不需要人盯。
 
+## 仓库状态
+
+- GitHub CI：`pnpm typecheck` + `pnpm test`
+- 默认不提交本地运行数据：`.embed-agent/`、`.env*`、`dist/`、`node_modules/`
+- 没有真实设备和 API key 也可以先跑基础验证
+
 ## 为什么存在
 
 传统嵌入式设备验证：
@@ -48,10 +54,51 @@ Embed Agent 把这个流程自动化了：
 ```bash
 pnpm install
 pnpm build
-pnpm check    # typecheck + 143 tests
+pnpm check
 ```
 
+### 开箱即用
+
+第一次拿到仓库，直接用这个入口最快：
+
+- macOS: 双击 [Open Embed Agent.command](/Users/luozx/work/embed-Agent/Open%20Embed%20Agent.command)
+- Windows: 双击 [Open Embed Agent.bat](/Users/luozx/work/embed-Agent/Open%20Embed%20Agent.bat)
+
+它会自动完成：
+
+1. 安装依赖
+2. 构建 CLI / MCP / HTTP Server / Web UI
+3. 生成 `.embed-agent/` 默认配置
+4. 更新项目级 `.mcp.json`
+5. 拉起本地服务并打开浏览器
+
+默认地址是 [http://127.0.0.1:8787/#/start](http://127.0.0.1:8787/#/start)。
+
+命令行等价入口：
+
+```bash
+pnpm desktop:open
+```
+
+只做初始化，不启动浏览器：
+
+```bash
+pnpm desktop:setup
+```
+
+第一次把仓库拉到 GitHub 或本地新环境时，先跑这个：
+
+```bash
+pnpm install
+pnpm typecheck
+pnpm test
+```
+
+这一步不需要真实设备，也不需要 LLM API key。
+
 ### 配置
+
+本地配置文件和运行数据都放在 `.embed-agent/`，这个目录已经被 `.gitignore` 忽略，不应该提交到 GitHub。
 
 **llm.yml**（必需）：
 ```yaml
@@ -118,6 +165,16 @@ node apps/tui/dist/main.js
 node apps/mcp-server/dist/main.js
 ```
 
+### Web UI
+
+```bash
+pnpm --filter @embed-agent/webui dev
+```
+
+开发模式地址通常是 [http://127.0.0.1:5173](http://127.0.0.1:5173)；如果端口被占用，Vite 会自动换一个端口。
+
+构建后的正式 Web UI 由 HTTP server 直接托管，地址是 [http://127.0.0.1:8787/#/start](http://127.0.0.1:8787/#/start)。
+
 ### CLI 命令
 
 ```
@@ -180,3 +237,37 @@ apps（CLI/MCP Server/TUI）+ notify（Slack/Email）+ views（只读投影）
 | `docs/01-foundation/` | 架构设计、需求、设计洞察 |
 | `docs/02-design/` | 运行时、工具、Agent、Store、观察、Hook、断路器详细设计 |
 | `docs/04-planning/` | 接口规范、编码标准、功能清单、测试计划 |
+
+## GitHub 集成
+
+适合先放到 GitHub 的形态是：
+
+- 主仓库保存源码、文档、测试、GitHub Actions
+- 每个开发者本地维护自己的 `.embed-agent/llm.yml`、`.embed-agent/system.yml`、`.embed-agent/targets.yml`
+- 真实设备、串口、ADB、Fastboot、API key 不进入仓库
+- CI 只跑静态检查和单元测试，不连真实设备
+
+### Claude Code / MCP
+
+项目根目录的 `.mcp.json` 会注册 `embed-agent` 这个 MCP server。`pnpm desktop:setup` 或双击启动器会自动把下面这些参数写进去：
+
+- `apps/mcp-server/dist/main.js`
+- `EMBED_AGENT_DATA=<repo>/.embed-agent`
+- `EMBED_AGENT_SERVER_URL=http://127.0.0.1:8787`
+- `EMBED_AGENT_WEB_DIST=<repo>/apps/webui/dist`
+
+如果当前机器已安装 `claude` CLI，setup 会再执行一次 `claude mcp get embed-agent` 做连通性确认。
+
+### CLI
+
+仓库根目录附带了本地包装脚本，方便直接使用：
+
+- macOS / Linux: [embedagent](/Users/luozx/work/embed-Agent/embedagent)
+- Windows: [embedagent.cmd](/Users/luozx/work/embed-Agent/embedagent.cmd)
+
+例如：
+
+```bash
+./embedagent targets
+./embedagent validate --artifact /tmp/test.img --type firmware --target demo --expected "device boots"
+```

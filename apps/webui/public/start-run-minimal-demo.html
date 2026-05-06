@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>新建验证 Demo</title>
+  <style>
+    :root {
+      --bg: #fafaf8;
+      --panel: #ffffff;
+      --inset: #f3f3ef;
+      --active: #e9ece5;
+      --fg: #171717;
+      --muted: #6f6f68;
+      --soft: #9a9a92;
+      --line: #e5e5df;
+      --line-soft: #f0f0ea;
+      --green: #1a7a3a;
+      --amber: #b87a0a;
+      --blue: #1a54c0;
+      --red: #c4342b;
+      --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, textarea, input { font: inherit; }
+    button { cursor: pointer; }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+    }
+
+    .rail {
+      border-right: 1px solid var(--line);
+      background: var(--panel);
+      padding: 16px 8px;
+      display: grid;
+      align-content: start;
+      gap: 10px;
+    }
+
+    .logo {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 12px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      margin-bottom: 10px;
+    }
+
+    .nav-dot {
+      width: 34px;
+      height: 34px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--soft);
+      font-family: var(--mono);
+      font-size: 15px;
+    }
+
+    .nav-dot.active {
+      background: var(--active);
+      color: var(--fg);
+    }
+
+    main {
+      padding: 28px clamp(18px, 4vw, 56px);
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 30px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+      letter-spacing: 0;
+      font-weight: 650;
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .lang, .ghost {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--muted);
+      border-radius: 4px;
+      padding: 7px 10px;
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+
+    .workspace {
+      max-width: 1040px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 290px;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .primary {
+      display: grid;
+      gap: 14px;
+    }
+
+    .prompt-box {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .prompt-head {
+      min-height: 42px;
+      padding: 11px 13px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+
+    .eyebrow {
+      color: var(--muted);
+      font-size: 11px;
+      font-family: var(--mono);
+      font-weight: 600;
+    }
+
+    .example {
+      border: 0;
+      background: transparent;
+      color: var(--blue);
+      font-family: var(--mono);
+      font-size: 11px;
+      padding: 0;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 132px;
+      resize: vertical;
+      border: 0;
+      outline: 0;
+      padding: 16px 16px 14px;
+      color: var(--fg);
+      background: var(--panel);
+      line-height: 1.52;
+      font-size: 16px;
+    }
+
+    textarea::placeholder { color: #b0b0a8; }
+
+    .under-prompt {
+      border-top: 1px solid var(--line-soft);
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      background: #fcfcfa;
+    }
+
+    .mini-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 25px;
+      padding: 4px 8px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--inset);
+      color: var(--muted);
+      font-size: 11px;
+      font-family: var(--mono);
+      white-space: nowrap;
+    }
+
+    .pill.ok { color: var(--green); }
+    .pill.warn { color: var(--amber); }
+    .pill.blue { color: var(--blue); }
+
+    .change {
+      border: 0;
+      background: transparent;
+      color: var(--blue);
+      font-family: var(--mono);
+      font-size: 11px;
+      padding: 4px 2px;
+    }
+
+    .choice-panel {
+      display: none;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      gap: 12px;
+    }
+
+    .choice-panel.open { display: grid; }
+
+    .choice-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      overflow: hidden;
+      background: var(--line);
+      gap: 1px;
+    }
+
+    .choice {
+      border: 0;
+      background: var(--panel);
+      color: var(--muted);
+      padding: 11px 8px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .choice.active {
+      background: var(--fg);
+      color: var(--panel);
+    }
+
+    .device-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .device {
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--panel);
+      padding: 10px;
+      text-align: left;
+    }
+
+    .device.active { border-color: #7f8f74; box-shadow: inset 3px 0 0 #7f8f74; }
+    .device.busy { opacity: .72; }
+
+    .device b {
+      display: block;
+      font-family: var(--mono);
+      font-size: 12px;
+      margin-bottom: 5px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .device span {
+      color: var(--soft);
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+
+    .replace-path {
+      display: none;
+      grid-template-columns: 110px minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+    }
+
+    .replace-path.open { display: grid; }
+
+    .replace-path label {
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--panel);
+      padding: 9px 10px;
+      outline: 0;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--fg);
+    }
+
+    .advanced {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .advanced summary {
+      list-style: none;
+      padding: 12px 13px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+      font-family: var(--mono);
+    }
+
+    .advanced summary::-webkit-details-marker { display: none; }
+
+    .advanced-body {
+      border-top: 1px solid var(--line-soft);
+      padding: 12px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .field {
+      display: grid;
+      gap: 5px;
+    }
+
+    .field label {
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+
+    .field textarea {
+      min-height: 72px;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      font-size: 12px;
+      padding: 9px 10px;
+      font-family: var(--sans);
+    }
+
+    .summary {
+      position: sticky;
+      top: 22px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .summary-head {
+      padding: 12px 13px;
+      border-bottom: 1px solid var(--line-soft);
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .ready {
+      color: var(--green);
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .summary-body {
+      padding: 12px 13px;
+      display: grid;
+      gap: 9px;
+    }
+
+    .summary-line {
+      display: grid;
+      grid-template-columns: 68px minmax(0, 1fr);
+      gap: 10px;
+      align-items: baseline;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .summary-line span:first-child {
+      color: var(--soft);
+      font-family: var(--mono);
+      font-size: 10px;
+    }
+
+    .summary-line span:last-child {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+    }
+
+    .actions {
+      padding: 12px;
+      border-top: 1px solid var(--line-soft);
+      display: grid;
+      gap: 8px;
+    }
+
+    .primary-btn {
+      width: 100%;
+      border: 0;
+      border-radius: 4px;
+      background: var(--fg);
+      color: var(--panel);
+      padding: 11px 12px;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .secondary-btn {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--panel);
+      color: var(--muted);
+      padding: 10px 12px;
+      font-weight: 650;
+      font-size: 12px;
+    }
+
+    .automation-panel {
+      display: none;
+      border-top: 1px solid var(--line-soft);
+      padding: 12px;
+      background: #fcfcfa;
+    }
+
+    .automation-panel.open { display: grid; gap: 9px; }
+
+    .trigger-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      border: 1px solid var(--line);
+      background: var(--line);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .trigger-row button {
+      border: 0;
+      background: var(--panel);
+      padding: 8px 5px;
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+    }
+
+    .trigger-row button.active {
+      color: var(--fg);
+      background: var(--active);
+      font-weight: 700;
+    }
+
+    .toast {
+      display: none;
+      margin-top: 10px;
+      border: 1px solid #cfe3d2;
+      background: #edf7ee;
+      color: var(--green);
+      border-radius: 4px;
+      padding: 9px 10px;
+      font-family: var(--mono);
+      font-size: 11px;
+    }
+
+    .toast.show { display: block; }
+
+    @media (max-width: 920px) {
+      .shell { grid-template-columns: 1fr; }
+      .rail { display: none; }
+      main { padding: 20px 14px; }
+      .workspace { grid-template-columns: 1fr; }
+      .summary { position: static; }
+      .choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .device-row { grid-template-columns: 1fr; }
+      .advanced-body { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail" aria-label="Navigation">
+      <div class="logo">EA</div>
+      <button class="nav-dot">◎</button>
+      <button class="nav-dot active">⊕</button>
+      <button class="nav-dot">◫</button>
+      <button class="nav-dot">⚙</button>
+    </aside>
+
+    <main>
+      <div class="topbar">
+        <h1>新建验证</h1>
+        <div class="top-actions">
+          <button class="ghost" type="button">从历史复用</button>
+          <button class="lang" type="button">EN</button>
+        </div>
+      </div>
+
+      <div class="workspace">
+        <section class="primary" aria-label="Create validation">
+          <div class="prompt-box">
+            <div class="prompt-head">
+              <div class="eyebrow">验证什么</div>
+              <button class="example" id="exampleBtn" type="button">填一个例子</button>
+            </div>
+            <textarea id="intent" spellcheck="false">刷 /builds/s820/nightly/boot.img 到 s820-01，确认 120 秒内能启动并进入 adb，没有 kernel panic</textarea>
+            <div class="under-prompt">
+              <div class="mini-line" aria-label="inferred summary">
+                <span class="pill ok" id="devicePill">s820-01 · 空闲</span>
+                <span class="pill blue" id="flowPill">刷机验证</span>
+                <span class="pill" id="typePill">固件/镜像</span>
+                <span class="pill" id="timePill">约 3 分钟</span>
+              </div>
+              <button class="change" id="changeBtn" type="button">修改判断</button>
+            </div>
+          </div>
+
+          <div class="choice-panel" id="choicePanel" aria-label="Edit inferred settings">
+            <div class="choice-grid" id="flowChoices">
+              <button class="choice" type="button" data-flow="observe">只观察</button>
+              <button class="choice active" type="button" data-flow="flash">刷机</button>
+              <button class="choice" type="button" data-flow="replace">推送替换</button>
+              <button class="choice" type="button" data-flow="install">安装</button>
+            </div>
+
+            <div class="replace-path" id="replacePathRow">
+              <label for="replacePath">设备路径</label>
+              <input id="replacePath" value="/data/local/tmp/boot.img" />
+            </div>
+
+            <div class="device-row" id="devices">
+              <button class="device active" type="button" data-device="s820-01" data-state="空闲" data-links="ADB / 串口">
+                <b>s820-01</b>
+                <span>空闲 · ADB / 串口</span>
+              </button>
+              <button class="device" type="button" data-device="rk3588-lab" data-state="空闲" data-links="串口">
+                <b>rk3588-lab</b>
+                <span>空闲 · 串口</span>
+              </button>
+              <button class="device busy" type="button" data-device="s820-02" data-state="忙碌" data-links="ADB">
+                <b>s820-02</b>
+                <span>忙碌 · ADB</span>
+              </button>
+            </div>
+          </div>
+
+          <details class="advanced">
+            <summary>
+              <span>更多设置</span>
+              <span>条件 / 语言 / 超时</span>
+            </summary>
+            <div class="advanced-body">
+              <div class="field">
+                <label for="pass">通过条件</label>
+                <textarea id="pass">ADB shell 可响应
+boot markers 到达 user space</textarea>
+              </div>
+              <div class="field">
+                <label for="fail">失败条件</label>
+                <textarea id="fail">KERNEL PANIC
+60 秒无新启动日志</textarea>
+              </div>
+              <div class="field">
+                <label for="timeout">最长运行</label>
+                <input id="timeout" value="180 秒" />
+              </div>
+              <div class="field">
+                <label for="language">结果语言</label>
+                <input id="language" value="中文" />
+              </div>
+            </div>
+          </details>
+        </section>
+
+        <aside class="summary" aria-label="Submit summary">
+          <div class="summary-head">
+            <div class="eyebrow">将提交</div>
+            <div class="ready" id="readyState">可开始</div>
+          </div>
+          <div class="summary-body">
+            <div class="summary-line"><span>设备</span><span id="sumDevice">s820-01</span></div>
+            <div class="summary-line"><span>方式</span><span id="sumFlow">刷机验证</span></div>
+            <div class="summary-line"><span>内容</span><span id="sumPath">/builds/s820/nightly/boot.img</span></div>
+            <div class="summary-line"><span>判断</span><span id="sumType">固件/镜像</span></div>
+            <div class="summary-line"><span>目标</span><span id="sumGoal">120 秒内启动并进入 adb</span></div>
+          </div>
+          <div class="actions">
+            <button class="primary-btn" id="startBtn" type="button">开始验证</button>
+            <button class="secondary-btn" id="automationBtn" type="button">保存为自动化</button>
+          </div>
+          <div class="automation-panel" id="automationPanel">
+            <div class="trigger-row">
+              <button class="active" type="button">定时</button>
+              <button type="button">文件变化</button>
+              <button type="button">持续监听</button>
+            </div>
+            <input value="30 2 * * 1-5" aria-label="cron" />
+            <button class="primary-btn" type="button">保存</button>
+          </div>
+          <div class="toast" id="toast">Demo：这里会创建验证任务</div>
+        </aside>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const flowNames = {
+      observe: "只观察",
+      flash: "刷机验证",
+      replace: "推送替换",
+      install: "安装验证",
+    };
+    const samples = [
+      "刷 /builds/s820/nightly/boot.img 到 s820-01，确认 120 秒内能启动并进入 adb，没有 kernel panic",
+      "把 /tmp/libcamera.so 推到 rk3588-lab 的 /vendor/lib64/libcamera.so，然后看 camera service 是否正常",
+      "安装 /builds/app-debug.apk 到 s820-01，确认首页能打开且 logcat 没有 crash",
+      "只观察 s820-01 当前串口输出 3 分钟，确认没有反复重启",
+    ];
+
+    let currentFlow = "flash";
+    let currentDevice = "s820-01";
+    let currentDeviceState = "空闲";
+    let flowTouched = false;
+    let deviceTouched = false;
+
+    const intent = document.getElementById("intent");
+    const devicePill = document.getElementById("devicePill");
+    const flowPill = document.getElementById("flowPill");
+    const typePill = document.getElementById("typePill");
+    const timePill = document.getElementById("timePill");
+    const sumDevice = document.getElementById("sumDevice");
+    const sumFlow = document.getElementById("sumFlow");
+    const sumPath = document.getElementById("sumPath");
+    const sumType = document.getElementById("sumType");
+    const sumGoal = document.getElementById("sumGoal");
+    const choicePanel = document.getElementById("choicePanel");
+    const replacePathRow = document.getElementById("replacePathRow");
+    const toast = document.getElementById("toast");
+
+    function inferFromText(text) {
+      const path = text.match(/(?:ci:\/\/|\/|\.\/|[A-Za-z]:\\)[^\s，,]+/)?.[0] || "当前设备";
+      const lower = text.toLowerCase();
+      if (!flowTouched) {
+        if (lower.includes(".apk") || text.includes("安装")) currentFlow = "install";
+        else if (text.includes("推") || text.includes("替换") || lower.includes(".so") || lower.includes(".conf")) currentFlow = "replace";
+        else if (text.includes("观察") || text.includes("只看") || text.includes("串口输出")) currentFlow = "observe";
+        else if (lower.includes(".img") || lower.includes(".bin") || text.includes("刷")) currentFlow = "flash";
+      }
+
+      const device = text.match(/(?:s820-\d+|rk3588-lab|board-\d+)/i)?.[0];
+      if (device && !deviceTouched) currentDevice = device;
+
+      return { path, type: inferType(path), goal: inferGoal(text) };
+    }
+
+    function inferType(path) {
+      const lower = path.toLowerCase();
+      if (currentFlow === "observe") return "当前状态";
+      if (lower.endsWith(".apk")) return "APK";
+      if (lower.endsWith(".zip") || lower.endsWith(".ota")) return "升级包";
+      if (lower.endsWith(".img") || lower.endsWith(".bin") || lower.endsWith(".hex") || currentFlow === "flash") return "固件/镜像";
+      return "普通文件";
+    }
+
+    function inferGoal(text) {
+      if (text.includes("120")) return "120 秒内启动并进入 adb";
+      if (text.includes("camera")) return "camera service 正常";
+      if (text.toLowerCase().includes("crash")) return "无 crash";
+      if (text.includes("重启")) return "无反复重启";
+      return "符合描述里的预期";
+    }
+
+    function estimatedTime() {
+      if (currentFlow === "observe") return "约 3 分钟";
+      if (currentFlow === "flash") return "约 3 分钟";
+      if (currentFlow === "install") return "约 2 分钟";
+      return "约 2 分钟";
+    }
+
+    function render() {
+      const parsed = inferFromText(intent.value);
+      document.querySelectorAll(".choice").forEach(button => {
+        button.classList.toggle("active", button.dataset.flow === currentFlow);
+      });
+      replacePathRow.classList.toggle("open", currentFlow === "replace");
+
+      devicePill.textContent = `${currentDevice} · ${currentDeviceState}`;
+      devicePill.classList.toggle("warn", currentDeviceState === "忙碌");
+      flowPill.textContent = flowNames[currentFlow];
+      typePill.textContent = parsed.type;
+      timePill.textContent = estimatedTime();
+
+      sumDevice.textContent = currentDevice;
+      sumFlow.textContent = flowNames[currentFlow];
+      sumPath.textContent = parsed.path;
+      sumType.textContent = parsed.type;
+      sumGoal.textContent = parsed.goal;
+    }
+
+    document.getElementById("exampleBtn").addEventListener("click", () => {
+      const next = samples[(samples.indexOf(intent.value) + 1) % samples.length] || samples[0];
+      intent.value = next;
+      flowTouched = false;
+      deviceTouched = false;
+      render();
+    });
+
+    document.getElementById("changeBtn").addEventListener("click", () => {
+      choicePanel.classList.toggle("open");
+    });
+
+    document.getElementById("flowChoices").addEventListener("click", event => {
+      const button = event.target.closest("[data-flow]");
+      if (!button) return;
+      currentFlow = button.dataset.flow;
+      flowTouched = true;
+      render();
+    });
+
+    document.getElementById("devices").addEventListener("click", event => {
+      const button = event.target.closest("[data-device]");
+      if (!button) return;
+      document.querySelectorAll(".device").forEach(item => item.classList.remove("active"));
+      button.classList.add("active");
+      currentDevice = button.dataset.device;
+      currentDeviceState = button.dataset.state;
+      deviceTouched = true;
+      render();
+    });
+
+    document.getElementById("automationBtn").addEventListener("click", () => {
+      document.getElementById("automationPanel").classList.toggle("open");
+    });
+
+    document.querySelector(".trigger-row").addEventListener("click", event => {
+      if (event.target.tagName !== "BUTTON") return;
+      document.querySelectorAll(".trigger-row button").forEach(item => item.classList.remove("active"));
+      event.target.classList.add("active");
+    });
+
+    document.getElementById("startBtn").addEventListener("click", () => {
+      toast.classList.add("show");
+      window.setTimeout(() => toast.classList.remove("show"), 1800);
+    });
+
+    intent.addEventListener("input", () => {
+      flowTouched = false;
+      deviceTouched = false;
+      render();
+    });
+    render();
+  </script>
+</body>
+</html>

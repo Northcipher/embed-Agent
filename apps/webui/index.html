@@ -7,15 +7,29 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
   :root {
-    --bg: #fafaf9; --bg-card: #fff; --bg-hover: #f3f3f0; --bg-active: #eaeae5;
-    --fg: #1a1a1a; --fg-secondary: #6b6b63; --fg-tertiary: #a0a098;
-    --border: #e8e8e2; --border-hover: #c0c0b8;
-    --green: #2d8a4e; --amber: #c4860a; --red: #c93a2b; --blue: #2563eb;
+    --bg: #fafaf8; --bg-card: #fff; --bg-hover: #f3f3f0; --bg-active: #eaeae5;
+    --bg-inset: #f3f3ef; --bg-terminal: #1a1a1a;
+    --fg: #171717; --fg-secondary: #6f6f68; --fg-tertiary: #a0a098;
+    --border: #e6e6e0; --border-light: #f0f0ea;
+    --green: #1a7a3a; --amber: #b87a0a; --red: #c4342b; --blue: #1a54c0;
     --font-mono: 'IBM Plex Mono', monospace; --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+    --sidebar-w: 52px; --sidebar-w-open: 180px;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { -webkit-font-smoothing: antialiased; overflow: hidden; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  @keyframes shimmer { 0%{background-position:-400px 0} 100%{background-position:400px 0} }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(4px)} to{opacity:1;transform:translateY(0)} }
+  @keyframes slideDown { from{opacity:0;transform:translateY(-8px)} to{opacity:1;transform:translateY(0)} }
+  @keyframes glowPulse { 0%,100%{box-shadow:0 0 0 0 rgba(26,84,192,.2)} 50%{box-shadow:0 0 0 3px rgba(26,84,192,.1)} }
+  .skeleton { background:linear-gradient(90deg,var(--bg-inset) 0%,#e8e8e3 40%,var(--bg-inset) 80%); background-size:400px 100%; animation:shimmer 1.5s infinite; border-radius:4px; }
+  .fade-in { animation:fadeIn .2s ease both; }
+  .mono { font-family:var(--font-mono); }
+  ::selection { background:rgba(26,84,192,.15); color:var(--fg); }
+  ::-webkit-scrollbar { width:6px; height:6px; }
+  ::-webkit-scrollbar-track { background:transparent; }
+  ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+  ::-webkit-scrollbar-thumb:hover { background:var(--fg-tertiary); }
 </style>
 </head>
 <body>

@@ -40,6 +40,7 @@ server.tool("validate_artifact", "Start a validation run on a target device.", V
   const result: any = await handler.validate({
     artifact: { path: input.artifact_path, type: input.artifact_type },
     target: input.target, expected: input.expected,
+    reply_language: input.reply_language,
     concerns: input.concerns, success_criteria: input.success_criteria, failure_criteria: input.failure_criteria,
     constraints: { max_duration_sec: input.max_duration_sec, allow_flash: input.allow_flash, allow_shell_exec: input.allow_shell_exec, no_flash: input.no_flash, continuous: input.continuous },
   } as any);

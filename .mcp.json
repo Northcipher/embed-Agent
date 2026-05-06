@@ -1,9 +1,16 @@
 {
   "mcpServers": {
     "embed-agent": {
+      "type": "stdio",
       "command": "node",
-      "args": ["apps/mcp-server/dist/main.js"],
-      "env": { "EMBED_AGENT_DATA": ".embed-agent" }
+      "args": [
+        "apps/mcp-server/dist/main.js"
+      ],
+      "env": {
+        "EMBED_AGENT_DATA": ".embed-agent",
+        "EMBED_AGENT_SERVER_URL": "http://127.0.0.1:8787",
+        "EMBED_AGENT_WEB_DIST": "apps/webui/dist"
+      }
     }
   }
 }

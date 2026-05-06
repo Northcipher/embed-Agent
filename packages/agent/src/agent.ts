@@ -12,11 +12,19 @@ import { stepCountIs, type ToolSet } from "ai";
 import type { LLMCallManager, LLMMessage } from "./llm.js";
 import type { z } from "zod/v4";
 
+const AUDIT_PREVIEW_CHARS = 6000;
+
+export type AgentFallbackInput = {
+  systemPrompt: string;
+  formattedContext: string;
+  runId?: string;
+};
+
 export interface AgentConfig<TOutput> {
   /** Parse and validate LLM text output. Used in fallback (non-tool) path. */
   parse(content: string): TOutput;
   /** Generate fallback output when LLM fails or is degraded. */
-  fallback(reason: string): TOutput;
+  fallback(reason: string, input: AgentFallbackInput): TOutput;
   /** AI SDK tools for tool-calling. Undefined = no tools, single LLM text call. */
   tools?: ToolSet;
   /**
@@ -55,6 +63,9 @@ export class Agent<TOutput> {
       { role: "system", content: systemPrompt },
       { role: "user", content: formattedContext },
     ];
+    let auditMessages = messages;
+    const fallbackInput: AgentFallbackInput = { systemPrompt, formattedContext };
+    if (runId != null) fallbackInput.runId = runId;
 
     const inputChars = systemPrompt.length + formattedContext.length;
     let outputChars = 0;
@@ -64,6 +75,7 @@ export class Agent<TOutput> {
     let source = "llm";
     let result: TOutput;
     let rawContent = "";
+    let errorMessage: string | undefined;
 
     const mergedTools = this.buildTools();
     const useToolPath = this.config.outputTool != null && mergedTools != null;
@@ -78,7 +90,8 @@ export class Agent<TOutput> {
       const llmResult = await this.llm.call(this.role, messages, opts);
 
       if ("status" in llmResult) {
-        result = this.config.fallback("LLM degraded — CB4 active");
+        errorMessage = llmResult.reason;
+        result = this.config.fallback("LLM degraded — CB4 active", fallbackInput);
         degraded = true;
         source = "fallback_cb4";
       } else {
@@ -109,6 +122,7 @@ export class Agent<TOutput> {
           const fallbackMessages: LLMMessage[] = this.config.textFallbackPrefix
             ? [{ role: "system" as const, content: this.config.textFallbackPrefix + "\n\n" + messages[0]!.content }, { role: "user" as const, content: messages[1]!.content }]
             : messages;
+          auditMessages = fallbackMessages;
           const retryResult = await this.llm.callBypassBreaker(this.role, fallbackMessages);
           if (!("status" in retryResult)) {
             outputChars = retryResult.content.length;
@@ -118,20 +132,27 @@ export class Agent<TOutput> {
             result = this.config.parse(retryResult.content);
             source = "llm_text_fallback";
           } else {
-            result = this.config.fallback("LLM degraded after tool fallback");
+            errorMessage = retryResult.reason;
+            result = this.config.fallback("LLM degraded after tool fallback", fallbackInput);
             source = "fallback_error";
           }
         } catch (e2) {
-          result = this.config.fallback((e2 as Error).message);
+          errorMessage = errorText(e2);
+          result = this.config.fallback(errorMessage, fallbackInput);
           source = "fallback_error";
         }
       } else {
-        result = this.config.fallback((e as Error).message);
+        errorMessage = errorText(e);
+        result = this.config.fallback(errorMessage, fallbackInput);
         source = "fallback_error";
       }
     }
 
     const fallback = source !== "llm" && source !== "llm_tool" && source !== "llm_text" && source !== "llm_text_fallback";
+    const messagesPreview = auditMessages.map(message => ({
+      role: message.role,
+      content: auditPreview(message.content),
+    }));
     this.eb?.emit({
       type: "llm_call", run_id: runId, source: this.role,
       summary: `${this.role}: ${inputChars}→${outputChars} chars (${source})${degraded ? " degraded" : ""}`,
@@ -144,8 +165,10 @@ export class Agent<TOutput> {
         cache_hit_rate: cacheMetrics && cacheMetrics.totalInputTokens > 0
           ? Math.round((cacheMetrics.cacheReadTokens / cacheMetrics.totalInputTokens) * 100) / 100
           : undefined,
-        raw_content: rawContent.slice(0, 3000),
-        ...(source === "fallback_error" ? { error: "LLM call failed" } : {}),
+        input_preview: auditPreview(auditMessages.map(message => `${message.role.toUpperCase()}\n${message.content}`).join("\n\n")),
+        messages_preview: messagesPreview,
+        raw_content: auditPreview(rawContent, 3000),
+        ...(errorMessage ? { error: auditPreview(errorMessage, 1000) } : {}),
       },
     });
 
@@ -200,4 +223,20 @@ export class Agent<TOutput> {
 
     return null;
   }
+}
+
+function auditPreview(value: string, maxChars = AUDIT_PREVIEW_CHARS): string {
+  const redacted = redactSecrets(value);
+  return redacted.length > maxChars ? `${redacted.slice(0, maxChars)}\n[TRUNCATED ${redacted.length - maxChars} chars]` : redacted;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function redactSecrets(value: string): string {
+  return value
+    .replace(/\b(api[_-]?key|token|password|secret|authorization)\b\s*[:=]\s*["']?[^"'\s,;]+/gi, "$1=[REDACTED]")
+    .replace(/\b(Bearer)\s+[A-Za-z0-9._~+/=-]{12,}/g, "$1 [REDACTED]")
+    .replace(/\bsk-[A-Za-z0-9._-]{8,}\b/g, "sk-[REDACTED]");
 }

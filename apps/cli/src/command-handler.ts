@@ -23,13 +23,33 @@ interface SkillStoreLike {
   get(name: string): { name: string; description: string; steps: { action: string; capability: string; command?: string; timeout_sec: number }[] } | undefined;
 }
 
+type HistoryItem = {
+  episode_id: string; run_id: string; result: string; summary: string;
+  recorded_at?: string; artifact_ref?: string; task?: string;
+  state?: string; elapsed_sec?: number; created_at?: string; started_at?: string; ended_at?: string;
+};
+
 interface ViewsLike {
-  status(runId: string): Promise<{ run_id: string; state: string; current_step?: { id: string }; elapsed_sec: number; last_event_seq: number; evidence_path: string } | null>;
+  status(runId: string): Promise<{ run_id: string; state: string; current_step?: { id: string }; elapsed_sec: number; last_event_seq: number; evidence_path: string; created_at?: string; started_at?: string; ended_at?: string } | null>;
   events(runId: string, afterSeq?: number, limit?: number, types?: string[]): Promise<{ events: { seq: number; type: string; severity?: string; summary: string; time: string; step_id?: string; payload?: Record<string, unknown>; evidence_refs?: string[] }[]; next_after_seq: number; has_more: boolean }>;
-  result(runId: string): Promise<{ run_id: string; state: string; result_available: boolean; summary?: string; suggested_next?: string; evidence_path?: string; key_evidence?: { summary: string; evidence_refs: string[] }[]; criteria_results?: { criterion: string; status: string; evidence_refs: string[] }[] }>;
+  result(runId: string): Promise<{
+    run_id: string; state: string; result_available: boolean; summary?: string; suggested_next?: string; evidence_path?: string;
+    key_evidence?: { summary: string; evidence_refs: string[] }[];
+    criteria_results?: { criterion: string; status: string; evidence_refs: string[] }[];
+    target_id?: string; target_state?: string;
+    artifact?: { path: string; type: string; version?: string; build_id?: string };
+    source?: { kind: "manual" | "task"; task_name?: string; task?: string };
+    timing?: { created_at: string; started_at?: string; ended_at?: string; elapsed_sec: number };
+    task?: string; expected?: string; plan_id?: string; confidence?: number; failure_signature?: string;
+    steps?: { id: string; status: string; capability?: string; action?: string; command?: string; timeout_sec?: number; started_at?: string; ended_at?: string; exit_code?: number; evidence_refs: string[] }[];
+    evidence_index?: { ref: string; kind: string; bytes?: number; available: boolean }[];
+    missing_evidence_refs?: string[];
+    event_summary?: { total: number; warnings: number; fatals: number; interventions: number; llm_calls: number };
+    related_history?: HistoryItem[];
+  }>;
   evidence(runId: string, ref?: string): Promise<{ available: boolean; index?: { refs: { ref: string; kind: string }[] }; content?: string }>;
   targets(): Promise<{ target_id: string; state: string; serial: string; adb: string; fastboot: string; current_run_id?: string }[]>;
-  history(targetId: string, limit?: number): Promise<{ episode_id: string; result: string; summary: string }[]>;
+  history(targetId: string, limit?: number): Promise<HistoryItem[]>;
 }
 
 export interface ErrorResult {
@@ -56,7 +76,7 @@ export class CommandHandler {
 
   /** MCP adapter: converts MCP validate_artifact input to ValidateRequest. */
   async validateFromMcp(mcpInput: {
-    context: { task: string; expected: string; concerns?: string[]; what_changed?: string; success_criteria?: string[]; failure_criteria?: string[]; test_hint?: { kind: string; command: string; timeout_sec?: number; expected_exit_code?: number } };
+    context: { task: string; expected: string; reply_language?: "zh" | "en"; concerns?: string[]; what_changed?: string; success_criteria?: string[]; failure_criteria?: string[]; test_hint?: { kind: string; command: string; timeout_sec?: number; expected_exit_code?: number } };
     artifact: { path: string; type: string; version?: string; build_id?: string };
     target: string;
     constraints?: { max_duration_sec?: number; allow_flash?: boolean; no_flash?: boolean; continuous?: boolean };
@@ -66,6 +86,7 @@ export class CommandHandler {
       target: mcpInput.target,
       expected: mcpInput.context.expected,
     } as ValidateRequest;
+    if (mcpInput.context.reply_language) req.reply_language = mcpInput.context.reply_language;
     if (mcpInput.context.concerns) req.concerns = mcpInput.context.concerns;
     if (mcpInput.context.success_criteria) req.success_criteria = mcpInput.context.success_criteria;
     if (mcpInput.context.failure_criteria) req.failure_criteria = mcpInput.context.failure_criteria;
@@ -91,7 +112,7 @@ export class CommandHandler {
   async result(runId: string) { return this.views.result(runId); }
   async evidence(runId: string, ref?: string) { return this.views.evidence(runId, ref); }
   async targetList() { return this.views.targets(); }
-  async history(targetId: string, limit?: number) { return this.views.history(targetId, limit); }
+  async history(targetId: string, limit?: number): Promise<HistoryItem[]> { return this.views.history(targetId, limit); }
 
   async getTargetCapabilities(targetId: string): Promise<{
     target: string; runtime_state: Record<string, unknown>; capabilities: string[];

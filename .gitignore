@@ -15,3 +15,4 @@ _perm_test
 .claude/ralph-loop.local.md
 .embed-agent/
 .embed-agent*
+*.log
