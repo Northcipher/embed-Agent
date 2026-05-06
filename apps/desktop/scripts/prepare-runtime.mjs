@@ -363,6 +363,7 @@ async function copyRuntimeTree() {
   await rm(runtimeRoot, { recursive: true, force: true });
   await rm(stagingRoot, { recursive: true, force: true });
   await mkdir(runtimeRoot, { recursive: true });
+  await mkdir(runtimeLibDir, { recursive: true });
   const copiedNodeBinary = await copyNodeBinary();
   const copiedLibraries = await copyNodeDynamicLibraries();
   rewriteCopiedLibraryReferences(copiedLibraries);
