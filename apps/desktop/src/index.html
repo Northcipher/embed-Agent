@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Embed Agent</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #0a0d12;
+        color: #e8edf4;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at top, rgba(89, 148, 255, 0.14), transparent 30%),
+          #0a0d12;
+      }
+      main {
+        width: min(520px, calc(100vw - 48px));
+        padding: 32px 28px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(11, 15, 21, 0.92);
+        border-radius: 8px;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 22px;
+        line-height: 1.2;
+      }
+      p {
+        margin: 0;
+        color: #93a1b5;
+        font-size: 14px;
+        line-height: 1.6;
+      }
+      .status {
+        margin-top: 18px;
+        padding-top: 18px;
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        color: #8fb3ff;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Embed Agent</h1>
+      <p id="message">Preparing local runtime…</p>
+      <div class="status" id="status">starting</div>
+    </main>
+    <script type="module">
+      const statusEl = document.getElementById("status");
+      const messageEl = document.getElementById("message");
+
+      function applyStatus(status, message) {
+        if (typeof status === "string") statusEl.textContent = status;
+        if (typeof message === "string") messageEl.textContent = message;
+      }
+
+      window.__EMBED_AGENT_SET_STATUS__ = applyStatus;
+
+      const bootstrap = window.__EMBED_AGENT_BOOTSTRAP__;
+      if (bootstrap && typeof bootstrap === "object") {
+        applyStatus(bootstrap.status, bootstrap.message);
+      }
+    </script>
+  </body>
+  </html>

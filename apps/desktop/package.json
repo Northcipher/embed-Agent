@@ -1,0 +1,16 @@
+{
+  "name": "@embed-agent/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare-runtime": "node scripts/prepare-runtime.mjs",
+    "dev": "pnpm prepare-runtime && tauri dev",
+    "build": "pnpm prepare-runtime && tauri build",
+    "typecheck": "tsc -p tsconfig.json --pretty false"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.0",
+    "typescript": "^5.9.3"
+  }
+}
