@@ -39,6 +39,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Prepare desktop runtime
+        working-directory: apps/desktop
+        run: node scripts/prepare-runtime.mjs
+
       - name: Generate desktop icons
         working-directory: apps/desktop
         run: pnpm exec tauri icon src-tauri/icons/icon.png
