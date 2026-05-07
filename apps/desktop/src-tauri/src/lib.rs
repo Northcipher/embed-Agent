@@ -112,7 +112,7 @@ fn ensure_default_config(data_dir: &Path) -> tauri::Result<()> {
       &system_path,
       format!(
         "runtime:\n  retry:\n    max_retries: 3\n    intervals_sec: [2, 5, 10]\n    retryable: [\"timeout\", \"connection_lost\"]\n  rule_policy:\n    fatal_patterns: [\"Kernel panic\", \"Watchdog reset\"]\n    warning_patterns: [\"error\", \"FAILED\"]\n    silence_timeout_sec: 60\n  ring_buffer:\n    max_lines: 500\n    default_before: 200\n    default_after: 80\n  step_executor:\n    max_timeout_sec: 3600\n    default_timeout_sec: 60\nstorage:\n  data_root: {}\n  max_evidence_bytes: 104857600\n  cleanup:\n    keep_completed_days: 30\n    keep_failed_days: 90\n    max_episodes_per_target: 100\nnotifications:\n  enabled: false\nsecurity:\n  allowed_shell_commands: [\"echo\", \"uname\", \"dmesg\", \"cat\", \"true\", \"false\"]\n  max_command_length: 4096\n  block_unsafe_patterns: true\nobserver:\n  debounce_sec: 30\n  max_concurrent_per_run: 1\n  default_checkpoint_interval_sec: 300\n  circuit_breaker:\n    max_failures: 3\n    probe_after_sec: 300\n  warning_escalation:\n    threshold: 5\n    window_sec: 300\nprompt_version: \"1\"\n",
-        serde_json::to_string(&data_dir.display().to_string()).unwrap_or_else(|_| "\".embed-agent\"".to_string())
+        serde_json::to_string(&data_dir.display().to_string().replace('\\', "/")).unwrap_or_else(|_| "\".embed-agent\"".to_string())
       ),
     )
     .map_err(|e| tauri::Error::Anyhow(e.into()))?;
