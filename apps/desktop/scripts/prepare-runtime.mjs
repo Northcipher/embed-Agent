@@ -58,10 +58,12 @@ async function runPnpm(args) {
 }
 
 async function ensureBuiltArtifacts() {
-  await runPnpm(["--filter", "@embed-agent/cli", "build"]);
-  await runPnpm(["--filter", "@embed-agent/mcp-server", "build"]);
-  await runPnpm(["--filter", "@embed-agent/http-server", "build"]);
-  await runPnpm(["--filter", "@embed-agent/webui", "build"]);
+  await runPnpm([
+    "--filter", "@embed-agent/http-server...",
+    "--filter", "@embed-agent/mcp-server...",
+    "--filter", "@embed-agent/webui",
+    "build",
+  ]);
 }
 
 async function resolveNodeBinary() {
