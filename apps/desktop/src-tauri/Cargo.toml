@@ -1,6 +1,6 @@
 [package]
 name = "embed-agent-desktop"
-version = "0.1.4"
+version = "0.1.5"
 description = "Embed Agent desktop shell"
 authors = ["Embed Agent"]
 edition = "2021"
