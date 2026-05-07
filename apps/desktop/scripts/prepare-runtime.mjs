@@ -16,6 +16,9 @@ const tauriReleaseDir = path.join(desktopRoot, "src-tauri/target/release");
 const webuiDistSrc = path.join(repoRoot, "apps/webui/dist");
 const promptsSrc = path.join(repoRoot, "config/prompts");
 const templateRoot = path.join(desktopRoot, "templates/runtime");
+const RUNTIME_PRUNE_DIR_NAMES = new Set([".pnpm", "src", "docs", "test", "tests", "__tests__"]);
+const RUNTIME_PRUNE_FILE_NAMES = new Set(["pnpm-lock.yaml", "tsconfig.json", "tsconfig.tsbuildinfo"]);
+const RUNTIME_PRUNE_FILE_SUFFIXES = [".ts", ".tsx", ".mts", ".cts", ".map", ".tsbuildinfo"];
 
 async function exists(target) {
   try {
@@ -359,6 +362,43 @@ async function materializePortableNodeModules(serverRoot) {
   }
 }
 
+function shouldPruneDirectory(entryName) {
+  return RUNTIME_PRUNE_DIR_NAMES.has(entryName)
+    || entryName.startsWith(".embed-agent-");
+}
+
+function shouldPruneFile(entryName) {
+  if (RUNTIME_PRUNE_FILE_NAMES.has(entryName)) {
+    return true;
+  }
+
+  return RUNTIME_PRUNE_FILE_SUFFIXES.some((suffix) => entryName.endsWith(suffix));
+}
+
+async function pruneRuntimeTree(rootDir) {
+  if (!(await exists(rootDir))) {
+    return;
+  }
+
+  const entries = await readdir(rootDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(rootDir, entry.name);
+
+    if (entry.isDirectory()) {
+      if (shouldPruneDirectory(entry.name)) {
+        await rm(entryPath, { recursive: true, force: true });
+        continue;
+      }
+      await pruneRuntimeTree(entryPath);
+      continue;
+    }
+
+    if (entry.isFile() && shouldPruneFile(entry.name)) {
+      await rm(entryPath, { force: true });
+    }
+  }
+}
+
 function getLauncherNodeBinaryName() {
   const targetTriple = process.env["TAURI_ENV_TARGET_TRIPLE"]
     ?? process.env["CARGO_BUILD_TARGET"]
@@ -468,6 +508,7 @@ async function copyRuntimeTree() {
     dereference: true,
   });
   await materializePortableNodeModules(path.join(runtimeRoot, "server"));
+  await pruneRuntimeTree(path.join(runtimeRoot, "server"));
 
   await runPnpm([
     "--filter",
@@ -482,6 +523,7 @@ async function copyRuntimeTree() {
     dereference: true,
   });
   await materializePortableNodeModules(path.join(runtimeRoot, "mcp"));
+  await pruneRuntimeTree(path.join(runtimeRoot, "mcp"));
 
   await cp(webuiDistSrc, path.join(runtimeRoot, "webui"), { recursive: true });
   await cp(promptsSrc, path.join(runtimeRoot, "config/prompts"), { recursive: true });
