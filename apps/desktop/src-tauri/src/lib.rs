@@ -81,7 +81,10 @@ fn initialize_runtime(app: &App, server_child: SharedChild) -> Result<String, St
 fn prepare_runtime_root(app: &App) -> tauri::Result<PathBuf> {
     let resource_dir = app
         .path()
-        .resolve("desktop-runtime", BaseDirectory::Resource)?;
+        .resolve("desktop-runtime/server", BaseDirectory::Resource)?
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| tauri::Error::Anyhow(anyhow::anyhow!("failed to locate desktop-runtime parent")))?;
     if !resource_dir.exists() {
         return Err(tauri::Error::AssetNotFound(
             resource_dir.display().to_string(),
