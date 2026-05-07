@@ -247,6 +247,46 @@ apps（CLI/MCP Server/TUI）+ notify（Slack/Email）+ views（只读投影）
 - 真实设备、串口、ADB、Fastboot、API key 不进入仓库
 - CI 只跑静态检查和单元测试，不连真实设备
 
+## Desktop Installer
+
+Windows 安装包现在是一个完整分发，而不只是桌面壳。
+
+安装 `Embed Agent Desktop` 之后，安装器会同时放好：
+
+- Desktop UI
+- 内置 Runtime
+- `embedagent` CLI
+- `embedagent-mcp` 的 Claude Code 接入脚本
+
+安装器还会做两件事：
+
+1. 写入用户级环境变量：
+   - `EMBED_AGENT_HOME`
+   - `EMBED_AGENT_DATA`
+   - `EMBED_AGENT_SERVER_URL`
+2. 把 `<InstallDir>\bin` 加入用户 `PATH`
+
+安装完成后可直接在新终端里使用：
+
+```powershell
+embedagent targets
+embedagent validate --artifact C:\tmp\fw.bin --type firmware --target demo --expected "device boots"
+```
+
+如果本机安装了 `claude` CLI，安装器还会自动把 `embed-agent` 注册到 Claude Code 的用户级 MCP 配置里。
+
+手动补装 Claude Code 集成：
+
+```powershell
+embedagent-claude-setup.cmd --scope user
+```
+
+如果想把 MCP 写到当前项目的 `.mcp.json`，在项目目录里执行：
+
+```powershell
+embedagent-claude-setup.cmd --scope project
+```
+
 ### Claude Code / MCP
 
 项目根目录的 `.mcp.json` 会注册 `embed-agent` 这个 MCP server。`pnpm desktop:setup` 或双击启动器会自动把下面这些参数写进去：

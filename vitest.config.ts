@@ -9,6 +9,14 @@ export default defineConfig({
       "apps/**/*.test.tsx",
       "test/**/*.test.ts",
       "test/**/*.test.tsx"
-    ]
+    ],
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/desktop-runtime/**",
+      "**/target/**",
+      "**/bundle/**",
+      "**/.runtime-staging/**",
+    ],
   }
 });

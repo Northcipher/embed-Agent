@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { chmod, copyFile, cp, mkdir, readdir, rm, stat } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -13,9 +13,9 @@ const stagingRoot = path.join(desktopRoot, ".runtime-staging");
 const nodeDir = path.join(runtimeRoot, "bin");
 const runtimeLibDir = path.join(runtimeRoot, "lib");
 const tauriReleaseDir = path.join(desktopRoot, "src-tauri/target/release");
-const serverSrc = path.join(repoRoot, "apps/http-server");
 const webuiDistSrc = path.join(repoRoot, "apps/webui/dist");
 const promptsSrc = path.join(repoRoot, "config/prompts");
+const templateRoot = path.join(desktopRoot, "templates/runtime");
 
 async function exists(target) {
   try {
@@ -58,12 +58,10 @@ async function runPnpm(args) {
 }
 
 async function ensureBuiltArtifacts() {
-  if (!(await exists(path.join(serverSrc, "dist/main.js")))) {
-    await runPnpm(["--filter", "@embed-agent/http-server...", "build"]);
-  }
-  if (!(await exists(path.join(webuiDistSrc, "index.html")))) {
-    await runPnpm(["--filter", "@embed-agent/webui", "build"]);
-  }
+  await runPnpm(["--filter", "@embed-agent/cli", "build"]);
+  await runPnpm(["--filter", "@embed-agent/mcp-server", "build"]);
+  await runPnpm(["--filter", "@embed-agent/http-server", "build"]);
+  await runPnpm(["--filter", "@embed-agent/webui", "build"]);
 }
 
 async function resolveNodeBinary() {
@@ -359,6 +357,69 @@ async function materializePortableNodeModules(serverRoot) {
   }
 }
 
+function getLauncherNodeBinaryName() {
+  const targetTriple = process.env["TAURI_ENV_TARGET_TRIPLE"]
+    ?? process.env["CARGO_BUILD_TARGET"]
+    ?? inferTargetTriple();
+  const extension = targetTriple.includes("windows") ? ".exe" : "";
+  return `embed-agent-node-${targetTriple}${extension}`;
+}
+
+async function writeWindowsLaunchers(integrationRoot) {
+  const windowsBinDir = path.join(integrationRoot, "windows", "bin");
+  await mkdir(windowsBinDir, { recursive: true });
+  const nodeBinaryName = getLauncherNodeBinaryName();
+
+  const cliLauncher = [
+    "@echo off",
+    "setlocal",
+    "set \"SCRIPT_DIR=%~dp0\"",
+    "set \"INSTALL_DIR=%SCRIPT_DIR%..\"",
+    "set \"NODE_BIN=%INSTALL_DIR%\\" + nodeBinaryName + "\"",
+    "if not exist \"%NODE_BIN%\" set \"NODE_BIN=%INSTALL_DIR%\\embed-agent-node.exe\"",
+    "if not exist \"%NODE_BIN%\" (",
+    "  echo Embed Agent sidecar node binary not found in %INSTALL_DIR%",
+    "  exit /b 1",
+    ")",
+    "\"%NODE_BIN%\" \"%INSTALL_DIR%\\resources\\desktop-runtime\\integrations\\launcher.mjs\" cli %*",
+    "",
+  ].join("\r\n");
+
+  const mcpLauncher = [
+    "@echo off",
+    "setlocal",
+    "set \"SCRIPT_DIR=%~dp0\"",
+    "set \"INSTALL_DIR=%SCRIPT_DIR%..\"",
+    "set \"NODE_BIN=%INSTALL_DIR%\\" + nodeBinaryName + "\"",
+    "if not exist \"%NODE_BIN%\" set \"NODE_BIN=%INSTALL_DIR%\\embed-agent-node.exe\"",
+    "if not exist \"%NODE_BIN%\" (",
+    "  echo Embed Agent sidecar node binary not found in %INSTALL_DIR%",
+    "  exit /b 1",
+    ")",
+    "\"%NODE_BIN%\" \"%INSTALL_DIR%\\resources\\desktop-runtime\\integrations\\launcher.mjs\" mcp %*",
+    "",
+  ].join("\r\n");
+
+  const claudeSetupLauncher = [
+    "@echo off",
+    "setlocal",
+    "set \"SCRIPT_DIR=%~dp0\"",
+    "set \"INSTALL_DIR=%SCRIPT_DIR%..\"",
+    "\"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File \"%INSTALL_DIR%\\resources\\desktop-runtime\\integrations\\setup-claude-code.ps1\" -InstallDir \"%INSTALL_DIR%\" %*",
+    "",
+  ].join("\r\n");
+
+  await writeFile(path.join(windowsBinDir, "embedagent.cmd"), cliLauncher);
+  await writeFile(path.join(windowsBinDir, "embedagent-mcp.cmd"), mcpLauncher);
+  await writeFile(path.join(windowsBinDir, "embedagent-claude-setup.cmd"), claudeSetupLauncher);
+}
+
+async function copyIntegrationAssets() {
+  const integrationRoot = path.join(runtimeRoot, "integrations");
+  await cp(templateRoot, integrationRoot, { recursive: true });
+  await writeWindowsLaunchers(integrationRoot);
+}
+
 async function copyRuntimeTree() {
   await rm(runtimeRoot, { recursive: true, force: true });
   await rm(stagingRoot, { recursive: true, force: true });
@@ -406,8 +467,23 @@ async function copyRuntimeTree() {
   });
   await materializePortableNodeModules(path.join(runtimeRoot, "server"));
 
+  await runPnpm([
+    "--filter",
+    "@embed-agent/mcp-server",
+    "--prod",
+    "deploy",
+    path.join(stagingRoot, "mcp"),
+  ]);
+
+  await cp(path.join(stagingRoot, "mcp"), path.join(runtimeRoot, "mcp"), {
+    recursive: true,
+    dereference: true,
+  });
+  await materializePortableNodeModules(path.join(runtimeRoot, "mcp"));
+
   await cp(webuiDistSrc, path.join(runtimeRoot, "webui"), { recursive: true });
   await cp(promptsSrc, path.join(runtimeRoot, "config/prompts"), { recursive: true });
+  await copyIntegrationAssets();
   await rm(stagingRoot, { recursive: true, force: true });
 }
 

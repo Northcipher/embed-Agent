@@ -33,6 +33,32 @@ pnpm desktop:open
 
 这会自动安装依赖、构建、创建默认 `.embed-agent/` 配置、更新项目 `.mcp.json`，然后打开浏览器到 Web UI。
 
+## Windows installer verification
+
+发布后的 Windows 安装包需要额外验这条分发链：
+
+1. 安装 `Embed Agent Desktop`
+2. 打开新的 `cmd` 或 PowerShell
+3. 确认下面命令都可用：
+
+```powershell
+embedagent help
+embedagent targets --json
+embedagent-claude-setup.cmd --scope user
+```
+
+4. 如果机器装了 `claude` CLI，再确认：
+
+```powershell
+claude mcp get embed-agent
+```
+
+预期：
+
+- `embedagent` 在 `PATH` 上
+- 首次执行 `embedagent targets --json` 时，即使没先开桌面 UI，也会自动生成默认配置并拉起 runtime
+- `claude mcp get embed-agent` 能看到一个 `stdio` server，命令通过 `cmd /c` 调用安装目录里的 `embedagent-mcp.cmd`
+
 ## Quick Verification
 
 This should pass immediately — no API key, no hardware, no config needed:
@@ -189,6 +215,13 @@ node apps/mcp-server/dist/main.js
 To connect Claude Code:
 ```bash
 pnpm desktop:setup
+claude mcp get embed-agent
+```
+
+Windows 安装包场景下，不需要源码仓库。直接运行：
+
+```powershell
+embedagent-claude-setup.cmd --scope user
 claude mcp get embed-agent
 ```
 
