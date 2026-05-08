@@ -375,7 +375,7 @@ function shouldPruneFile(entryName) {
   return RUNTIME_PRUNE_FILE_SUFFIXES.some((suffix) => entryName.endsWith(suffix));
 }
 
-async function pruneRuntimeTree(rootDir) {
+async function pruneRuntimeTree(rootDir, depth = 0) {
   if (!(await exists(rootDir))) {
     return;
   }
@@ -385,11 +385,12 @@ async function pruneRuntimeTree(rootDir) {
     const entryPath = path.join(rootDir, entry.name);
 
     if (entry.isDirectory()) {
-      if (shouldPruneDirectory(entry.name)) {
+      // Only prune 'src' at depth 0 (top-level), not nested like build/src
+      if (shouldPruneDirectory(entry.name) && (entry.name !== "src" || depth === 0)) {
         await rm(entryPath, { recursive: true, force: true });
         continue;
       }
-      await pruneRuntimeTree(entryPath);
+      await pruneRuntimeTree(entryPath, depth + 1);
       continue;
     }
 
