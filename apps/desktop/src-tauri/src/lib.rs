@@ -267,14 +267,33 @@ fn prepare_runtime_root(app: &App) -> tauri::Result<PathBuf> {
     Ok(resource_dir)
 }
 
-fn prepare_data_dir(app: &App) -> tauri::Result<PathBuf> {
-    let dir = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| tauri::Error::Anyhow(e.into()))?
-        .join("data");
-    std::fs::create_dir_all(&dir).map_err(|e| tauri::Error::Anyhow(e.into()))?;
-    Ok(dir)
+fn prepare_data_dir(_app: &App) -> tauri::Result<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let local_app_data = std::env::var("LOCALAPPDATA")
+            .map_err(|e| tauri::Error::Anyhow(anyhow::anyhow!("LOCALAPPDATA not set: {}", e)))?;
+        let dir = PathBuf::from(local_app_data).join("EmbedAgent").join("data");
+        std::fs::create_dir_all(&dir).map_err(|e| tauri::Error::Anyhow(e.into()))?;
+        Ok(dir)
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let home = dirs::home_dir()
+            .ok_or_else(|| tauri::Error::Anyhow(anyhow::anyhow!("home directory not found")))?;
+        let dir = home.join("Library").join("Application Support").join("EmbedAgent").join("data");
+        std::fs::create_dir_all(&dir).map_err(|e| tauri::Error::Anyhow(e.into()))?;
+        Ok(dir)
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let home = dirs::home_dir()
+            .ok_or_else(|| tauri::Error::Anyhow(anyhow::anyhow!("home directory not found")))?;
+        let dir = home.join(".local").join("share").join("embed-agent").join("data");
+        std::fs::create_dir_all(&dir).map_err(|e| tauri::Error::Anyhow(e.into()))?;
+        Ok(dir)
+    }
 }
 
 fn ensure_default_config(data_dir: &Path) -> tauri::Result<()> {

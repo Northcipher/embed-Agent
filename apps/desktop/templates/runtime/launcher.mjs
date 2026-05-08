@@ -5,8 +5,20 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const runtimeRoot = path.resolve(scriptDir, "..");
 const installRoot = path.resolve(runtimeRoot, "..", "..");
-const localAppData = process.env["LOCALAPPDATA"] ?? path.join(os.homedir(), "AppData", "Local");
-const defaultDataDir = path.join(localAppData, "EmbedAgent", "data");
+
+function getDefaultDataDir() {
+  if (process.platform === "win32") {
+    const localAppData = process.env["LOCALAPPDATA"] ?? path.join(os.homedir(), "AppData", "Local");
+    return path.join(localAppData, "EmbedAgent", "data");
+  }
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support", "EmbedAgent", "data");
+  }
+  // Linux
+  return path.join(os.homedir(), ".local", "share", "embed-agent", "data");
+}
+
+const defaultDataDir = getDefaultDataDir();
 
 process.env["EMBED_AGENT_HOME"] ??= installRoot;
 process.env["EMBED_AGENT_RUNTIME_ROOT"] ??= runtimeRoot;
