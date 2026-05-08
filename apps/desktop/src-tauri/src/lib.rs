@@ -326,13 +326,13 @@ fn start_runtime_server(
 
     let mut command = Command::new(&node_path);
     command
-        .arg(&server_entry)
+        .arg(server_entry.display().to_string().replace('\\', "/"))
         .current_dir(runtime_root)
         .env("HOST", SERVER_HOST)
         .env("PORT", server_port.to_string())
-        .env("EMBED_AGENT_DATA", data_dir)
+        .env("EMBED_AGENT_DATA", data_dir.display().to_string().replace('\\', "/"))
         .env("EMBED_AGENT_SERVER_URL", &server_url)
-        .env("EMBED_AGENT_WEB_DIST", &web_dist)
+        .env("EMBED_AGENT_WEB_DIST", web_dist.display().to_string().replace('\\', "/"))
         .env("EMBED_AGENT_DESKTOP", "1")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
@@ -791,13 +791,13 @@ fn start_server_process(
 
     let mut command = Command::new(&node_path);
     command
-        .arg(&server_entry)
+        .arg(server_entry.display().to_string().replace('\\', "/"))
         .current_dir(&config.runtime_root)
         .env("HOST", SERVER_HOST)
         .env("PORT", config.port.to_string())
-        .env("EMBED_AGENT_DATA", &config.data_dir)
+        .env("EMBED_AGENT_DATA", config.data_dir.display().to_string().replace('\\', "/"))
         .env("EMBED_AGENT_SERVER_URL", &config.server_url)
-        .env("EMBED_AGENT_WEB_DIST", &web_dist)
+        .env("EMBED_AGENT_WEB_DIST", web_dist.display().to_string().replace('\\', "/"))
         .env("EMBED_AGENT_DESKTOP", "1")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
