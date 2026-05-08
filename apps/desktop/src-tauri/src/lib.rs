@@ -2,9 +2,16 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
-use std::thread;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 use tauri::path::BaseDirectory;
 use tauri::{App, AppHandle, Emitter, Manager, RunEvent};
@@ -15,32 +22,151 @@ const NODE_SIDECAR_NAME: &str = "embed-agent-node";
 
 type SharedChild = Arc<Mutex<Option<Child>>>;
 
+/// Server process status
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub enum ServerStatus {
+    Starting,
+    Healthy,
+    Unhealthy,
+    Crashed,
+    Restarting,
+    Stopped,
+    Failed,
+}
+
+/// Restart policy configuration
+#[derive(Debug, Clone)]
+pub struct RestartPolicy {
+    pub max_retries: u32,
+    pub backoff_intervals: Vec<Duration>,
+    pub health_check_interval: Duration,
+    pub consecutive_failures_threshold: u32,
+}
+
+impl Default for RestartPolicy {
+    fn default() -> Self {
+        Self {
+            max_retries: 5,
+            backoff_intervals: vec![
+                Duration::from_secs(2),
+                Duration::from_secs(5),
+                Duration::from_secs(10),
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+            ],
+            health_check_interval: Duration::from_secs(5),
+            consecutive_failures_threshold: 3,
+        }
+    }
+}
+
+/// Monitoring state
+#[derive(Clone)]
+pub struct MonitorState {
+    pub status: ServerStatus,
+    pub retry_count: u32,
+    pub last_healthy: Option<Instant>,
+    pub consecutive_failures: u32,
+    pub error_message: Option<String>,
+}
+
+impl Default for MonitorState {
+    fn default() -> Self {
+        Self {
+            status: ServerStatus::Starting,
+            retry_count: 0,
+            last_healthy: None,
+            consecutive_failures: 0,
+            error_message: None,
+        }
+    }
+}
+
+/// Server configuration needed for restarts
+#[derive(Clone)]
+pub struct ServerConfig {
+    pub port: u16,
+    pub server_url: String,
+    pub runtime_root: PathBuf,
+    pub data_dir: PathBuf,
+}
+
 #[derive(Clone, serde::Serialize)]
 struct DesktopStatusPayload {
     status: &'static str,
     message: String,
 }
 
+#[derive(Clone, serde::Serialize)]
+struct ServerStatusPayload {
+    status: &'static str,
+    message: String,
+    retry_count: u32,
+    max_retries: u32,
+    last_healthy_ago: Option<u64>,
+}
+
 #[derive(Clone)]
 struct DesktopState {
     server_child: SharedChild,
+    monitor_state: Arc<RwLock<MonitorState>>,
+    server_config: Arc<RwLock<Option<ServerConfig>>>,
+    restart_policy: Arc<RestartPolicy>,
+    shutdown_flag: Arc<AtomicBool>,
+    monitor_handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let server_child = Arc::new(Mutex::new(None));
-            app.manage(DesktopState {
-                server_child: Arc::clone(&server_child),
-            });
 
             let starting_message = "Preparing local runtime".to_string();
             emit_status(app.handle(), "starting", starting_message.clone());
             let _ = show_startup_window(app.handle(), "starting", &starting_message);
 
             match initialize_runtime(app, Arc::clone(&server_child)) {
-                Ok(server_url) => {
-                    if let Err(error) = show_main_window(app.handle(), &server_url) {
+                Ok(init_result) => {
+                    // Create server config for restarts
+                    let config = ServerConfig {
+                        port: init_result.port,
+                        server_url: init_result.server_url.clone(),
+                        runtime_root: init_result.runtime_root.clone(),
+                        data_dir: init_result.data_dir.clone(),
+                    };
+
+                    // Create desktop state with monitoring
+                    let state = Arc::new(DesktopState {
+                        server_child: Arc::clone(&server_child),
+                        monitor_state: Arc::new(RwLock::new(MonitorState {
+                            status: ServerStatus::Healthy,
+                            retry_count: 0,
+                            last_healthy: Some(Instant::now()),
+                            consecutive_failures: 0,
+                            error_message: None,
+                        })),
+                        server_config: Arc::new(RwLock::new(Some(config))),
+                        restart_policy: Arc::new(RestartPolicy::default()),
+                        shutdown_flag: Arc::new(AtomicBool::new(false)),
+                        monitor_handle: Arc::new(Mutex::new(None)),
+                    });
+
+                    // Store config for monitoring
+                    {
+                        let mut monitor = state.monitor_state.write().unwrap();
+                        monitor.status = ServerStatus::Healthy;
+                        monitor.last_healthy = Some(Instant::now());
+                    }
+
+                    // Start monitor thread
+                    let state_clone = Arc::clone(&state);
+                    let app_handle = app.handle().clone();
+                    start_monitor_thread(app_handle, state_clone);
+
+                    // Manage state
+                    app.manage(state);
+
+                    if let Err(error) = show_main_window(app.handle(), &init_result.server_url) {
                         let message = format!(
                             "Local runtime started, but the desktop window could not open: {}",
                             error
@@ -62,20 +188,50 @@ pub fn run() {
             }
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            get_server_status,
+            restart_server,
+            stop_server_cmd,
+        ])
         .build(tauri::generate_context!())
         .expect("failed to build desktop shell")
         .run(|app, event| {
             if let RunEvent::ExitRequested { .. } = event {
+                if let Some(state) = app.try_state::<DesktopState>() {
+                    shutdown_monitoring(&state);
+                }
                 stop_server(app);
             }
         });
 }
 
-fn initialize_runtime(app: &App, server_child: SharedChild) -> Result<String, String> {
+struct InitResult {
+    server_url: String,
+    runtime_root: PathBuf,
+    data_dir: PathBuf,
+    port: u16,
+}
+
+fn initialize_runtime(app: &App, server_child: SharedChild) -> Result<InitResult, String> {
     let runtime_root = prepare_runtime_root(app).map_err(describe_tauri_error)?;
     let data_dir = prepare_data_dir(app).map_err(describe_tauri_error)?;
     ensure_default_config(&data_dir).map_err(describe_tauri_error)?;
-    start_runtime_server(app, &runtime_root, &data_dir, server_child).map_err(describe_tauri_error)
+    let server_url =
+        start_runtime_server(app, &runtime_root, &data_dir, server_child).map_err(describe_tauri_error)?;
+
+    // Extract port from server_url
+    let port = server_url
+        .rsplit(':')
+        .next()
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+
+    Ok(InitResult {
+        server_url,
+        runtime_root,
+        data_dir,
+        port,
+    })
 }
 
 fn prepare_runtime_root(app: &App) -> tauri::Result<PathBuf> {
@@ -184,6 +340,9 @@ fn start_runtime_server(
     if runtime_lib_dir.exists() {
         command.env("DYLD_LIBRARY_PATH", &runtime_lib_dir);
     }
+
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
 
     let child = command
         .spawn()
@@ -366,11 +525,368 @@ fn emit_status(app: &AppHandle, status: &'static str, message: String) {
 
 fn stop_server(app: &AppHandle) {
     if let Some(state) = app.try_state::<DesktopState>() {
-        if let Ok(mut slot) = state.server_child.lock() {
-            if let Some(mut child) = slot.take() {
-                let _ = child.kill();
-                let _ = child.wait();
+        stop_server_internal(&state.server_child);
+    }
+}
+
+fn stop_server_internal(child: &SharedChild) {
+    if let Ok(mut slot) = child.lock() {
+        if let Some(mut c) = slot.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+}
+
+/// Check if process is still alive
+fn is_process_alive(child: &SharedChild) -> bool {
+    if let Ok(mut guard) = child.lock() {
+        if let Some(c) = guard.as_mut() {
+            match c.try_wait() {
+                Ok(None) => return true,
+                Ok(Some(_)) | Err(_) => return false,
             }
         }
     }
+    false
+}
+
+/// Start the monitoring thread
+fn start_monitor_thread(app: AppHandle, state: Arc<DesktopState>) {
+    let shutdown_flag = Arc::clone(&state.shutdown_flag);
+    let check_interval = state.restart_policy.health_check_interval;
+    let monitor_handle = Arc::clone(&state.monitor_handle);
+
+    let handle = thread::spawn(move || {
+        while !shutdown_flag.load(Ordering::Relaxed) {
+            thread::sleep(check_interval);
+
+            if shutdown_flag.load(Ordering::Relaxed) {
+                break;
+            }
+
+            if let Err(e) = perform_health_check(&app, &state) {
+                eprintln!("[monitor] Health check error: {}", e);
+            }
+        }
+    });
+
+    if let Ok(mut guard) = monitor_handle.lock() {
+        *guard = Some(handle);
+    };
+}
+
+/// Perform health check and handle failures
+fn perform_health_check(app: &AppHandle, state: &DesktopState) -> Result<(), String> {
+    let config = {
+        let guard = state
+            .server_config
+            .read()
+            .map_err(|_| "Failed to read server config".to_string())?;
+        guard.clone().ok_or("Server config not initialized".to_string())?
+    };
+
+    let process_alive = is_process_alive(&state.server_child);
+
+    let (new_status, needs_restart) = {
+        let mut monitor = state
+            .monitor_state
+            .write()
+            .map_err(|_| "Failed to lock monitor state".to_string())?;
+
+        if !process_alive {
+            monitor.consecutive_failures += 1;
+
+            if monitor.retry_count < state.restart_policy.max_retries {
+                emit_status(
+                    app,
+                    "crashed",
+                    format!(
+                        "Process died. Restarting (attempt {}/{})",
+                        monitor.retry_count + 1,
+                        state.restart_policy.max_retries
+                    ),
+                );
+                (ServerStatus::Crashed, true)
+            } else {
+                emit_status(app, "failed", "Process died and max retries exceeded".to_string());
+                monitor.status = ServerStatus::Failed;
+                monitor.error_message = Some("Max retries exceeded".to_string());
+                return Ok(());
+            }
+        } else {
+            let healthy = health_ok(config.port);
+
+            if healthy {
+                monitor.last_healthy = Some(Instant::now());
+                monitor.consecutive_failures = 0;
+                monitor.error_message = None;
+
+                if monitor.status == ServerStatus::Restarting {
+                    monitor.retry_count = 0;
+                    emit_status(app, "healthy", "Server restarted successfully".to_string());
+                }
+
+                monitor.status = ServerStatus::Healthy;
+                return Ok(());
+            } else {
+                monitor.consecutive_failures += 1;
+
+                if monitor.consecutive_failures >= state.restart_policy.consecutive_failures_threshold {
+                    emit_status(app, "unhealthy", "Health checks failing".to_string());
+                    monitor.status = ServerStatus::Unhealthy;
+                }
+                return Ok(());
+            }
+        }
+    };
+
+    {
+        let mut monitor = state
+            .monitor_state
+            .write()
+            .map_err(|_| "Failed to lock monitor state".to_string())?;
+        monitor.status = new_status;
+    }
+
+    if needs_restart {
+        attempt_restart(app, state)?;
+    }
+
+    Ok(())
+}
+
+/// Attempt to restart the server with backoff
+fn attempt_restart(app: &AppHandle, state: &DesktopState) -> Result<(), String> {
+    let config = {
+        let guard = state
+            .server_config
+            .read()
+            .map_err(|_| "Failed to read server config")?;
+        guard.clone().ok_or("Server config not initialized")?
+    };
+
+    let (retry_count, backoff_duration) = {
+        let mut monitor = state
+            .monitor_state
+            .write()
+            .map_err(|_| "Failed to lock monitor state")?;
+
+        let count = monitor.retry_count;
+        monitor.retry_count += 1;
+        monitor.status = ServerStatus::Restarting;
+
+        let backoff = state
+            .restart_policy
+            .backoff_intervals
+            .get(count as usize)
+            .copied()
+            .unwrap_or(Duration::from_secs(60));
+
+        (count, backoff)
+    };
+
+    emit_status(
+        app,
+        "restarting",
+        format!(
+            "Restarting in {}s (attempt {})",
+            backoff_duration.as_secs(),
+            retry_count + 1
+        ),
+    );
+
+    // Apply backoff
+    thread::sleep(backoff_duration);
+
+    if state.shutdown_flag.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+
+    // Stop existing process
+    stop_server_internal(&state.server_child);
+
+    // Start new process
+    start_server_process(app, &config, &state.server_child)?;
+
+    // Wait for health
+    match wait_for_health(config.port, Duration::from_secs(20)) {
+        Ok(()) => {
+            let mut monitor = state
+                .monitor_state
+                .write()
+                .map_err(|_| "Failed to lock monitor state")?;
+            monitor.status = ServerStatus::Healthy;
+            monitor.last_healthy = Some(Instant::now());
+            monitor.consecutive_failures = 0;
+            monitor.error_message = None;
+
+            emit_status(app, "healthy", format!("Server restarted on port {}", config.port));
+            Ok(())
+        }
+        Err(e) => {
+            let mut monitor = state
+                .monitor_state
+                .write()
+                .map_err(|_| "Failed to lock monitor state")?;
+            monitor.error_message = Some(e.clone());
+
+            if monitor.retry_count >= state.restart_policy.max_retries {
+                monitor.status = ServerStatus::Failed;
+                emit_status(app, "failed", "Server failed to start after max retries".to_string());
+            }
+
+            Err(e)
+        }
+    }
+}
+
+/// Start server process (similar to start_runtime_server but uses stored config)
+fn start_server_process(
+    _app: &AppHandle,
+    config: &ServerConfig,
+    child_slot: &SharedChild,
+) -> Result<(), String> {
+    let logs_dir = config.data_dir.join("logs");
+    std::fs::create_dir_all(&logs_dir).map_err(|e| e.to_string())?;
+
+    // Find sidecar binary
+    let node_path = {
+        let target_triple = tauri::utils::platform::target_triple()
+            .map_err(|e| e.to_string())?;
+        let exe_dir = std::env::current_exe()
+            .map_err(|e| e.to_string())?
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or("failed to locate executable dir".to_string())?;
+
+        let candidates = [
+            exe_dir.join(format!("{}-{}.exe", NODE_SIDECAR_NAME, target_triple)),
+            exe_dir.join(format!("{}.exe", NODE_SIDECAR_NAME)),
+            exe_dir.join(format!("{}-{}", NODE_SIDECAR_NAME, target_triple)),
+            exe_dir.join(NODE_SIDECAR_NAME),
+        ];
+
+        candidates
+            .into_iter()
+            .find(|p| p.exists())
+            .ok_or("Sidecar binary not found".to_string())?
+    };
+
+    let server_entry = config.runtime_root.join("server/dist/main.js");
+    let web_dist = config.runtime_root.join("webui");
+    let runtime_lib_dir = config.runtime_root.join("lib");
+
+    if !node_path.exists() {
+        return Err(format!("Node binary not found: {}", node_path.display()));
+    }
+    if !server_entry.exists() {
+        return Err(format!("Server entry not found: {}", server_entry.display()));
+    }
+
+    let stdout = std::fs::File::create(logs_dir.join("desktop-http-server.out.log"))
+        .map_err(|e| e.to_string())?;
+    let stderr = std::fs::File::create(logs_dir.join("desktop-http-server.err.log"))
+        .map_err(|e| e.to_string())?;
+
+    let mut command = Command::new(&node_path);
+    command
+        .arg(&server_entry)
+        .current_dir(&config.runtime_root)
+        .env("HOST", SERVER_HOST)
+        .env("PORT", config.port.to_string())
+        .env("EMBED_AGENT_DATA", &config.data_dir)
+        .env("EMBED_AGENT_SERVER_URL", &config.server_url)
+        .env("EMBED_AGENT_WEB_DIST", &web_dist)
+        .env("EMBED_AGENT_DESKTOP", "1")
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+
+    if runtime_lib_dir.exists() {
+        command.env("DYLD_LIBRARY_PATH", &runtime_lib_dir);
+    }
+
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let child = command.spawn().map_err(|e| e.to_string())?;
+
+    {
+        let mut slot = child_slot
+            .lock()
+            .map_err(|_| "Failed to lock child slot".to_string())?;
+        *slot = Some(child);
+    }
+
+    Ok(())
+}
+
+/// Shutdown monitoring thread
+fn shutdown_monitoring(state: &DesktopState) {
+    state.shutdown_flag.store(true, Ordering::Relaxed);
+
+    if let Ok(mut guard) = state.monitor_handle.lock() {
+        if let Some(handle) = guard.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Tauri command to get server status
+#[tauri::command]
+fn get_server_status(state: tauri::State<'_, DesktopState>) -> ServerStatusPayload {
+    let monitor = state.monitor_state.read().unwrap();
+
+    let status_str = match monitor.status {
+        ServerStatus::Starting => "starting",
+        ServerStatus::Healthy => "healthy",
+        ServerStatus::Unhealthy => "unhealthy",
+        ServerStatus::Crashed => "crashed",
+        ServerStatus::Restarting => "restarting",
+        ServerStatus::Stopped => "stopped",
+        ServerStatus::Failed => "failed",
+    };
+
+    ServerStatusPayload {
+        status: status_str,
+        message: monitor.error_message.clone().unwrap_or_default(),
+        retry_count: monitor.retry_count,
+        max_retries: state.restart_policy.max_retries,
+        last_healthy_ago: monitor.last_healthy.map(|t| t.elapsed().as_secs()),
+    }
+}
+
+/// Tauri command to restart server manually
+#[tauri::command]
+fn restart_server(app: tauri::AppHandle, state: tauri::State<'_, DesktopState>) -> Result<(), String> {
+    {
+        let monitor = state.monitor_state.read().unwrap();
+        if monitor.status == ServerStatus::Restarting {
+            return Err("Server is already restarting".to_string());
+        }
+    }
+
+    {
+        let mut monitor = state.monitor_state.write().unwrap();
+        monitor.retry_count = 0;
+        monitor.status = ServerStatus::Crashed;
+    }
+
+    attempt_restart(&app, &state)
+}
+
+/// Tauri command to stop server manually
+#[tauri::command]
+fn stop_server_cmd(app: tauri::AppHandle, state: tauri::State<'_, DesktopState>) -> Result<(), String> {
+    state.shutdown_flag.store(true, Ordering::Relaxed);
+
+    {
+        let mut monitor = state.monitor_state.write().unwrap();
+        monitor.status = ServerStatus::Stopped;
+    }
+
+    stop_server_internal(&state.server_child);
+    emit_status(&app, "stopped", "Server stopped by user".to_string());
+
+    Ok(())
 }
