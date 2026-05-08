@@ -413,18 +413,20 @@ async function writeWindowsLaunchers(integrationRoot) {
   await mkdir(windowsBinDir, { recursive: true });
   const nodeBinaryName = getLauncherNodeBinaryName();
 
+  // Scripts will be copied to $INSTDIR\bin by install-windows.ps1
+  // From bin: parent is $INSTDIR (where embed-agent-node.exe lives)
+  // From bin: sibling is desktop-runtime\integrations (where launcher.mjs lives)
   const cliLauncher = [
     "@echo off",
     "setlocal",
     "set \"SCRIPT_DIR=%~dp0\"",
-    "set \"INSTALL_DIR=%SCRIPT_DIR%..\"",
-    "set \"NODE_BIN=%INSTALL_DIR%\\" + nodeBinaryName + "\"",
-    "if not exist \"%NODE_BIN%\" set \"NODE_BIN=%INSTALL_DIR%\\embed-agent-node.exe\"",
+    "set \"INSTALL_ROOT=%SCRIPT_DIR%..\"",
+    "set \"NODE_BIN=%INSTALL_ROOT%\\embed-agent-node.exe\"",
     "if not exist \"%NODE_BIN%\" (",
-    "  echo Embed Agent sidecar node binary not found in %INSTALL_DIR%",
+    "  echo EmbedAgent sidecar node binary not found in %INSTALL_ROOT%",
     "  exit /b 1",
     ")",
-    "\"%NODE_BIN%\" \"%INSTALL_DIR%\\resources\\desktop-runtime\\integrations\\launcher.mjs\" cli %*",
+    "\"%NODE_BIN%\" \"%INSTALL_ROOT%\\desktop-runtime\\integrations\\launcher.mjs\" cli %*",
     "",
   ].join("\r\n");
 
@@ -432,14 +434,13 @@ async function writeWindowsLaunchers(integrationRoot) {
     "@echo off",
     "setlocal",
     "set \"SCRIPT_DIR=%~dp0\"",
-    "set \"INSTALL_DIR=%SCRIPT_DIR%..\"",
-    "set \"NODE_BIN=%INSTALL_DIR%\\" + nodeBinaryName + "\"",
-    "if not exist \"%NODE_BIN%\" set \"NODE_BIN=%INSTALL_DIR%\\embed-agent-node.exe\"",
+    "set \"INSTALL_ROOT=%SCRIPT_DIR%..\"",
+    "set \"NODE_BIN=%INSTALL_ROOT%\\embed-agent-node.exe\"",
     "if not exist \"%NODE_BIN%\" (",
-    "  echo Embed Agent sidecar node binary not found in %INSTALL_DIR%",
+    "  echo EmbedAgent sidecar node binary not found in %INSTALL_ROOT%",
     "  exit /b 1",
     ")",
-    "\"%NODE_BIN%\" \"%INSTALL_DIR%\\resources\\desktop-runtime\\integrations\\launcher.mjs\" mcp %*",
+    "\"%NODE_BIN%\" \"%INSTALL_ROOT%\\desktop-runtime\\integrations\\launcher.mjs\" mcp %*",
     "",
   ].join("\r\n");
 
@@ -447,8 +448,8 @@ async function writeWindowsLaunchers(integrationRoot) {
     "@echo off",
     "setlocal",
     "set \"SCRIPT_DIR=%~dp0\"",
-    "set \"INSTALL_DIR=%SCRIPT_DIR%..\"",
-    "\"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File \"%INSTALL_DIR%\\resources\\desktop-runtime\\integrations\\setup-claude-code.ps1\" -InstallDir \"%INSTALL_DIR%\" %*",
+    "set \"INSTALL_ROOT=%SCRIPT_DIR%..\"",
+    "\"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File \"%INSTALL_ROOT%\\desktop-runtime\\integrations\\setup-claude-code.ps1\" -InstallDir \"%INSTALL_ROOT%\" %*",
     "",
   ].join("\r\n");
 

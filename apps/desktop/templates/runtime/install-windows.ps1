@@ -62,10 +62,10 @@ public static class NativeMethods {
 }
 
 $resolvedInstallDir = Resolve-InstallDir -ExplicitInstallDir $InstallDir
-$wrapperSourceDir = Join-Path $resolvedInstallDir "resources\desktop-runtime\integrations\windows\bin"
+$wrapperSourceDir = Join-Path $resolvedInstallDir "desktop-runtime\integrations\windows\bin"
 $binDir = Join-Path $resolvedInstallDir "bin"
 $baseLocalAppData = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE "AppData\Local" }
-$dataDir = Join-Path $baseLocalAppData "Embed Agent\data"
+$dataDir = Join-Path $baseLocalAppData "EmbedAgent\data"
 
 New-Item -ItemType Directory -Path $binDir -Force | Out-Null
 Copy-Item -Path (Join-Path $wrapperSourceDir "*.cmd") -Destination $binDir -Force
@@ -77,7 +77,7 @@ Add-UserPathEntry -Entry $binDir
 Send-EnvironmentRefresh
 
 try {
-  & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $resolvedInstallDir "resources\desktop-runtime\integrations\setup-claude-code.ps1") -InstallDir $resolvedInstallDir -Scope user | Out-Null
+  & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $resolvedInstallDir "desktop-runtime\integrations\setup-claude-code.ps1") -InstallDir $resolvedInstallDir -Scope user | Out-Null
 } catch {
-  Write-Host "Embed Agent installed. Claude Code auto-registration skipped: $($_.Exception.Message)"
+  Write-Host "EmbedAgent installed. Claude Code auto-registration skipped: $($_.Exception.Message)"
 }

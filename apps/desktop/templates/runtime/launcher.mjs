@@ -6,7 +6,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const runtimeRoot = path.resolve(scriptDir, "..");
 const installRoot = path.resolve(runtimeRoot, "..", "..");
 const localAppData = process.env["LOCALAPPDATA"] ?? path.join(os.homedir(), "AppData", "Local");
-const defaultDataDir = path.join(localAppData, "Embed Agent", "data");
+const defaultDataDir = path.join(localAppData, "EmbedAgent", "data");
 
 process.env["EMBED_AGENT_HOME"] ??= installRoot;
 process.env["EMBED_AGENT_RUNTIME_ROOT"] ??= runtimeRoot;

@@ -13,6 +13,24 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+/// Clean Windows UNC path prefix (\\?\) for Node.js compatibility
+fn clean_path_for_nodejs(path: &Path) -> String {
+    let path_str = path.display().to_string();
+    // Remove Windows UNC prefix \\?\ if present
+    #[cfg(target_os = "windows")]
+    {
+        if path_str.starts_with("\\\\?\\") {
+            path_str[4..].replace('\\', "/")
+        } else {
+            path_str.replace('\\', "/")
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        path_str
+    }
+}
+
 use tauri::path::BaseDirectory;
 use tauri::{App, AppHandle, Emitter, Manager, RunEvent};
 
@@ -326,13 +344,13 @@ fn start_runtime_server(
 
     let mut command = Command::new(&node_path);
     command
-        .arg(server_entry.display().to_string().replace('\\', "/"))
+        .arg(clean_path_for_nodejs(&server_entry))
         .current_dir(runtime_root)
         .env("HOST", SERVER_HOST)
         .env("PORT", server_port.to_string())
-        .env("EMBED_AGENT_DATA", data_dir.display().to_string().replace('\\', "/"))
+        .env("EMBED_AGENT_DATA", clean_path_for_nodejs(data_dir))
         .env("EMBED_AGENT_SERVER_URL", &server_url)
-        .env("EMBED_AGENT_WEB_DIST", web_dist.display().to_string().replace('\\', "/"))
+        .env("EMBED_AGENT_WEB_DIST", clean_path_for_nodejs(&web_dist))
         .env("EMBED_AGENT_DESKTOP", "1")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
@@ -722,6 +740,18 @@ fn attempt_restart(app: &AppHandle, state: &DesktopState) -> Result<(), String> 
             monitor.error_message = None;
 
             emit_status(app, "healthy", format!("Server restarted on port {}", config.port));
+
+            // Try to show main window if it's not already shown
+            if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+                let url = format!("http://{SERVER_HOST}:{}/#/start", config.port);
+                if let Ok(target_url) = url.parse::<url::Url>() {
+                    let _ = window.navigate(target_url);
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+
             Ok(())
         }
         Err(e) => {
@@ -791,13 +821,13 @@ fn start_server_process(
 
     let mut command = Command::new(&node_path);
     command
-        .arg(server_entry.display().to_string().replace('\\', "/"))
+        .arg(clean_path_for_nodejs(&server_entry))
         .current_dir(&config.runtime_root)
         .env("HOST", SERVER_HOST)
         .env("PORT", config.port.to_string())
-        .env("EMBED_AGENT_DATA", config.data_dir.display().to_string().replace('\\', "/"))
+        .env("EMBED_AGENT_DATA", clean_path_for_nodejs(&config.data_dir))
         .env("EMBED_AGENT_SERVER_URL", &config.server_url)
-        .env("EMBED_AGENT_WEB_DIST", web_dist.display().to_string().replace('\\', "/"))
+        .env("EMBED_AGENT_WEB_DIST", clean_path_for_nodejs(&web_dist))
         .env("EMBED_AGENT_DESKTOP", "1")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));

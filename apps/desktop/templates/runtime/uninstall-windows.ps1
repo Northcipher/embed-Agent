@@ -54,7 +54,7 @@ public static class NativeMethods {
 $resolvedInstallDir = Resolve-InstallDir -ExplicitInstallDir $InstallDir
 $binDir = Join-Path $resolvedInstallDir "bin"
 $baseLocalAppData = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $env:USERPROFILE "AppData\Local" }
-$defaultDataDir = Join-Path $baseLocalAppData "Embed Agent\data"
+$defaultDataDir = Join-Path $baseLocalAppData "EmbedAgent\data"
 
 Remove-UserPathEntry -Entry $binDir
 
@@ -71,9 +71,9 @@ if ([string]::Equals([Environment]::GetEnvironmentVariable("EMBED_AGENT_SERVER_U
 }
 
 try {
-  & (Join-Path $resolvedInstallDir "resources\desktop-runtime\integrations\setup-claude-code.ps1") -InstallDir $resolvedInstallDir -Scope user -Remove | Out-Null
+  & (Join-Path $resolvedInstallDir "desktop-runtime\integrations\setup-claude-code.ps1") -InstallDir $resolvedInstallDir -Scope user -Remove | Out-Null
 } catch {
-  Write-Host "Embed Agent uninstall cleanup skipped Claude Code deregistration: $($_.Exception.Message)"
+  Write-Host "EmbedAgent uninstall cleanup skipped Claude Code deregistration: $($_.Exception.Message)"
 }
 
 Send-EnvironmentRefresh

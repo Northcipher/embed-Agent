@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Embed Agent",
+  "productName": "EmbedAgent",
   "version": "0.1.9",
   "identifier": "com.embedagent.desktop",
   "build": {

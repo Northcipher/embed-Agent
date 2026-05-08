@@ -117,7 +117,7 @@ if ($Scope -eq "project") {
   }
   $path = Write-ProjectConfig -ResolvedProjectDir $resolvedProjectDir -DeleteEntry:$Remove
   if ($Remove) {
-    Write-Host "Removed Embed Agent MCP entry from $path"
+    Write-Host "Removed EmbedAgent MCP entry from $path"
   } else {
     Write-Host "Wrote Claude Code project MCP config to $path"
   }
@@ -135,10 +135,10 @@ try {
 }
 
 if ($Remove) {
-  Write-Host "Removed Embed Agent from Claude Code user MCP config."
+  Write-Host "Removed EmbedAgent from Claude Code user MCP config."
   exit 0
 }
 
 $serverConfigJson = (Get-UserServerConfig -ResolvedInstallDir $resolvedInstallDir) | ConvertTo-Json -Depth 10 -Compress
 & $claude.Source mcp add-json embed-agent $serverConfigJson --scope user | Out-Null
-Write-Host "Installed Embed Agent into Claude Code (user scope). Restart Claude Code if it is already running."
+Write-Host "Installed EmbedAgent into Claude Code (user scope). Restart Claude Code if it is already running."
