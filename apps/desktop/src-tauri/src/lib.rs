@@ -35,6 +35,7 @@ use tauri::path::BaseDirectory;
 use tauri::{App, AppHandle, Emitter, Manager, RunEvent};
 
 const SERVER_HOST: &str = "127.0.0.1";
+const SERVER_PORT: u16 = 8787;
 const WINDOW_LABEL: &str = "main";
 const NODE_SIDECAR_NAME: &str = "embed-agent-node";
 
@@ -508,14 +509,19 @@ fn show_startup_window(app: &AppHandle, status: &str, message: &str) -> tauri::R
 }
 
 fn reserve_server_port() -> tauri::Result<u16> {
-    let listener =
-        TcpListener::bind((SERVER_HOST, 0)).map_err(|e| tauri::Error::Anyhow(e.into()))?;
-    let port = listener
-        .local_addr()
-        .map_err(|e| tauri::Error::Anyhow(e.into()))?
-        .port();
+    // Use fixed port 8787 - if already in use and healthy, reuse it
+    if health_ok(SERVER_PORT) {
+        return Ok(SERVER_PORT);
+    }
+
+    // Try to bind to the fixed port
+    let listener = TcpListener::bind((SERVER_HOST, SERVER_PORT))
+        .map_err(|e| tauri::Error::Anyhow(anyhow::anyhow!(
+            "Port {} is already in use by another application. Close it or change SERVER_PORT.",
+            SERVER_PORT
+        )))?;
     drop(listener);
-    Ok(port)
+    Ok(SERVER_PORT)
 }
 
 fn build_server_url(port: u16) -> String {
