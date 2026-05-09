@@ -4,7 +4,7 @@ import { ConnectionManager, TargetManager, OutputPipe, RingBuffer, RuleDetector,
 import { LLMCallManager, MockProvider, AIAnthropicProvider, AIOpenAIProvider, AIOpenAICompatibleProvider, DeepSeekProvider, DeepSeekOpenAIProvider, type LLMProvider, Planner, Observer, ReplyGenerator, Memory, SkillRegistry, createPlannerTools } from "@embed-agent/agent";
 import { NotificationFilter, LogChannel } from "@embed-agent/notify";
 import { Views } from "@embed-agent/views";
-import { SystemConfigSchema, LLMConfigSchema, HookConfigSchema, TargetProfileSchema } from "@embed-agent/contracts";
+import { SystemConfigSchema, LLMConfigSchema, HookConfigSchema } from "@embed-agent/contracts";
 import { CommandHandler } from "./command-handler.js";
 
 export interface BootstrapResult {
@@ -33,15 +33,6 @@ export async function bootstrap(configRoot = process.env["EMBED_AGENT_DATA"] ?? 
   // llm.yml is required — failures block startup
   errors.push(...llmErrors);
 
-  // Load target profiles
-  const { configs: targetConfigs, errors: targetErrors } = await loader.loadAll({
-    "targets.yml": { schema: TargetProfileSchema, required: false },
-  });
-  // Optional configs: log warnings but don't block startup
-  for (const e of targetErrors) {
-    logger.warn(`Optional config skipped: ${e.file}: ${e.message}`);
-  }
-
   if (errors.length > 0) {
     logger.error("Config validation failed", { errors });
     for (const e of errors) process.stderr.write(`  ${e.file}: ${e.message}\n`);
@@ -56,12 +47,6 @@ export async function bootstrap(configRoot = process.env["EMBED_AGENT_DATA"] ?? 
   const eventStore = new EventStore(dataRoot);
   const runStore = new RunStore(dataRoot, log);
   const targetStore = new TargetStore(dataRoot);
-  // Register targets from config
-  const targetRaw = targetConfigs["targets"];
-  const targetList = Array.isArray(targetRaw) ? targetRaw as Record<string, unknown>[] : targetRaw ? [targetRaw as Record<string, unknown>] : [];
-  for (const t of targetList) {
-    await targetStore.add(t as never).catch((e) => log.warn(`Failed to add target: ${(e as Error).message}`));
-  }
 
   const memoryStore = new MemoryStore(dataRoot);
   // 3. Create EventBus + wire persistence

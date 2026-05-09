@@ -320,10 +320,6 @@ fn ensure_default_config(data_dir: &Path) -> tauri::Result<()> {
     .map_err(|e| tauri::Error::Anyhow(e.into()))?;
     }
 
-    let targets_path = data_dir.join("targets.yml");
-    if !targets_path.exists() {
-        std::fs::write(&targets_path, "[]\n").map_err(|e| tauri::Error::Anyhow(e.into()))?;
-    }
     Ok(())
 }
 

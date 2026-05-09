@@ -116,8 +116,6 @@ async function ensureDefaultConfig(dataDir: string): Promise<void> {
     "      reply: 60",
     "",
   ].join("\n"));
-
-  await ensureFileIfMissing(path.join(dataDir, "targets.yml"), "[]\n");
 }
 
 export async function ensureServer(url = DEFAULT_URL): Promise<void> {

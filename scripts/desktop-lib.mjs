@@ -18,7 +18,6 @@ export const mcpEntry = path.join(repoRoot, "apps/mcp-server/dist/main.js");
 export const webDistDir = path.join(repoRoot, "apps/webui/dist");
 export const systemConfigPath = path.join(dataDir, "system.yml");
 export const llmConfigPath = path.join(dataDir, "llm.yml");
-export const targetsConfigPath = path.join(dataDir, "targets.yml");
 export const projectMcpConfigPath = path.join(repoRoot, ".mcp.json");
 
 let pnpmCommand = null;
@@ -174,11 +173,8 @@ export async function ensureDefaultConfig() {
     "",
   ].join("\n"));
 
-  const targetsCreated = await ensureTextFile(targetsConfigPath, "[]\n");
-
   if (systemCreated) log(`Created default config: ${path.relative(repoRoot, systemConfigPath)}`);
   if (llmCreated) log(`Created default config: ${path.relative(repoRoot, llmConfigPath)}`);
-  if (targetsCreated) log(`Created default config: ${path.relative(repoRoot, targetsConfigPath)}`);
 }
 
 export async function ensureProjectMcpConfig() {
