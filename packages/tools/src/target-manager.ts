@@ -25,12 +25,19 @@ export class TargetManager {
 
     const checks: PreflightCheck[] = [];
     const statePatch: Record<string, string> = {};
+    let hasAnyTransport = false;
     for (const t of transports) {
       const conn = this.cm.get(target, t);
-      if (!conn) { checks.push({ check: `${t}_available`, passed: false, error: "not configured" }); continue; }
+      // Skip transports not configured for this target (not a failure)
+      if (!conn) continue;
+      hasAnyTransport = true;
       try { await conn.connect(); checks.push({ check: `${t}_open`, passed: true }); statePatch[t] = t === "adb" ? "online" : "connected"; }
       catch (e) { checks.push({ check: `${t}_open`, passed: false, error: (e as Error).message }); }
       finally { try { await conn.disconnect(); } catch { /* best effort */ } }
+    }
+    // If no transports are configured for this target, that's a failure
+    if (!hasAnyTransport && transports.length > 0) {
+      checks.push({ check: "transport_available", passed: false, error: `target has no configured transports among: ${transports.join(", ")}` });
     }
     // Persist transport states so Views/MCP report correct capabilities
     if (Object.keys(statePatch).length > 0) {
